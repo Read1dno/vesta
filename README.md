@@ -49,7 +49,9 @@ as Web Radar.
 
 Release binaries are compiled by GitHub Actions and receive a signed build
 provenance attestation that identifies this repository, the release workflow,
-the source commit, and the tag. After downloading `vesta.exe`, verify it with
+the source commit, and the tag. Published releases are immutable: GitHub locks
+their tag and assets against replacement or deletion. After downloading
+`vesta.exe`, verify it with
 [GitHub CLI](https://cli.github.com/):
 
 ```powershell
@@ -284,8 +286,8 @@ cmake/                   dependency patch/apply helpers
 - **Build** configures Release, compiles `vesta.exe`, runs CTest, and uploads the
   executable as a workflow artifact.
 - **Release** repeats the verified build for version tags, signs its provenance
-  through GitHub Artifact Attestations, and attaches the EXE and SHA-256
-  checksum to the GitHub Release.
+  through GitHub Artifact Attestations, validates every asset in a draft, and
+  only then publishes an immutable GitHub Release.
 - **Pages** builds the landing page, Lua documentation, Web Radar download, and
   available profiles, then deploys the static artifact.
 

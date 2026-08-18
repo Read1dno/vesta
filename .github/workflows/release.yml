@@ -15,6 +15,15 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v5
+      - name: Require immutable releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh api `
+            -H "X-GitHub-Api-Version: 2026-03-10" `
+            "repos/${{ github.repository }}/immutable-releases" `
+            --silent
       - name: Configure
         run: cmake --preset release -DBUILD_TESTING=ON
       - name: Build
@@ -30,7 +39,7 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: build/release/bin/vesta.exe
-      - name: Publish GitHub release
+      - name: Publish immutable GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
@@ -43,13 +52,6 @@ jobs:
             "NOTICE"
             "THIRD_PARTY_NOTICES.md"
           )
-
-          gh release view $tag --json tagName *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag @assets --clobber
-          } else {
-            gh release create $tag --generate-notes @assets
-          }
 
           $repositoryUrl = "${{ github.server_url }}/${{ github.repository }}"
           $runUrl = "$repositoryUrl/actions/runs/${{ github.run_id }}"
@@ -67,4 +69,35 @@ jobs:
             '```'
           ) -join "`n"
           $releaseNotes | Set-Content -Encoding utf8 RELEASE_NOTES.md
-          gh release edit $tag --notes-file RELEASE_NOTES.md
+
+          $releaseJson = gh release view $tag --json isDraft 2>$null
+          $releaseExists = $LASTEXITCODE -eq 0
+          if ($releaseExists) {
+            $release = $releaseJson | ConvertFrom-Json
+            if (-not $release.isDraft) {
+              throw "Release $tag already exists and is published. Immutable releases cannot be replaced."
+            }
+            gh release upload $tag @assets --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Failed to upload release assets." }
+            gh release edit $tag --notes-file RELEASE_NOTES.md
+            if ($LASTEXITCODE -ne 0) { throw "Failed to update draft release notes." }
+          } else {
+            gh release create $tag `
+              --verify-tag `
+              --draft `
+              --title "Vesta $tag" `
+              --notes-file RELEASE_NOTES.md `
+              @assets
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create draft release." }
+          }
+
+          $draft = gh release view $tag --json assets,isDraft | ConvertFrom-Json
+          $expectedAssets = @($assets | ForEach-Object { Split-Path $_ -Leaf })
+          $actualAssets = @($draft.assets | ForEach-Object { $_.name })
+          $missingAssets = @($expectedAssets | Where-Object { $_ -notin $actualAssets })
+          if (-not $draft.isDraft -or $missingAssets.Count -ne 0) {
+            throw "Draft validation failed. Missing assets: $($missingAssets -join ', ')"
+          }
+
+          gh release edit $tag --draft=false
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish immutable release." }
