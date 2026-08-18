@@ -28,9 +28,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          gh release create "${{ github.ref_name }}" --generate-notes `
-            build/release/bin/vesta.exe `
-            SHA256SUMS.txt `
-            LICENSE `
-            NOTICE `
-            THIRD_PARTY_NOTICES.md
+          $tag = "${{ github.ref_name }}"
+          $assets = @(
+            "build/release/bin/vesta.exe"
+            "SHA256SUMS.txt"
+            "LICENSE"
+            "NOTICE"
+            "THIRD_PARTY_NOTICES.md"
+          )
+
+          gh release view $tag --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --clobber
+          } else {
+            gh release create $tag --generate-notes @assets
+          }
