@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0a0d">
+  <meta name="description" content="Vesta is an open-source, read-only external cheat for Counter-Strike 2.">
+  <meta property="og:title" content="Vesta — open-source external cheat">
+  <meta property="og:description" content="Combat tools, configurable visuals, movement utilities and a local Lua API in one coherent interface.">
+  <meta property="og:image" content="assets/og.webp">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <title>Vesta — open-source external cheat</title>
+  <link rel="preload" href="assets/vesta-interface.webp" as="image" type="image/webp">
+  <link rel="stylesheet" href="styles.css">
+  <script src="site-config.js"></script>
+  <script src="feature-tree.js"></script>
+  <script src="config-status.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header" data-header>
+    <div class="brand-cluster">
+      <a class="brand" href="#top" aria-label="Vesta home">VESTA</a>
+      <button class="language-button" type="button" data-language-toggle aria-label="Switch language">EN</button>
+    </div>
+    <nav class="site-nav" aria-label="Primary navigation" data-nav>
+      <a href="#features" data-i18n="nav.features">Features</a>
+      <a href="#configs" data-i18n="nav.configs">Configs</a>
+      <a href="#lua">Lua API</a>
+      <a href="#download" data-i18n="nav.download">Download</a>
+    </nav>
+    <div class="header-actions">
+      <a class="source-link" href="#" data-source-link data-i18n="nav.source">Source</a>
+      <a class="button button-compact release-link" href="#download" data-release-link>
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+        <span data-i18n="nav.download">Download</span>
+      </a>
+      <button class="menu-button" type="button" aria-label="Toggle navigation" aria-expanded="false" data-menu-button><span></span><span></span></button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero section" id="top">
+      <div class="hero-copy reveal">
+        <h1 data-i18n="hero.title">The best external cheat for Counter-Strike 2.</h1>
+        <p class="hero-lede" data-i18n="hero.lede">Read-only architecture, a unified combat pipeline, fully configurable visuals and a local Lua API—built as one coherent product.</p>
+        <div class="hero-actions">
+          <a class="button release-link" href="#download" data-release-link><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg><span data-i18n="hero.release">Get the latest release</span></a>
+          <a class="button button-secondary" href="#configs"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 9h8M8 13h5"/></svg><span data-i18n="hero.config">Choose a config</span></a>
+        </div>
+        <p class="principles"><span data-i18n="hero.principle1">Read-only process access</span><i></i><span data-i18n="hero.principle2">No driver or injector</span><i></i><span data-i18n="hero.principle3">No telemetry</span></p>
+      </div>
+      <img class="hero-visual" src="assets/vesta-interface.webp" width="1280" height="720" alt="" aria-hidden="true" fetchpriority="high">
+    </section>
+
+    <section class="section feature-section" id="features">
+      <div class="section-heading reveal">
+        <h2 data-i18n="features.title">One system, not a collection of disconnected features.</h2>
+        <p data-i18n="features.lede">Combat, rendering, movement and automation share the same snapshots, activation state and configuration model.</p>
+      </div>
+      <div class="feature-explorer reveal" data-feature-explorer>
+        <div class="feature-map" data-feature-map></div>
+      </div>
+    </section>
+
+    <section class="section config-section" id="configs">
+      <div class="section-heading reveal">
+        <h2 data-i18n="configs.title">Start with a coherent config, then make it yours.</h2>
+        <p data-i18n="configs.lede">Every profile is a regular Vesta configuration file. Download it, open Configs in Vesta and load the file—nothing is installed or executed.</p>
+      </div>
+      <div class="config-grid">
+        <article class="config-card reveal">
+          <div class="config-icon"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.7 3.1 7.7 7.5 9.5 4.4-1.8 7.5-4.8 7.5-9.5V6L12 3Z"/><path d="m9 12 2 2 4-5"/></svg></div>
+          <h3>Full legit</h3><p data-i18n="configs.fullText">Legit Sync ESP and basic utilities only—no information the game has not legitimately exposed.</p>
+          <a class="config-download" href="configs/full-legit.cfg" data-config="full-legit.cfg" download><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg><span data-i18n="configs.download">Download .cfg</span></a>
+        </article>
+        <article class="config-card reveal">
+          <div class="config-icon"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg></div>
+          <h3>Legit</h3><p data-i18n="configs.legitText">Wall information and a basic trigger configuration for matches where opponents already use WH.</p>
+          <a class="config-download" href="configs/legit.cfg" data-config="legit.cfg" download><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg><span data-i18n="configs.download">Download .cfg</span></a>
+        </article>
+        <article class="config-card reveal">
+          <div class="config-icon"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m13 2-8 12h7l-1 8 8-12h-7l1-8Z"/></svg></div>
+          <h3>Semi rage</h3><p data-i18n="configs.semiText">Seed Trigger tuned for jump shots, aggressive timing and the highest practical effectiveness.</p>
+          <a class="config-download" href="configs/semi-rage.cfg" data-config="semi-rage.cfg" download><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg><span data-i18n="configs.download">Download .cfg</span></a>
+        </article>
+      </div>
+    </section>
+
+    <section class="section lua-section" id="lua">
+      <div class="section-heading reveal">
+        <h2 data-i18n="lua.title">Build your own tools on top of Vesta.</h2>
+        <p data-i18n="lua.lede">Scripts receive documented game snapshots, UI controls, drawing primitives and helper APIs. Web Radar is the first complete example—and the preview below uses its real frontend and a captured Vesta snapshot.</p>
+      </div>
+      <div class="lua-actions reveal">
+        <a class="button" href="downloads/Vesta-Web-Radar.lua" download><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg><span data-i18n="lua.download">Download Web Radar.lua</span></a>
+        <a class="text-action" href="docs/api_docs/" data-api-link data-i18n="lua.docs">Read API documentation</a>
+      </div>
+      <div class="interactive-frame radar-frame reveal">
+        <iframe src="radar/index.html" title="Vesta Web Radar frontend" loading="lazy"></iframe>
+      </div>
+    </section>
+
+    <section class="section download-section" id="download">
+      <div class="download-copy reveal">
+        <h2 data-i18n="download.title">Download the current release or inspect every line.</h2>
+        <p data-i18n="download.lede">Release builds and source live on GitHub. The landing page is static and can be hosted directly with GitHub Pages.</p>
+        <div class="hero-actions">
+          <a class="button release-link" href="#" data-release-link><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg><span data-i18n="download.release">Latest release</span></a>
+          <a class="button button-secondary source-link" href="#" data-source-link><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m8 9-3 3 3 3m8-6 3 3-3 3m-2-9-4 12"/></svg><span data-i18n="download.source">View source</span></a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <a class="brand" href="#top">VESTA</a>
+    <p data-i18n="footer.tagline">Open source. Local-first. Built for deliberate control.</p>
+    <a href="#top" data-i18n="footer.back">Back to top</a>
+  </footer>
+</body>
+</html>

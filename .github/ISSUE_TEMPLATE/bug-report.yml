@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible problem in Vesta
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Please remove account names, server addresses and other personal data from logs and screenshots.
+  - type: input
+    id: version
+    attributes:
+      label: Vesta version
+      placeholder: Release tag or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      placeholder: Windows version, GPU and display mode
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: Describe the shortest reliable reproduction sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or screenshots
+      description: Attach only the material needed to diagnose the issue.

@@ -1,0 +1,286 @@
+diff --git a/backends/imgui_impl_win32.cpp b/backends/imgui_impl_win32.cpp
+index d7206b9..9120b79 100644
+--- a/backends/imgui_impl_win32.cpp
++++ b/backends/imgui_impl_win32.cpp
+@@ -422,6 +422,19 @@ void    ImGui_ImplWin32_NewFrame()
+     ImGui_ImplWin32_UpdateGamepads(io);
+ }
+ 
++void    ImGui_ImplWin32_NewFrameCached(float width, float height)
++{
++    ImGui_ImplWin32_Data* bd = ImGui_ImplWin32_GetBackendData();
++    IM_ASSERT(bd != nullptr && "Context or backend not initialized? Did you call ImGui_ImplWin32_Init()?");
++    ImGuiIO& io = ImGui::GetIO();
++    io.DisplaySize = ImVec2(width, height);
++
++    INT64 current_time = 0;
++    ::QueryPerformanceCounter((LARGE_INTEGER*)&current_time);
++    io.DeltaTime = (float)(current_time - bd->Time) / bd->TicksPerSecond;
++    bd->Time = current_time;
++}
++
+ // Map VK_xxx to ImGuiKey_xxx.
+ // Not static to allow third-party code to use that if they want to (but undocumented)
+ ImGuiKey ImGui_ImplWin32_KeyEventToImGuiKey(WPARAM wParam, LPARAM lParam);
+diff --git a/backends/imgui_impl_win32.h b/backends/imgui_impl_win32.h
+index 5ae399e..5a31b76 100644
+--- a/backends/imgui_impl_win32.h
++++ b/backends/imgui_impl_win32.h
+@@ -25,6 +25,7 @@ IMGUI_IMPL_API bool     ImGui_ImplWin32_Init(void* hwnd);
+ IMGUI_IMPL_API bool     ImGui_ImplWin32_InitForOpenGL(void* hwnd);
+ IMGUI_IMPL_API void     ImGui_ImplWin32_Shutdown();
+ IMGUI_IMPL_API void     ImGui_ImplWin32_NewFrame();
++IMGUI_IMPL_API void     ImGui_ImplWin32_NewFrameCached(float width, float height);
+ 
+ // Win32 message handler your application need to call.
+ // - Intentionally commented out in a '#if 0' block to avoid dragging dependencies on <windows.h> from this helper.
+diff --git a/backends/imgui_impl_dx11.cpp b/backends/imgui_impl_dx11.cpp
+index c71e44d..118005c 100644
+--- a/backends/imgui_impl_dx11.cpp
++++ b/backends/imgui_impl_dx11.cpp
+@@ -76,6 +76,7 @@ struct ImGui_ImplDX11_Data
+     ID3D11InputLayout*          pInputLayout;
+     ID3D11Buffer*               pVertexConstantBuffer;
+     ID3D11PixelShader*          pPixelShader;
++    ID3D11PixelShader*          pPixelShaderFontAtlas;
+     ID3D11SamplerState*         pTexSamplerLinear;
+     ID3D11RasterizerState*      pRasterizerState;
+     ID3D11BlendState*           pBlendState;
+@@ -279,6 +280,7 @@ void ImGui_ImplDX11_RenderDrawData(ImDrawData* draw_data)
+     // (Because we merged all buffers into a single one, we maintain our own offset into them)
+     int global_idx_offset = 0;
+     int global_vtx_offset = 0;
++    ID3D11PixelShader* current_pixel_shader = bd->pPixelShader;
+     ImVec2 clip_off = draw_data->DisplayPos;
+     ImVec2 clip_scale = draw_data->FramebufferScale;
+     for (const ImDrawList* draw_list : draw_data->CmdLists)
+@@ -294,6 +296,7 @@ void ImGui_ImplDX11_RenderDrawData(ImDrawData* draw_data)
+                     ImGui_ImplDX11_SetupRenderState(draw_data, device);
+                 else
+                     pcmd->UserCallback(draw_list, pcmd);
++                current_pixel_shader = nullptr;
+             }
+             else
+             {
+@@ -309,6 +312,24 @@ void ImGui_ImplDX11_RenderDrawData(ImDrawData* draw_data)
+ 
+                 // Bind texture, Draw
+                 ID3D11ShaderResourceView* texture_srv = (ID3D11ShaderResourceView*)pcmd->GetTexID();
++                bool is_font_atlas_texture = false;
++                ImFontAtlas* font_atlas = ImGui::GetIO().Fonts;
++                for (ImTextureData* font_texture : font_atlas->TexList)
++                {
++                    if ((pcmd->TexRef._TexData != nullptr && pcmd->TexRef._TexData == font_texture)
++                        || pcmd->GetTexID() == font_texture->TexID)
++                    {
++                        is_font_atlas_texture = true;
++                        break;
++                    }
++                }
++                ID3D11PixelShader* desired_pixel_shader = is_font_atlas_texture
++                    ? bd->pPixelShaderFontAtlas : bd->pPixelShader;
++                if (current_pixel_shader != desired_pixel_shader)
++                {
++                    device->PSSetShader(desired_pixel_shader, nullptr, 0);
++                    current_pixel_shader = desired_pixel_shader;
++                }
+                 device->PSSetShaderResources(0, 1, &texture_srv);
+                 device->DrawIndexed(pcmd->ElemCount, pcmd->IdxOffset + global_idx_offset, pcmd->VtxOffset + global_vtx_offset);
+             }
+@@ -524,6 +545,44 @@ bool    ImGui_ImplDX11_CreateDeviceObjects()
+         pixelShaderBlob->Release();
+     }
+ 
++    // Font-atlas shader. Normal ImGui/UI pixels retain the upstream path.
++    // Vesta ESP glyph blocks are tagged with B=0/A=1 and store foreground
++    // coverage in R plus the precomputed cardinal outline coverage in G.
++    {
++        static const char* fontAtlasPixelShader =
++            "struct PS_INPUT\
++            {\
++            float4 pos : SV_POSITION;\
++            float4 col : COLOR0;\
++            float2 uv  : TEXCOORD0;\
++            };\
++            sampler sampler0;\
++            Texture2D texture0;\
++            \
++            float4 main(PS_INPUT input) : SV_Target\
++            {\
++            float4 texel = texture0.Sample(sampler0, input.uv);\
++            if (texel.a > 0.5 && texel.b < 0.5)\
++            {\
++                float fill = saturate(texel.r);\
++                float outline = saturate(max(texel.g, fill));\
++                float fill_ratio = outline > 0.0001 ? fill / outline : 0.0;\
++                return float4(input.col.rgb * fill_ratio, input.col.a * outline);\
++            }\
++            return input.col * texel;\
++            }";
++
++        ID3DBlob* pixelShaderBlob;
++        if (FAILED(D3DCompile(fontAtlasPixelShader, strlen(fontAtlasPixelShader), nullptr, nullptr, nullptr, "main", "ps_4_0", 0, 0, &pixelShaderBlob, nullptr)))
++            return false;
++        if (bd->pd3dDevice->CreatePixelShader(pixelShaderBlob->GetBufferPointer(), pixelShaderBlob->GetBufferSize(), nullptr, &bd->pPixelShaderFontAtlas) != S_OK)
++        {
++            pixelShaderBlob->Release();
++            return false;
++        }
++        pixelShaderBlob->Release();
++    }
++
+     // Create the blending setup
+     {
+         D3D11_BLEND_DESC desc;
+@@ -596,6 +655,7 @@ void    ImGui_ImplDX11_InvalidateDeviceObjects()
+             ImGui_ImplDX11_DestroyTexture(tex);
+ 
+     if (bd->pTexSamplerLinear)    { bd->pTexSamplerLinear->Release(); bd->pTexSamplerLinear = nullptr; }
++    if (bd->pPixelShaderFontAtlas){ bd->pPixelShaderFontAtlas->Release(); bd->pPixelShaderFontAtlas = nullptr; }
+     if (bd->pIB)                    { bd->pIB->Release(); bd->pIB = nullptr; }
+     if (bd->pVB)                    { bd->pVB->Release(); bd->pVB = nullptr; }
+     if (bd->pBlendState)            { bd->pBlendState->Release(); bd->pBlendState = nullptr; }
+diff --git a/misc/freetype/imgui_freetype.cpp b/misc/freetype/imgui_freetype.cpp
+index cbbde76..5b677ad 100644
+--- a/misc/freetype/imgui_freetype.cpp
++++ b/misc/freetype/imgui_freetype.cpp
+@@ -310,6 +310,27 @@ static void ImGui_ImplFreeType_BlitGlyph(const FT_Bitmap* ft_bitmap, uint32_t* d
+     }
+ }
+ 
++static uint8_t ImGui_ImplFreeType_GetGlyphCoverage(const FT_Bitmap* ft_bitmap, int x, int y)
++{
++    const int pitch = ft_bitmap->pitch;
++    const uint8_t* row = pitch >= 0
++        ? ft_bitmap->buffer + y * pitch
++        : ft_bitmap->buffer + (ft_bitmap->rows - 1 - y) * -pitch;
++    switch (ft_bitmap->pixel_mode)
++    {
++    case FT_PIXEL_MODE_GRAY:
++        if (ft_bitmap->num_grays > 1 && ft_bitmap->num_grays != 256)
++            return (uint8_t)((unsigned int)row[x] * 255u / (ft_bitmap->num_grays - 1u));
++        return row[x];
++    case FT_PIXEL_MODE_MONO:
++        return (row[x >> 3] & (0x80u >> (x & 7))) ? 255u : 0u;
++    case FT_PIXEL_MODE_BGRA:
++        return row[x * 4 + 3];
++    default:
++        return 0u;
++    }
++}
++
+ // FreeType memory allocation callbacks
+ static void* FreeType_Alloc(FT_Memory /*memory*/, long size)
+ {
+@@ -517,6 +538,10 @@ static bool ImGui_ImplFreeType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontConf
+     const int w = (int)ft_bitmap->width;
+     const int h = (int)ft_bitmap->rows;
+     const bool is_visible = (w != 0 && h != 0);
++    const bool vesta_esp_mask = (bd_font_data->UserFlags & ImGuiFreeTypeLoaderFlags_VestaEspMask) != 0;
++    const int mask_padding = vesta_esp_mask ? 1 : 0;
++    const int packed_w = w + mask_padding * 2;
++    const int packed_h = h + mask_padding * 2;
+ 
+     // Prepare glyph
+     out_glyph->Codepoint = codepoint;
+@@ -525,7 +550,7 @@ static bool ImGui_ImplFreeType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontConf
+     // Pack and retrieve position inside texture atlas
+     if (is_visible)
+     {
+-        ImFontAtlasRectId pack_id = ImFontAtlasPackAddRect(atlas, w, h);
++        ImFontAtlasRectId pack_id = ImFontAtlasPackAddRect(atlas, packed_w, packed_h);
+         if (pack_id == ImFontAtlasRectId_Invalid)
+         {
+             // Pathological out of memory case (TexMaxWidth/TexMaxHeight set too small?)
+@@ -534,10 +559,50 @@ static bool ImGui_ImplFreeType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontConf
+         }
+         ImTextureRect* r = ImFontAtlasPackGetRect(atlas, pack_id);
+ 
+-        // Render pixels to our temporary buffer
+-        atlas->Builder->TempBuffer.resize(w * h * 4);
+-        uint32_t* temp_buffer = (uint32_t*)atlas->Builder->TempBuffer.Data;
+-        ImGui_ImplFreeType_BlitGlyph(ft_bitmap, temp_buffer, w);
++        // Render pixels to our temporary buffer. Vesta ESP glyphs store the
++        // grayscale fill in R and a one-pixel cardinal dilation in G. B=0 and
++        // A=255 identify the block to the font-atlas pixel shader. Both masks
++        // are derived from this one rasterization, so metrics can never drift.
++        const unsigned char* bitmap_pixels = nullptr;
++        int bitmap_pitch = 0;
++        if (vesta_esp_mask)
++        {
++            const int area = packed_w * packed_h;
++            const int rgba_offset = (area + 3) & ~3;
++            atlas->Builder->TempBuffer.resize(rgba_offset + area * 4);
++            unsigned char* fill = atlas->Builder->TempBuffer.Data;
++            memset(fill, 0, (size_t)area);
++            for (int source_y = 0; source_y < h; source_y++)
++                for (int source_x = 0; source_x < w; source_x++)
++                    fill[(source_y + mask_padding) * packed_w + source_x + mask_padding]
++                        = ImGui_ImplFreeType_GetGlyphCoverage(ft_bitmap, source_x, source_y);
++
++            uint32_t* encoded = (uint32_t*)(void*)(atlas->Builder->TempBuffer.Data + rgba_offset);
++            for (int encoded_y = 0; encoded_y < packed_h; encoded_y++)
++            {
++                for (int encoded_x = 0; encoded_x < packed_w; encoded_x++)
++                {
++                    const int index = encoded_y * packed_w + encoded_x;
++                    const uint8_t foreground = fill[index];
++                    uint8_t outline = foreground;
++                    if (encoded_x > 0) outline = ImMax(outline, fill[index - 1]);
++                    if (encoded_x + 1 < packed_w) outline = ImMax(outline, fill[index + 1]);
++                    if (encoded_y > 0) outline = ImMax(outline, fill[index - packed_w]);
++                    if (encoded_y + 1 < packed_h) outline = ImMax(outline, fill[index + packed_w]);
++                    encoded[index] = IM_COL32(foreground, outline, 0, 255);
++                }
++            }
++            bitmap_pixels = (const unsigned char*)encoded;
++            bitmap_pitch = packed_w * 4;
++        }
++        else
++        {
++            atlas->Builder->TempBuffer.resize(w * h * 4);
++            uint32_t* temp_buffer = (uint32_t*)atlas->Builder->TempBuffer.Data;
++            ImGui_ImplFreeType_BlitGlyph(ft_bitmap, temp_buffer, w);
++            bitmap_pixels = (const unsigned char*)temp_buffer;
++            bitmap_pitch = w * 4;
++        }
+ 
+         const float ref_size = baked->ContainerFont->Sources[0]->SizePixels;
+         const float offsets_scale = (ref_size != 0.0f) ? (baked->Size / ref_size) : 1.0f;
+@@ -551,16 +616,16 @@ static bool ImGui_ImplFreeType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontConf
+         float recip_v = 1.0f / rasterizer_density;
+ 
+         // Register glyph
+-        float glyph_off_x = (float)face->glyph->bitmap_left;
+-        float glyph_off_y = (float)-face->glyph->bitmap_top;
++        float glyph_off_x = (float)face->glyph->bitmap_left - mask_padding;
++        float glyph_off_y = (float)-face->glyph->bitmap_top - mask_padding;
+         out_glyph->X0 = glyph_off_x * recip_h + font_off_x;
+         out_glyph->Y0 = glyph_off_y * recip_v + font_off_y;
+-        out_glyph->X1 = (glyph_off_x + w) * recip_h + font_off_x;
+-        out_glyph->Y1 = (glyph_off_y + h) * recip_v + font_off_y;
++        out_glyph->X1 = (glyph_off_x + packed_w) * recip_h + font_off_x;
++        out_glyph->Y1 = (glyph_off_y + packed_h) * recip_v + font_off_y;
+         out_glyph->Visible = true;
+-        out_glyph->Colored = (ft_bitmap->pixel_mode == FT_PIXEL_MODE_BGRA);
++        out_glyph->Colored = !vesta_esp_mask && (ft_bitmap->pixel_mode == FT_PIXEL_MODE_BGRA);
+         out_glyph->PackId = pack_id;
+-        ImFontAtlasBakedSetFontGlyphBitmap(atlas, baked, src, out_glyph, r, (const unsigned char*)temp_buffer, ImTextureFormat_RGBA32, w * 4);
++        ImFontAtlasBakedSetFontGlyphBitmap(atlas, baked, src, out_glyph, r, bitmap_pixels, ImTextureFormat_RGBA32, bitmap_pitch);
+     }
+ 
+     return true;
+diff --git a/misc/freetype/imgui_freetype.h b/misc/freetype/imgui_freetype.h
+index 8531369..67220dc 100644
+--- a/misc/freetype/imgui_freetype.h
++++ b/misc/freetype/imgui_freetype.h
+@@ -38,6 +38,9 @@ enum ImGuiFreeTypeLoaderFlags_
+     ImGuiFreeTypeLoaderFlags_Monochrome    = 1 << 7,   // Disable anti-aliasing. Combine this with MonoHinting for best results!
+     ImGuiFreeTypeLoaderFlags_LoadColor     = 1 << 8,   // Enable FreeType color-layered glyphs
+     ImGuiFreeTypeLoaderFlags_Bitmap        = 1 << 9,   // Enable FreeType bitmap glyphs
++    // Vesta extension: encode grayscale fill and a one-pixel cardinal outline
++    // into separate atlas channels for single-pass ESP text rendering.
++    ImGuiFreeTypeLoaderFlags_VestaEspMask  = 1 << 16,
+ 
+ #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
+     ImGuiFreeTypeBuilderFlags_NoHinting     = ImGuiFreeTypeLoaderFlags_NoHinting,

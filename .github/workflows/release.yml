@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset release -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build --preset release --parallel
+      - name: Test
+        run: ctest --test-dir build/release -C Release --output-on-failure
+      - name: Create checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash build/release/bin/vesta.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  vesta.exe" | Set-Content -Encoding ascii SHA256SUMS.txt
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create "${{ github.ref_name }}" --generate-notes `
+            build/release/bin/vesta.exe `
+            SHA256SUMS.txt `
+            LICENSE `
+            NOTICE `
+            THIRD_PARTY_NOTICES.md

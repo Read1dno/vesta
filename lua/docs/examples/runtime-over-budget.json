@@ -1,0 +1,10 @@
+{
+  "over-budget": {
+    "autoload": true,
+    "hot_reload": true
+  },
+  "smoke": {
+    "autoload": true,
+    "hot_reload": true
+  }
+}

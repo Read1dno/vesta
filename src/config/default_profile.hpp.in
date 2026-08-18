@@ -1,0 +1,10 @@
+#pragma once
+
+#include <cstddef>
+
+namespace config::embedded {
+
+inline constexpr unsigned char default_profile_json[]{ @VESTA_DEFAULT_PROFILE_BYTES@ };
+inline constexpr std::size_t default_profile_json_size = sizeof( default_profile_json );
+
+}

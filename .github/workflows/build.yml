@@ -1,0 +1,32 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset release -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build --preset release --parallel
+      - name: Test
+        run: ctest --test-dir build/release -C Release --output-on-failure
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: vesta-windows-x64
+          path: |
+            build/release/bin/vesta.exe
+            LICENSE
+            NOTICE
+            THIRD_PARTY_NOTICES.md
+          if-no-files-found: error

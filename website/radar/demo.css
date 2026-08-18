@@ -1,0 +1,11 @@
+.connection { display: none !important; }
+html, body, :root { background: #5d6065; }
+.team { top: 12px; bottom: 12px; }
+.team.t { left: 12px; }
+.team.ct { right: 12px; }
+.team-head, .player-card, .gear, .settings { box-shadow: none; }
+.gear { top: 12px; }
+@media (max-width: 760px) {
+  .team { top: auto; }
+  .gear { top: 9px; }
+}
