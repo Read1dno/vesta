@@ -45,6 +45,21 @@ as Web Radar.
 5. Configure features for the current weapon group, or enable its global-profile
    switch to inherit the shared combat settings.
 
+### Verify the official build
+
+Release binaries are compiled by GitHub Actions and receive a signed build
+provenance attestation that identifies this repository, the release workflow,
+the source commit, and the tag. After downloading `vesta.exe`, verify it with
+[GitHub CLI](https://cli.github.com/):
+
+```powershell
+gh attestation verify .\vesta.exe --repo Read1dno/vesta
+```
+
+A successful result proves that the binary is the artifact produced by the
+repository's GitHub Actions workflow, rather than a manually substituted file.
+The accompanying `SHA256SUMS.txt` can additionally detect download corruption.
+
 Runtime files are stored in `%TEMP%\vesta`. Vesta creates a named configuration
 only when requested from the configuration interface. Current CS2 offsets are
 resolved at runtime; after a game update, rebuild before treating unexpected
@@ -268,8 +283,9 @@ cmake/                   dependency patch/apply helpers
 
 - **Build** configures Release, compiles `vesta.exe`, runs CTest, and uploads the
   executable as a workflow artifact.
-- **Release** repeats the verified build for version tags and attaches the EXE
-  and SHA-256 checksum to the GitHub Release.
+- **Release** repeats the verified build for version tags, signs its provenance
+  through GitHub Artifact Attestations, and attaches the EXE and SHA-256
+  checksum to the GitHub Release.
 - **Pages** builds the landing page, Lua documentation, Web Radar download, and
   available profiles, then deploys the static artifact.
 

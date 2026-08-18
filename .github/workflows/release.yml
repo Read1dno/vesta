@@ -6,6 +6,9 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   release:
@@ -23,6 +26,10 @@ jobs:
         run: |
           $hash = (Get-FileHash build/release/bin/vesta.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  vesta.exe" | Set-Content -Encoding ascii SHA256SUMS.txt
+      - name: Attest GitHub Actions build
+        uses: actions/attest@v4
+        with:
+          subject-path: build/release/bin/vesta.exe
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,3 +50,21 @@ jobs:
           } else {
             gh release create $tag --generate-notes @assets
           }
+
+          $repositoryUrl = "${{ github.server_url }}/${{ github.repository }}"
+          $runUrl = "$repositoryUrl/actions/runs/${{ github.run_id }}"
+          $releaseNotes = @(
+            "## Verified GitHub Actions build"
+            ""
+            "The attached vesta.exe was compiled from this tag by GitHub Actions. Its signed build provenance links the binary to this repository, workflow run, commit, and tag."
+            ""
+            "Build: [$($env:GITHUB_SHA.Substring(0, 7))]($repositoryUrl/commit/$env:GITHUB_SHA) · [GitHub Actions run]($runUrl)"
+            ""
+            "Verify the downloaded binary with GitHub CLI:"
+            ""
+            '```powershell'
+            "gh attestation verify .\\vesta.exe --repo ${{ github.repository }}"
+            '```'
+          ) -join "`n"
+          $releaseNotes | Set-Content -Encoding utf8 RELEASE_NOTES.md
+          gh release edit $tag --notes-file RELEASE_NOTES.md
