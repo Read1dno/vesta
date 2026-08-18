@@ -2,8 +2,6 @@
 
 <img src=".github/assets/vesta-header.gif" alt="VESTA" width="800">
 
-<img src="website/assets/vesta-interface.webp" alt="Vesta menu with the ESP Editor and chams preview" width="100%">
-
 **A feature-complete external cheat for Counter-Strike 2.**
 
 [Website](https://read1dno.github.io/vesta/) · [Download](https://github.com/Read1dno/vesta/releases/latest) · [Lua API](lua/docs/en/README.md) · [Web Radar](lua/scripts/Vesta%20Web%20Radar.lua)
