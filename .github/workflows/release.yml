@@ -15,15 +15,6 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v5
-      - name: Require immutable releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: pwsh
-        run: |
-          gh api `
-            -H "X-GitHub-Api-Version: 2026-03-10" `
-            "repos/${{ github.repository }}/immutable-releases" `
-            --silent
       - name: Configure
         run: cmake --preset release -DBUILD_TESTING=ON
       - name: Build
@@ -101,3 +92,11 @@ jobs:
 
           gh release edit $tag --draft=false
           if ($LASTEXITCODE -ne 0) { throw "Failed to publish immutable release." }
+
+          $published = gh api `
+            -H "X-GitHub-Api-Version: 2026-03-10" `
+            "repos/${{ github.repository }}/releases/tags/$tag" `
+            | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $published.immutable) {
+            throw "GitHub published $tag without immutable protection."
+          }
