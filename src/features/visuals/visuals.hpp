@@ -232,6 +232,14 @@ namespace features::visuals {
 			void on_render( zdraw::draw_list& draw_list );
 
 		private:
+			struct held_grenade_snapshot
+			{
+				std::uintptr_t weapon{};
+				std::uintptr_t weapon_vdata{};
+				std::uint16_t item_definition{};
+				bool valid{};
+			};
+
 			struct in_flight_grenade
 			{
 				std::uintptr_t entity{};
@@ -243,9 +251,11 @@ namespace features::visuals {
 				bool detonated{ false };
 			};
 
-			[[nodiscard]] bool preview_allowed( ) const;
-			void refresh_weapon_profile( );
-			void sample_throw( foundation::vec3& origin, foundation::vec3& velocity );
+			[[nodiscard]] static held_grenade_snapshot sample_held_grenade( );
+			[[nodiscard]] bool preview_allowed( const held_grenade_snapshot& weapon ) const;
+			void refresh_weapon_profile( const held_grenade_snapshot& weapon );
+			void sample_throw( const held_grenade_snapshot& weapon,
+				foundation::vec3& origin, foundation::vec3& velocity );
 
 			void reconcile_live_projectiles( );
 			[[nodiscard]] static std::uintptr_t weapon_id_for(

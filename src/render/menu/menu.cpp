@@ -1,6 +1,8 @@
 #include <stdafx.hpp>
 #include <scripting/runtime.hpp>
 #include <app/context.hpp>
+#include <core/input/bindings.hpp>
+#include <core/input/hotkeys.hpp>
 #include <features/visuals/visuals.hpp>
 #include <features/visuals/hitsound.hpp>
 #include <render/chams/preview.hpp>
@@ -15,19 +17,41 @@
 
 namespace
 {
-	constexpr ImVec4 k_bg_base{ 13.0f / 255.0f, 13.0f / 255.0f, 18.0f / 255.0f, 0.85f };
-	constexpr ImVec4 k_bg_panel{ 20.0f / 255.0f, 20.0f / 255.0f, 26.0f / 255.0f, 0.70f };
-	constexpr ImVec4 k_bg_card{ 28.0f / 255.0f, 28.0f / 255.0f, 36.0f / 255.0f, 0.60f };
+	ImVec4 k_bg_base{ 13.0f / 255.0f, 13.0f / 255.0f, 18.0f / 255.0f, 0.85f };
+	ImVec4 k_bg_panel{ 20.0f / 255.0f, 20.0f / 255.0f, 26.0f / 255.0f, 0.70f };
+	ImVec4 k_bg_card{ 28.0f / 255.0f, 28.0f / 255.0f, 36.0f / 255.0f, 0.60f };
 
-	constexpr ImVec4 k_bg_popup{ 13.0f / 255.0f, 13.0f / 255.0f, 18.0f / 255.0f, 0.78f };
-	constexpr ImVec4 k_bg_hover{ 1.0f, 1.0f, 1.0f, 0.08f };
-	constexpr ImVec4 k_accent{ 124.0f / 255.0f, 58.0f / 255.0f, 237.0f / 255.0f, 1.0f };
-	constexpr ImVec4 k_text_main{ 248.0f / 255.0f, 248.0f / 255.0f, 242.0f / 255.0f, 1.0f };
-	constexpr ImVec4 k_text_muted{ 161.0f / 255.0f, 161.0f / 255.0f, 170.0f / 255.0f, 1.0f };
-	constexpr ImVec4 k_border{ 1.0f, 1.0f, 1.0f, 0.06f };
-	constexpr ImVec4 k_border_light{ 1.0f, 1.0f, 1.0f, 0.12f };
+	ImVec4 k_bg_popup{ 13.0f / 255.0f, 13.0f / 255.0f, 18.0f / 255.0f, 0.78f };
+	ImVec4 k_bg_hover{ 1.0f, 1.0f, 1.0f, 0.08f };
+	ImVec4 k_accent{ 124.0f / 255.0f, 58.0f / 255.0f, 237.0f / 255.0f, 1.0f };
+	ImVec4 k_text_main{ 248.0f / 255.0f, 248.0f / 255.0f, 242.0f / 255.0f, 1.0f };
+	ImVec4 k_text_muted{ 161.0f / 255.0f, 161.0f / 255.0f, 170.0f / 255.0f, 1.0f };
+	ImVec4 k_border{ 1.0f, 1.0f, 1.0f, 0.06f };
+	ImVec4 k_border_light{ 1.0f, 1.0f, 1.0f, 0.12f };
 	constexpr float k_menu_width = 950.0f;
 	constexpr float k_menu_height = 650.0f;
+
+	[[nodiscard]] ImVec4 menu_color( const zdraw::rgba color )
+	{
+		return { color.r / 255.0f, color.g / 255.0f,
+			color.b / 255.0f, color.a / 255.0f };
+	}
+
+	void synchronize_menu_palette( )
+	{
+		const auto& palette = config::general_settings.palette;
+		k_bg_base = menu_color( palette.background );
+		k_bg_panel = menu_color( palette.panel );
+		k_bg_card = menu_color( palette.card );
+		k_bg_popup = menu_color( palette.popup );
+		k_bg_hover = menu_color( palette.hover );
+		k_accent = menu_color( palette.accent );
+		k_text_main = menu_color( palette.text );
+		k_text_muted = menu_color( palette.muted_text );
+		k_border = menu_color( palette.border );
+		k_border_light = k_border;
+		k_border_light.w = std::min( 1.0f, k_border.w * 2.0f );
+	}
 
 	[[nodiscard]] float current_menu_scale(
 		const float display_width, const float display_height )
@@ -1522,14 +1546,48 @@ float4 main(float4 position : SV_POSITION) : SV_Target
 		case VK_MBUTTON: return "M3";
 		case VK_XBUTTON1: return "M4";
 		case VK_XBUTTON2: return "M5";
-		case VK_SHIFT: return "SHIFT";
-		case VK_CONTROL: return "CTRL";
-		case VK_MENU: return "ALT";
+		case VK_SHIFT: case VK_LSHIFT: return "LEFT SHIFT";
+		case VK_RSHIFT: return "RIGHT SHIFT";
+		case VK_CONTROL: case VK_LCONTROL: return "LEFT CTRL";
+		case VK_RCONTROL: return "RIGHT CTRL";
+		case VK_MENU: case VK_LMENU: return "LEFT ALT";
+		case VK_RMENU: return "RIGHT ALT";
 		case VK_SPACE: return "SPACE";
+		case VK_INSERT: return "INSERT";
+		case VK_DELETE: return "DELETE";
+		case VK_HOME: return "HOME";
+		case VK_END: return "END";
+		case VK_PRIOR: return "PAGE UP";
+		case VK_NEXT: return "PAGE DOWN";
+		case VK_TAB: return "TAB";
+		case VK_RETURN: return "ENTER";
+		case VK_BACK: return "BACKSPACE";
+		case VK_CAPITAL: return "CAPS LOCK";
+		case VK_NUMLOCK: return "NUM LOCK";
+		case VK_SCROLL: return "SCROLL LOCK";
+		case VK_PAUSE: return "PAUSE";
+		case VK_UP: return "UP";
+		case VK_DOWN: return "DOWN";
+		case VK_LEFT: return "LEFT";
+		case VK_RIGHT: return "RIGHT";
 		default:
 			if ( key >= '0' && key <= '9' ) return std::string( 1, static_cast<char>( key ) );
 			if ( key >= 'A' && key <= 'Z' ) return std::string( 1, static_cast<char>( key ) );
-			return std::format( "VK_{}", key );
+			if ( key >= VK_F1 && key <= VK_F24 )
+				return std::format( "F{}", key - VK_F1 + 1 );
+			if ( key >= VK_NUMPAD0 && key <= VK_NUMPAD9 )
+				return std::format( "NUM {}", key - VK_NUMPAD0 );
+			wchar_t wide_name[64]{};
+			const auto scan = ::MapVirtualKeyW( static_cast<UINT>( key ), MAPVK_VK_TO_VSC );
+			if ( scan && ::GetKeyNameTextW( static_cast<LONG>( scan << 16 ),
+				wide_name, static_cast<int>( std::size( wide_name ) ) ) > 0 )
+			{
+				char utf8[128]{};
+				const auto length = ::WideCharToMultiByte( CP_UTF8, 0, wide_name, -1,
+					utf8, static_cast<int>( std::size( utf8 ) ), nullptr, nullptr );
+				if ( length > 1 ) return std::string( utf8, length - 1 );
+			}
+			return std::format( "KEY {}", key );
 		}
 	}
 
@@ -2415,19 +2473,56 @@ void menu_t::reset_content_animation( )
 
 void menu_t::poll_hotkey( )
 {
-	const bool insert_is_down = ( ::GetAsyncKeyState( VK_INSERT ) & 0x8000 ) != 0;
-	if ( insert_is_down && !this->m_insert_was_down )
+	const auto menu_key = platform::windows::lifecycle_keys( ).menu;
+	const bool hotkey_is_down = ( ::GetAsyncKeyState( menu_key ) & 0x8000 ) != 0;
+	if ( hotkey_is_down && !this->m_menu_hotkey_was_down )
 	{
-		const auto opened = !this->m_open.load( std::memory_order_relaxed );
-		this->m_open.store( opened, std::memory_order_release );
-		if ( opened )
+		if ( this->m_open.load( std::memory_order_relaxed ) )
 		{
-			g_toggle_animations.clear( );
-			this->reset_content_animation( );
+			this->m_open.store( false, std::memory_order_release );
+			this->m_open_pending = false;
+		}
+		else this->m_open_pending = !this->m_open_pending;
+	}
+	this->m_menu_hotkey_was_down = hotkey_is_down;
 
+	if ( !this->m_open_pending || this->m_open.load( std::memory_order_relaxed ) )
+		return;
+
+	std::vector<std::uint16_t> movement_keys{ 'W', 'A', 'S', 'D' };
+	constexpr std::array movement_actions{
+		game::input_action::forward, game::input_action::back,
+		game::input_action::left, game::input_action::right,
+	};
+	for ( const auto action : movement_actions )
+	{
+		for ( const auto& binding : game::input_bindings( ).candidates( action ) )
+		{
+			if ( binding.device == game::input_device::keyboard && binding.virtual_key
+				&& std::ranges::find( movement_keys, binding.virtual_key )
+					== movement_keys.end( ) )
+			{
+				movement_keys.push_back( binding.virtual_key );
+			}
 		}
 	}
-	this->m_insert_was_down = insert_is_down;
+	if ( std::ranges::any_of( movement_keys, [ ]( const std::uint16_t key )
+		{
+			return app::context( ).input.physical_key_down( key );
+		} ) )
+	{
+		return;
+	}
+
+	this->m_open.store( true, std::memory_order_release );
+	std::vector<platform::windows::input_gateway::key_transition> releases{};
+	releases.reserve( movement_keys.size( ) );
+	for ( const auto key : movement_keys ) releases.push_back( { key, false } );
+	app::context( ).input.keys( releases );
+	app::context( ).input.set_movement_gate( {}, false );
+	this->m_open_pending = false;
+	g_toggle_animations.clear( );
+	this->reset_content_animation( );
 }
 
 void menu_t::draw( )
@@ -2437,6 +2532,7 @@ void menu_t::draw( )
 	{
 		return;
 	}
+	synchronize_menu_palette( );
 
 	const auto display = ImGui::GetIO( ).DisplaySize;
 	const auto menu_scale = current_menu_scale( display.x, display.y );
@@ -3270,7 +3366,7 @@ void menu_t::draw_combat( bool triggerbot )
 	begin_cards( triggerbot ? "##trigger_grid" : "##aim_grid" );
 
 	auto& global = config::combat_settings.global;
-	static constexpr const char* activation_modes[ ]{ "Hold", "Always On" };
+	static constexpr const char* activation_modes[ ]{ "Hold", "Always On", "Toggle" };
 	static constexpr const char* fov_modes[ ]{ "Fixed", "Distance", "Target" };
 	const auto checks_row = [ & ]( config::combat_profile::legit_checks& checks )
 	{
@@ -3316,6 +3412,18 @@ void menu_t::draw_combat( bool triggerbot )
 		toggle_popup_row( "Master Switch", enabled, 1, [ & ]
 			{
 				select_row( "Mode", mode, activation_modes );
+			} );
+	};
+	const auto damage_override_row = [ & ]( bool& enabled, float& value,
+		int& mode, int& key )
+	{
+		const auto rows = mode == config::combat_profile::activation::always ? 2 : 3;
+		toggle_popup_row( "Damage Override", enabled, rows, [ & ]
+			{
+				select_row( "Mode", mode, activation_modes );
+				if ( mode != config::combat_profile::activation::always )
+					keybind_row( "Key", key );
+				slider_row( "Override Damage", value, 1.0f, 100.0f, "", 1.0f );
 			} );
 	};
 	const auto fov_row = [ & ]( int& fixed_fov,
@@ -3400,72 +3508,88 @@ void menu_t::draw_combat( bool triggerbot )
 	{
 		if ( !triggerbot )
 		{
-			const auto aim_hold = global.aimbot_activation_mode
-				== config::combat_profile::activation::hold;
-			card_in_column( "targeting", "TARGETING", aim_hold ? 9 : 8, 0, [ & ]
+			const auto aim_uses_key = global.aimbot_activation_mode
+				!= config::combat_profile::activation::always;
+			const auto targeting_rows = global.aimbot_enabled
+				? ( aim_uses_key ? 9 : 8 ) : 1;
+			card_in_column( "targeting", "TARGETING", targeting_rows, 0, [ & ]
 				{
 					master_row( global.aimbot_enabled, global.aimbot_activation_mode );
-					if ( aim_hold ) keybind_row( "Key", global.aimbot_key );
-					checks_row( global.aimbot_checks );
-					aim_parts_row( global.aimbot_hitbox_parts );
-					fov_row( global.aimbot_fov, global.aimbot_fov_config,
-						global.aimbot_draw_fov, global.aimbot_fov_color );
-					humanizer_row( global.aimbot_humanize,
-						global.aimbot_smoothing, global.aimbot_humanizer );
-					multipoint_row( global.aimbot_multipoint,
-						global.aimbot_multipoint_config );
-					prediction_row( global.aimbot_prediction );
-					toggle_row( "Lethal Only", global.aimbot_lethal_only );
+					if ( global.aimbot_enabled )
+					{
+						if ( aim_uses_key ) keybind_row( "Key", global.aimbot_key );
+						checks_row( global.aimbot_checks );
+						aim_parts_row( global.aimbot_hitbox_parts );
+						fov_row( global.aimbot_fov, global.aimbot_fov_config,
+							global.aimbot_draw_fov, global.aimbot_fov_color );
+						humanizer_row( global.aimbot_humanize,
+							global.aimbot_smoothing, global.aimbot_humanizer );
+						multipoint_row( global.aimbot_multipoint,
+							global.aimbot_multipoint_config );
+						prediction_row( global.aimbot_prediction );
+						toggle_row( "Lethal Only", global.aimbot_lethal_only );
+					}
 				} );
 			card_in_column( "recoil", "RECOIL CONTROL", 1, 1, [ & ]
 				{ rcs_row( global.aimbot_rcs ); } );
-			card_in_column( "penetration", "PENETRATION", 2, 1, [ & ]
-				{
-					visibility_row( global.aimbot_checks );
-					slider_row( "Min Damage", global.aimbot_min_damage, 1.0f, 100.0f, "", 1.0f );
-				} );
+			if ( global.aimbot_enabled )
+				card_in_column( "penetration", "PENETRATION", 3, 1, [ & ]
+					{
+						visibility_row( global.aimbot_checks );
+						slider_row( "Min Damage", global.aimbot_min_damage, 1.0f, 100.0f, "", 1.0f );
+						damage_override_row( global.aimbot_min_damage_override_enabled,
+							global.aimbot_min_damage_override,
+							global.aimbot_min_damage_override_mode,
+							global.aimbot_min_damage_override_key );
+					} );
 		}
 		else
 		{
 			static constexpr const char* seed_types[ ]{ "None", "Restricted", "Unrestricted" };
 			const auto global_seeded = global.triggerbot_seed_type != config::combat_profile::seed_mode::none;
-			const auto trigger_hold = global.triggerbot_activation_mode
-				== config::combat_profile::activation::hold;
-			const auto trigger_rows = ( trigger_hold ? 1 : 0 )
-				+ ( global_seeded ? 7 : 8 );
+			const auto trigger_uses_key = global.triggerbot_activation_mode
+				!= config::combat_profile::activation::always;
+			const auto trigger_rows = global.triggerbot_enabled
+				? ( trigger_uses_key ? 1 : 0 ) + ( global_seeded ? 7 : 8 ) : 1;
 			card_in_column( "trigger_core", "TRIGGERBOT CORE", trigger_rows, 0, [ & ]
 				{
 					master_row( global.triggerbot_enabled, global.triggerbot_activation_mode );
-					if ( trigger_hold ) keybind_row( "Key", global.triggerbot_key );
-					checks_row( global.triggerbot_checks );
-					select_row( "Seed Type", global.triggerbot_seed_type, seed_types );
-					aim_parts_row( global.triggerbot_hitbox_parts );
-					if ( global_seeded )
+					if ( global.triggerbot_enabled )
 					{
-						slider_row( "Reaction Time (ms)", global.triggerbot_reaction_time, 0, 400 );
+						if ( trigger_uses_key ) keybind_row( "Key", global.triggerbot_key );
+						checks_row( global.triggerbot_checks );
+						select_row( "Seed Type", global.triggerbot_seed_type, seed_types );
+						aim_parts_row( global.triggerbot_hitbox_parts );
+						if ( global_seeded )
+							slider_row( "Reaction Time (ms)", global.triggerbot_reaction_time, 0, 400 );
+						else
+						{
+							slider_row( "Hitchance", global.triggerbot_hitchance, 0.0f, 100.0f, "%", 1.0f );
+							trigger_timing_row( global.triggerbot_delay,
+								global.triggerbot_randomize_ms, global.triggerbot_outlier_chance,
+								global.triggerbot_outlier_delay_ms, global.triggerbot_delay_after_ms );
+						}
+						toggle_row( "Predictive", global.triggerbot_predictive );
+						toggle_row( "Lethal Only", global.triggerbot_lethal_only );
 					}
-					else
+				} );
+			if ( global.triggerbot_enabled )
+				card_in_column( "trigger_penetration", "PENETRATION", 3, 1, [ & ]
 					{
-						slider_row( "Hitchance", global.triggerbot_hitchance, 0.0f, 100.0f, "%", 1.0f );
-						trigger_timing_row( global.triggerbot_delay,
-							global.triggerbot_randomize_ms, global.triggerbot_outlier_chance,
-							global.triggerbot_outlier_delay_ms, global.triggerbot_delay_after_ms );
-					}
-					toggle_row( "Predictive", global.triggerbot_predictive );
-					toggle_row( "Lethal Only", global.triggerbot_lethal_only );
-				} );
-			card_in_column( "trigger_penetration", "PENETRATION", 2, 1, [ & ]
-				{
-					visibility_row( global.triggerbot_checks );
-					slider_row( "Min Damage", global.triggerbot_min_damage, 1.0f, 100.0f, "", 1.0f );
-				} );
+						visibility_row( global.triggerbot_checks );
+						slider_row( "Min Damage", global.triggerbot_min_damage, 1.0f, 100.0f, "", 1.0f );
+						damage_override_row( global.triggerbot_min_damage_override_enabled,
+							global.triggerbot_min_damage_override,
+							global.triggerbot_min_damage_override_mode,
+							global.triggerbot_min_damage_override_key );
+					} );
 		}
 	}
 	else
 	{
 		auto& group = config::combat_settings.overrides[ this->m_weapon_group ];
 		card( "override", "OVERRIDE SETTINGS", 1, [ & ] { toggle_row( "Inherit Global Settings", group.use_global ); } );
-		if ( !group.use_global && !triggerbot )
+		if ( !group.use_global && !triggerbot && global.aimbot_enabled )
 		{
 			card_in_column( "targeting", "TARGETING", 7, 0, [ & ]
 				{
@@ -3488,7 +3612,7 @@ void menu_t::draw_combat( bool triggerbot )
 					slider_row( "Min Damage", group.aimbot_min_damage, 1.0f, 100.0f, "", 1.0f );
 				} );
 		}
-		else if ( !group.use_global )
+		else if ( !group.use_global && triggerbot && global.triggerbot_enabled )
 		{
 			static constexpr const char* seed_types[ ]{ "None", "Restricted", "Unrestricted" };
 			const auto group_seeded = group.triggerbot_seed_type != config::combat_profile::seed_mode::none;
@@ -3548,8 +3672,14 @@ void menu_t::draw_visuals( )
 		auto& p = config::visual_settings.m_player;
 		card( "master", "MASTER", 2, [ & ]
 			{
-				toggle_popup_row( "Enable Player ESP", p.enabled, 1, [ & ]
+				const auto activation_rows = p.activation_mode
+					== config::visual_profile::player::always_on ? 2 : 3;
+				toggle_popup_row( "Enable Player ESP", p.enabled, activation_rows, [ & ]
 					{
+						static constexpr const char* modes[]{ "Always On", "Hold", "Toggle" };
+						select_row( "Mode", p.activation_mode, modes );
+						if ( p.activation_mode != config::visual_profile::player::always_on )
+							keybind_row( "Key", p.activation_key );
 						toggle_row( "Spectator Sync", p.spectator_sync );
 					} );
 				toggle_popup_row( "Legit Sync", p.m_legit_sync.enabled, 6, [ & ]
@@ -3768,18 +3898,18 @@ void menu_t::draw_visuals( )
 		auto& p = config::visual_settings.m_radar;
 		card_in_column( "radar_players", "RADAR PLAYERS", 5, 0, [ & ]
 			{
-				const auto hold = p.activation_mode
-					== config::visual_profile::radar::hold;
+				const auto uses_key = p.activation_mode
+					!= config::visual_profile::radar::always_on;
 				toggle_popup_row( "Overlay Enemy Markers", p.enabled,
-					hold ? 2 : 1, [ & ]
+					uses_key ? 2 : 1, [ & ]
 					{
 						int mode = p.activation_mode;
-						static constexpr const char* modes[ ]{ "Always On", "Hold" };
+						static constexpr const char* modes[ ]{ "Always On", "Hold", "Toggle" };
 						select_row( "Activation", mode, modes );
 						p.activation_mode = std::clamp( mode,
 							static_cast<int>( config::visual_profile::radar::always_on ),
-							static_cast<int>( config::visual_profile::radar::hold ) );
-						if ( p.activation_mode == config::visual_profile::radar::hold )
+							static_cast<int>( config::visual_profile::radar::toggle ) );
+						if ( p.activation_mode != config::visual_profile::radar::always_on )
 							keybind_row( "Key", p.activation_key );
 					} );
 				toggle_color_row( "Player Names", p.show_names, p.name_color );
@@ -3965,7 +4095,7 @@ void menu_t::draw_misc( )
 
 	if ( this->m_misc_group == 0 )
 	{
-		card_in_column( "interface", "INTERFACE", 2, 0, [ & ]
+		card_in_column( "interface", "INTERFACE", 3, 0, [ & ]
 		{
 			static constexpr const char* languages[]{ "English", "Русский" };
 			const int previous = p.language;
@@ -3985,6 +4115,27 @@ void menu_t::draw_misc( )
 			select_row( "DPI Scale", dpi_index, dpi_labels );
 			p.menu_scale = dpi_scales[ std::clamp( dpi_index, 0,
 				static_cast<int>( dpi_scales.size() ) - 1 ) ];
+			settings_popup_row( "Interface Colors", 3, [ & ]
+			{
+				settings_popup_row( "Typography", 2, [ & ]
+				{
+					color_row( "Primary Text", p.palette.text );
+					color_row( "Muted Text", p.palette.muted_text );
+				} );
+				settings_popup_row( "Surfaces", 4, [ & ]
+				{
+					color_row( "Menu Background", p.palette.background );
+					color_row( "Controls", p.palette.panel );
+					color_row( "Containers", p.palette.card );
+					color_row( "Popups", p.palette.popup );
+				} );
+				settings_popup_row( "Interaction", 3, [ & ]
+				{
+					color_row( "Accent", p.palette.accent );
+					color_row( "Hover", p.palette.hover );
+					color_row( "Borders", p.palette.border );
+				} );
+			} );
 		} );
 		card_in_column( "automation", "AUTOMATION", 1, 1, [ & ]
 			{ toggle_row( "Auto Accept Match", p.auto_accept ); } );

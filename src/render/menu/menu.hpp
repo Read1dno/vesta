@@ -30,7 +30,8 @@ private:
 	void reset_content_animation( );
 
 	std::atomic<bool> m_open{};
-	bool m_insert_was_down{};
+	bool m_menu_hotkey_was_down{};
+	bool m_open_pending{};
 	HWND m_hwnd{};
 	int m_page{};
 	int m_weapon_group{ -1 };

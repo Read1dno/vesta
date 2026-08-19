@@ -78,6 +78,8 @@ private:
 	bool initialize_graphics( );
 	bool open_device_backend( );
 	bool open_composition_backend( );
+	bool open_composition_swap_chain( );
+	void close_composition_swap_chain( ) noexcept;
 	bool open_swap_chain_backend( );
 	bool attach_presentation( );
 	void detach_presentation( ) noexcept;
@@ -140,7 +142,6 @@ private:
 	bool m_present_tearing_enabled{};
 	bool m_resize_pending{};
 	bool m_frame_latency_recovery_pending{};
-	bool m_composition_swap_chain_ever_attached{};
 	std::uint64_t m_presentation_generation{};
 	ID3D11Texture2D* m_back_buffer{};
 	ID3D11RenderTargetView* m_rtv{};

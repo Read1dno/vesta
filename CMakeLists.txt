@@ -58,6 +58,7 @@ set(vesta_sources
     src/core/assets/resource.cpp
     src/core/assets/vpk.cpp
     src/core/input/bindings.cpp
+	 src/core/input/hotkeys.cpp
     src/core/input/input.cpp
     src/core/math/interpolation.cpp
     src/core/math/random.cpp
@@ -138,7 +139,7 @@ set(vesta_sources
 option(VESTA_SEED_LOG "Instrument the seed trigger and force the console on" OFF)
 option(VESTA_PERF_LOG "Write low-overhead aggregate performance telemetry" OFF)
 
-set(VESTA_DEFAULT_PROFILE_HEX "7b7d")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/configs/legit.cfg" VESTA_DEFAULT_PROFILE_HEX HEX)
 string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," VESTA_DEFAULT_PROFILE_BYTES
     "${VESTA_DEFAULT_PROFILE_HEX}")
 configure_file(
@@ -178,7 +179,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE d3d11 d3dcompiler windowscodecs ole32 dwmapi dcomp winmm xaudio2 ntdll comdlg32 advapi32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE d3d11 d3dcompiler windowscodecs ole32 dwmapi dcomp winmm xaudio2 ntdll comdlg32 advapi32 shell32)
 endif()
 
 if(MSVC)
@@ -189,9 +190,8 @@ if(MSVC)
         $<$<CONFIG:Release>:/O2;/GL;/MP;/arch:AVX>
     )
     target_link_options(${PROJECT_NAME} PRIVATE
-		"$<$<BOOL:${VESTA_PERF_LOG}>:/MANIFESTUAC:level='asInvoker' uiAccess='false'>"
+		"/MANIFESTUAC:level='asInvoker' uiAccess='false'"
 
-		"$<$<NOT:$<BOOL:${VESTA_PERF_LOG}>>:/MANIFESTUAC:level='requireAdministrator' uiAccess='false'>"
         $<$<CONFIG:Debug>:/DEBUG>
         $<$<CONFIG:Release>:/LTCG;/OPT:REF;/OPT:ICF;/DEBUG:FULL>
         $<$<AND:$<CONFIG:Release>,$<NOT:$<BOOL:${VESTA_SEED_LOG}>>>:/SUBSYSTEM:WINDOWS>

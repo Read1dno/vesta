@@ -20,6 +20,21 @@ namespace {
 			[ entity ]( const auto& projectile ) { return projectile.entity == entity; } );
 	}
 
+	[[nodiscard]] constexpr std::uintptr_t weapon_id_for_item_definition(
+		const std::uint16_t item_definition )
+	{
+		switch ( item_definition )
+		{
+		case 43: return "weapon_flashbang"_id;
+		case 44: return "weapon_hegrenade"_id;
+		case 45: return "weapon_smokegrenade"_id;
+		case 46: return "weapon_molotov"_id;
+		case 47: return "weapon_decoy"_id;
+		case 48: return "weapon_incgrenade"_id;
+		default: return 0;
+		}
+	}
+
 	void draw_square_marker( zdraw::draw_list& output, const foundation::vec2& center,
 		float size, const zdraw::rgba& color )
 	{
@@ -70,16 +85,15 @@ namespace {
 				draw_path( draw_list, flight.traj, opacity );
 		}
 
-		const auto& weapon = simulation::ballistics().ctx( );
-		const auto pin_held = weapon.valid && weapon.weapon
-			&& weapon.weapon_type == game::rules::equipment_class::throwable
+		const auto weapon = sample_held_grenade( );
+		const auto pin_held = weapon.valid
 			&& app::context().process.load<bool>(
 				weapon.weapon + SCHEMA( "C_BaseCSGrenade", "m_bPinPulled"_id ) );
 		if ( m_was_holding && !pin_held )
 			m_last_throw_time = now;
 		m_was_holding = pin_held;
 
-		if ( !collision_ready || !preview_allowed( ) )
+		if ( !collision_ready || !preview_allowed( weapon ) )
 		{
 			m_preview.valid = false;
 			return;
@@ -88,9 +102,9 @@ namespace {
 		if ( !m_preview.valid || now - m_last_preview_update >= std::chrono::milliseconds( 16 ) )
 		{
 			m_last_preview_update = now;
-			refresh_weapon_profile( );
+			refresh_weapon_profile( weapon );
 			foundation::vec3 origin{}, velocity{};
-			sample_throw( origin, velocity );
+			sample_throw( weapon, origin, velocity );
 			m_preview = m_trajectory_engine.predict( origin, velocity, m_weapon_id );
 		}
 
@@ -98,53 +112,69 @@ namespace {
 			draw_path( draw_list, m_preview, 1.0f );
 	}
 
-	bool grenade_prediction_t::preview_allowed( ) const
+	grenade_prediction_t::held_grenade_snapshot grenade_prediction_t::sample_held_grenade( )
 	{
-		const auto& weapon = simulation::ballistics().ctx( );
-		if ( !weapon.valid || !weapon.weapon || !weapon.weapon_vdata
-			|| weapon.weapon_type != game::rules::equipment_class::throwable )
-		{
+		held_grenade_snapshot result{};
+		result.weapon = game::local_player().weapon( );
+		result.weapon_vdata = game::local_player().weapon_vdata( );
+		if ( !result.weapon || !result.weapon_vdata )
+			return result;
+
+		result.item_definition = app::context().process.load<std::uint16_t>(
+			result.weapon + SCHEMA( "C_EconEntity", "m_AttributeManager"_id )
+			+ SCHEMA( "C_AttributeContainer", "m_Item"_id )
+			+ SCHEMA( "C_EconItemView", "m_iItemDefinitionIndex"_id ) );
+		result.valid = weapon_id_for_item_definition( result.item_definition ) != 0
+			&& game::local_player().weapon( ) == result.weapon
+			&& game::local_player().weapon_vdata( ) == result.weapon_vdata;
+		return result;
+	}
+
+	bool grenade_prediction_t::preview_allowed( const held_grenade_snapshot& weapon ) const
+	{
+		if ( !weapon.valid )
 			return false;
-		}
 
 		const auto pin_held = app::context().process.load<bool>(
 			weapon.weapon + SCHEMA( "C_BaseCSGrenade", "m_bPinPulled"_id ) );
 		if ( !pin_held && seconds_since( m_last_throw_time ) < throw_cooldown )
 			return false;
-
-		return app::context().process.load<float>(
-			weapon.weapon + SCHEMA( "C_BaseCSGrenade", "m_fThrowTime"_id ) ) <= 0.0f;
+		return true;
 	}
 
-	void grenade_prediction_t::refresh_weapon_profile( )
+	void grenade_prediction_t::refresh_weapon_profile( const held_grenade_snapshot& weapon )
 	{
-		const auto weapon_data = simulation::ballistics().ctx().weapon_vdata;
-		if ( !weapon_data || weapon_data == m_weapon_vdata )
+		const auto weapon_data = weapon.weapon_vdata;
+		const auto definition_id = weapon_id_for_item_definition( weapon.item_definition );
+		if ( !weapon_data || ( weapon_data == m_weapon_vdata && m_weapon_id
+			&& ( !definition_id || definition_id == m_weapon_id )
+			&& std::isfinite( m_throw_velocity ) && m_throw_velocity > 1.0f ) )
 			return;
 
+		auto throw_velocity = app::context().process.load<float>(
+			weapon_data + SCHEMA( "CCSWeaponBaseVData", "m_flThrowVelocity"_id ) );
+		if ( !std::isfinite( throw_velocity ) || throw_velocity <= 1.0f )
+			throw_velocity = 750.0f;
+
+		auto resolved_id = definition_id;
+		if ( !resolved_id )
+		{
+			const auto name_address = app::context().process.load<std::uintptr_t>(
+				weapon_data + SCHEMA( "CCSWeaponBaseVData", "m_szName"_id ) );
+			char name[ 64 ]{};
+			if ( !name_address || !app::context().process.copy(
+				name_address, name, sizeof( name ) - 1 ) )
+				return;
+			resolved_id = identity::of( name );
+		}
 		m_weapon_vdata = weapon_data;
-		m_throw_velocity = std::clamp( app::context().process.load<float>(
-			weapon_data + SCHEMA( "CCSWeaponBaseVData", "m_flThrowVelocity"_id ) ), 1.0f, 10000.0f );
-		const auto name_address = app::context().process.load<std::uintptr_t>(
-			weapon_data + SCHEMA( "CCSWeaponBaseVData", "m_szName"_id ) );
-		if ( !name_address )
-		{
-			m_weapon_id = 0;
-			return;
-		}
-
-		char name[ 64 ]{};
-		if ( !app::context().process.copy( name_address, name, sizeof( name ) - 1 ) )
-		{
-			m_weapon_id = 0;
-			return;
-		}
-		m_weapon_id = identity::of( name );
+		m_throw_velocity = std::clamp( throw_velocity, 1.0f, 10000.0f );
+		m_weapon_id = resolved_id;
 	}
 
-	void grenade_prediction_t::sample_throw( foundation::vec3& origin, foundation::vec3& velocity )
+	void grenade_prediction_t::sample_throw( const held_grenade_snapshot& weapon,
+		foundation::vec3& origin, foundation::vec3& velocity )
 	{
-		const auto& weapon = simulation::ballistics().ctx( );
 		auto strength = 1.0f;
 		if ( app::context().process.load<bool>(
 			weapon.weapon + SCHEMA( "C_BaseCSGrenade", "m_bPinPulled"_id ) ) )
@@ -196,13 +226,17 @@ namespace {
 			if ( settings.local_only && projectile.thrower_handle != local_handle )
 				continue;
 			observed.push_back( projectile.entity );
+			const auto effect_started = projectile.detonated
+				|| ( projectile.subtype == game::projectile_kind::smoke_grenade
+					? projectile.smoke_active && !projectile.in_flight
+					: projectile.effect_tick_begin > 0 && !projectile.in_flight );
 
 			const auto existing = std::ranges::find( m_in_flight, projectile.entity,
 				&in_flight_grenade::entity );
 			if ( existing != m_in_flight.end( ) )
 			{
 				existing->last_seen = now;
-				if ( !existing->detonated && projectile.effect_tick_begin > 0 )
+				if ( !existing->detonated && effect_started )
 				{
 					existing->detonated = true;
 					existing->detonate_time = now;
@@ -210,14 +244,12 @@ namespace {
 				continue;
 			}
 
-			if ( projectile.effect_tick_begin > 0 )
+			if ( effect_started )
 				continue;
-			const auto initial_position = app::context().process.load<foundation::vec3>(
-				projectile.entity + SCHEMA( "C_BaseCSGrenadeProjectile", "m_vInitialPosition"_id ) );
-			const auto initial_velocity = app::context().process.load<foundation::vec3>(
-				projectile.entity + SCHEMA( "C_BaseCSGrenadeProjectile", "m_vInitialVelocity"_id ) );
-			if ( initial_velocity.length_sqr( ) < 1.0f )
+			if ( !projectile.launch_valid )
 				continue;
+			const auto initial_position = projectile.initial_position;
+			const auto initial_velocity = projectile.initial_velocity;
 
 			const auto weapon_id = weapon_id_for( projectile.subtype );
 			m_in_flight.push_back( in_flight_grenade{

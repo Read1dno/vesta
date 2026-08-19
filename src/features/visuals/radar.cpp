@@ -4,12 +4,7 @@
 namespace {
 	[[nodiscard]] bool radar_active( )
 	{
-		const auto& cfg = config::visual_settings.m_radar;
-		if ( !cfg.enabled ) return false;
-		if ( cfg.activation_mode == config::visual_profile::radar::always_on )
-			return true;
-		return cfg.activation_key > 0
-			&& ( ::GetAsyncKeyState( cfg.activation_key ) & 0x8000 ) != 0;
+		return config::visual_settings.m_radar.active( );
 	}
 
 	struct rect_t
@@ -692,9 +687,7 @@ namespace features::visuals {
 					? projectile.initial_position : projectile.origin;
 				const auto launch_velocity = has_initial_velocity
 					? projectile.initial_velocity : projectile.velocity;
-				const auto moving = launch_velocity.length_sqr() > 25.0f
-					&& !projectile.detonated && !projectile.smoke_active
-					&& projectile.subtype != game::projectile_kind::molotov_fire;
+				const auto moving = projectile.launch_valid && projectile.in_flight;
 				if ( radar_cfg.show_trajectories && moving && data.weapon
 					&& ( cached.weapon != data.weapon || !cached.path.valid
 						|| cached.initial_position.distance_sqr( launch_position ) > 1.0f

@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include <render/draw.hpp>
+#include <core/input/activation.hpp>
 
 namespace config {
 
@@ -10,7 +11,15 @@ namespace config {
 	{
 		struct player
 		{
+			enum activation_type : int { always_on = 0, hold = 1, toggle = 2 };
 			bool enabled{ true };
+			int activation_mode{ always_on };
+			int activation_key{};
+			[[nodiscard]] bool active( ) const noexcept
+			{
+				return enabled && platform::windows::binding_active(
+					activation_mode, activation_key, always_on, hold, toggle );
+			}
 
 			bool spectator_sync{ false };
 			struct legit_sync
@@ -410,11 +419,17 @@ namespace config {
 			enum activation_type : int
 			{
 				always_on = 0,
-				hold = 1
+				hold = 1,
+				toggle = 2
 			};
 			bool enabled{ true };
 			int activation_mode{ always_on };
 			int activation_key{};
+			[[nodiscard]] bool active( ) const noexcept
+			{
+				return enabled && platform::windows::binding_active(
+					activation_mode, activation_key, always_on, hold, toggle );
+			}
 			bool show_names{ true };
 			bool show_health{ true };
 			bool show_armor{ true };

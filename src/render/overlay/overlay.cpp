@@ -1,6 +1,7 @@
 #include <stdafx.hpp>
 #include <scripting/runtime.hpp>
 #include <app/context.hpp>
+#include <core/input/hotkeys.hpp>
 #include <features/aimbot/aimbot.hpp>
 #include <features/misc/misc.hpp>
 #include <features/misc/auto_stop.hpp>
@@ -92,6 +93,7 @@ namespace
 			|| combat.penetration_crosshair;
 	}
 
+#if defined( _DEBUG ) || ( defined( VESTA_PERF_LOG ) && VESTA_PERF_LOG )
 	void write_overlay_backend_diagnostic(
 		const bool ui_access_enabled,
 		const bool tracker_enabled,
@@ -175,6 +177,13 @@ namespace
 			<< std::dec << '\n';
 		stream.flush( );
 	}
+#else
+	void write_overlay_backend_diagnostic(
+		bool, bool, DWORD, std::uint32_t, bool, bool, HWND, HWND, const RECT& ) {}
+
+	void write_overlay_lifecycle_event(
+		std::string_view, HWND = nullptr, HRESULT = S_OK ) {}
+#endif
 
 	[[nodiscard]] HRESULT wait_for_gpu_idle(
 		ID3D11Device* const device, ID3D11DeviceContext* const context )
@@ -1161,13 +1170,34 @@ namespace
 		const auto add_combat = [ & ]( const char* name, bool enabled, int mode, int key )
 		{
 			if ( !enabled || !config::combat_profile::activation_active( mode, key ) ) return;
+			const auto* mode_name = mode == config::combat_profile::activation::always
+				? "always" : mode == config::combat_profile::activation::toggle
+					? "toggle" : "hold";
 			rows.push_back( { std::format( "{}  [{}]", name,
-				mode == config::combat_profile::activation::always ? "always" : "hold" ), k_wm_text } );
+				mode_name ), k_wm_text } );
 		};
 		add_combat( "Aimbot", combat.aimbot.enabled,
 			combat.aimbot.activation_mode, combat.aimbot.key );
 		add_combat( "Trigger", combat.triggerbot.enabled,
 			combat.triggerbot.activation_mode, combat.triggerbot.key );
+		const auto& player_esp = config::visual_settings.m_player;
+		if ( player_esp.active( ) )
+		{
+			const auto* mode = player_esp.activation_mode
+				== config::visual_profile::player::always_on ? "always"
+				: player_esp.activation_mode == config::visual_profile::player::toggle
+					? "toggle" : "hold";
+			rows.push_back( { std::format( "Player ESP  [{}]", mode ), k_wm_text } );
+		}
+		const auto& radar = config::visual_settings.m_radar;
+		if ( radar.active( ) )
+		{
+			const auto* mode = radar.activation_mode
+				== config::visual_profile::radar::always_on ? "always"
+				: radar.activation_mode == config::visual_profile::radar::toggle
+					? "toggle" : "hold";
+			rows.push_back( { std::format( "Radar  [{}]", mode ), k_wm_text } );
+		}
 		const auto key_down = []( int key ) { return key > 0 && ( ::GetAsyncKeyState( key ) & 0x8000 ) != 0; };
 		const auto& misc = config::general_settings;
 		if ( misc.m_bunny_hop.enabled && key_down( misc.m_bunny_hop.activation_key ) ) rows.push_back( { "Bunny Hop  [hold]", k_wm_text } );
@@ -1412,7 +1442,6 @@ bool overlay_t::launch()
 	this->m_render_height = 1;
 	this->m_resize_pending = false;
 	this->m_frame_latency_recovery_pending = false;
-	this->m_composition_swap_chain_ever_attached = false;
 	this->m_ui_reference_width = 0;
 	this->m_ui_reference_height = 0;
 	this->m_ui_fullscreen_canvas = false;
@@ -1452,7 +1481,7 @@ bool overlay_t::launch()
 		this->shutdown( );
 		return false;
 	}
-	write_overlay_lifecycle_event( "backend.prepared_unattached", this->m_hwnd );
+	write_overlay_lifecycle_event( "backend.prepared_without_source", this->m_hwnd );
 
 	const bool chams_renderer_ready =
 		chams::g_renderer.initialize(this->m_device, this->m_context);
@@ -1573,7 +1602,8 @@ void overlay_t::run()
 		while ( !stop.stop_requested( )
 			&& !this->m_shutdown_requested.load( std::memory_order_acquire ) )
 		{
-			const bool is_down = ( ::GetAsyncKeyState( VK_END ) & 0x8000 ) != 0;
+			const bool is_down = ( ::GetAsyncKeyState(
+				platform::windows::lifecycle_keys( ).exit ) & 0x8000 ) != 0;
 			if ( is_down && !was_down )
 			{
 				this->request_shutdown( );
@@ -1669,7 +1699,8 @@ void overlay_t::run()
 		if ( this->m_shutdown_requested.load( std::memory_order_acquire ) )
 			break;
 
-		const auto end_is_down = (::GetAsyncKeyState(VK_END) & 0x8000) != 0;
+		const auto end_is_down = ( ::GetAsyncKeyState(
+			platform::windows::lifecycle_keys( ).exit ) & 0x8000 ) != 0;
 		if (end_is_down && !end_was_down)
 		{
 
@@ -1697,7 +1728,7 @@ void overlay_t::run()
 		this->synchronize_content_visibility( );
 		game::render_poses( ).set_presentation_state(
 			this->m_presentation_attached
-				&& config::visual_settings.m_player.enabled,
+				&& config::visual_settings.m_player.active( ),
 			this->m_window_tracker.refresh_rate( ) );
 		this->synchronize_menu_focus();
 		this->apply_capture_policy();
@@ -2688,6 +2719,40 @@ bool overlay_t::open_composition_backend( )
 	}
 	this->m_present_tearing_enabled = this->m_allow_tearing;
 
+	ComPtr<IDCompositionDevice> composition_device{};
+	if ( FAILED( ::DCompositionCreateDevice(
+		dxgi_device.Get( ), IID_PPV_ARGS( &composition_device ) ) ) )
+	{
+		return false;
+	}
+
+	this->m_device = device.Detach( );
+	this->m_context = context.Detach( );
+	this->m_composition_device = composition_device.Detach( );
+	return true;
+}
+
+bool overlay_t::open_composition_swap_chain( )
+{
+	if ( this->m_swap_chain )
+		return true;
+	if ( !this->m_device || !this->m_context
+		|| this->m_render_width < 64 || this->m_render_height < 64 )
+	{
+		return false;
+	}
+
+	using Microsoft::WRL::ComPtr;
+	ComPtr<IDXGIDevice> dxgi_device{};
+	ComPtr<IDXGIAdapter> adapter{};
+	ComPtr<IDXGIFactory2> factory{};
+	if ( FAILED( this->m_device->QueryInterface( IID_PPV_ARGS( &dxgi_device ) ) )
+		|| FAILED( dxgi_device->GetAdapter( &adapter ) )
+		|| FAILED( adapter->GetParent( IID_PPV_ARGS( &factory ) ) ) )
+	{
+		return false;
+	}
+
 	DXGI_SWAP_CHAIN_DESC1 description{};
 	description.Width = this->m_render_width;
 	description.Height = this->m_render_height;
@@ -2699,29 +2764,71 @@ bool overlay_t::open_composition_backend( )
 	description.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	description.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
 	description.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT
-		| ( this->m_allow_tearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0 );
+		| ( this->m_allow_tearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0u );
+
 	ComPtr<IDXGISwapChain1> swap_chain1{};
-	if ( FAILED( factory->CreateSwapChainForComposition(
-		device.Get( ), &description, nullptr, &swap_chain1 ) ) )
-	{
-		return false;
-	}
-
-	ComPtr<IDCompositionDevice> composition_device{};
-	if ( FAILED( ::DCompositionCreateDevice(
-		dxgi_device.Get( ), IID_PPV_ARGS( &composition_device ) ) ) )
-	{
-		return false;
-	}
-
+	ComPtr<IDXGISwapChain2> swap_chain2{};
 	ComPtr<IDXGISwapChain> swap_chain{};
-	if ( FAILED( swap_chain1.As( &swap_chain ) ) )
+	ComPtr<ID3D11Texture2D> back_buffer{};
+	ComPtr<ID3D11RenderTargetView> render_target{};
+	if ( FAILED( factory->CreateSwapChainForComposition(
+		this->m_device, &description, nullptr, &swap_chain1 ) )
+		|| FAILED( swap_chain1.As( &swap_chain2 ) )
+		|| FAILED( swap_chain2->SetMaximumFrameLatency( 1 ) )
+		|| FAILED( swap_chain1.As( &swap_chain ) )
+		|| FAILED( swap_chain->GetBuffer( 0, IID_PPV_ARGS( &back_buffer ) ) )
+		|| FAILED( this->m_device->CreateRenderTargetView(
+			back_buffer.Get( ), nullptr, &render_target ) ) )
+	{
 		return false;
-	this->m_device = device.Detach( );
-	this->m_context = context.Detach( );
+	}
+
+	const auto waitable = swap_chain2->GetFrameLatencyWaitableObject( );
+	if ( !waitable )
+		return false;
+
 	this->m_swap_chain = swap_chain.Detach( );
-	this->m_composition_device = composition_device.Detach( );
+	this->m_back_buffer = back_buffer.Detach( );
+	this->m_rtv = render_target.Detach( );
+	this->m_frame_latency_waitable = waitable;
+	this->m_present_tearing_enabled = this->m_allow_tearing;
+
+	D3D11_VIEWPORT viewport{};
+	viewport.Width = static_cast<float>( this->m_render_width );
+	viewport.Height = static_cast<float>( this->m_render_height );
+	viewport.MaxDepth = 1.0f;
+	this->m_context->RSSetViewports( 1, &viewport );
+	write_overlay_lifecycle_event( "presentation.source_created", this->m_hwnd );
 	return true;
+}
+
+void overlay_t::close_composition_swap_chain( ) noexcept
+{
+	if ( !this->m_composition_active )
+		return;
+	if ( this->m_context )
+		this->m_context->OMSetRenderTargets( 0, nullptr, nullptr );
+	if ( this->m_rtv )
+	{
+		this->m_rtv->Release( );
+		this->m_rtv = nullptr;
+	}
+	if ( this->m_back_buffer )
+	{
+		this->m_back_buffer->Release( );
+		this->m_back_buffer = nullptr;
+	}
+	if ( this->m_frame_latency_waitable )
+	{
+		::CloseHandle( this->m_frame_latency_waitable );
+		this->m_frame_latency_waitable = nullptr;
+	}
+	if ( this->m_swap_chain )
+	{
+		this->m_swap_chain->Release( );
+		this->m_swap_chain = nullptr;
+		write_overlay_lifecycle_event( "presentation.source_destroyed", this->m_hwnd );
+	}
 }
 
 bool overlay_t::attach_presentation( )
@@ -2754,7 +2861,8 @@ bool overlay_t::attach_presentation( )
 			"presentation.hwnd_attached", this->m_hwnd );
 		return true;
 	}
-	if ( !this->m_composition_device || !this->m_swap_chain ) return false;
+	if ( !this->m_composition_device || !this->open_composition_swap_chain( ) )
+		return false;
 
 	IDCompositionTarget* target{};
 	IDCompositionVisual* visual{};
@@ -2778,6 +2886,7 @@ bool overlay_t::attach_presentation( )
 		}
 		if ( target ) target->Release( );
 		if ( visual ) visual->Release( );
+		this->close_composition_swap_chain( );
 		write_overlay_lifecycle_event( "presentation.attach_failed", this->m_hwnd, result );
 		return false;
 	}
@@ -2791,7 +2900,6 @@ bool overlay_t::attach_presentation( )
 	if ( should_show )
 		::ShowWindow( this->m_hwnd, SW_SHOWNOACTIVATE );
 	this->m_overlay_visible = should_show;
-	this->m_composition_swap_chain_ever_attached = true;
 	write_overlay_lifecycle_event( "presentation.attached", this->m_hwnd, result );
 	return true;
 }
@@ -2868,6 +2976,7 @@ void overlay_t::detach_presentation( ) noexcept
 		this->m_composition_visual->Release( );
 		this->m_composition_visual = nullptr;
 	}
+	this->close_composition_swap_chain( );
 }
 
 bool overlay_t::open_device_backend( )
@@ -2977,39 +3086,6 @@ bool overlay_t::initialize_graphics()
 		dxgi_device1->SetMaximumFrameLatency( 1 );
 		dxgi_device1->Release( );
 	}
-	IDXGISwapChain2* swap_chain2{};
-	if ( this->m_swap_chain
-		&& SUCCEEDED( this->m_swap_chain->QueryInterface( IID_PPV_ARGS( &swap_chain2 ) ) ) )
-	{
-		swap_chain2->SetMaximumFrameLatency( 1 );
-		if ( this->m_composition_active )
-			this->m_frame_latency_waitable = swap_chain2->GetFrameLatencyWaitableObject( );
-		swap_chain2->Release( );
-	}
-	if ( this->m_composition_active && !this->m_frame_latency_waitable )
-	{
-		return false;
-	}
-
-	if ( this->m_composition_active && !this->create_color_target( ) )
-	{
-		return false;
-	}
-
-	if ( this->m_composition_active )
-	{
-		D3D11_TEXTURE2D_DESC bb_desc{};
-		this->m_back_buffer->GetDesc(&bb_desc);
-		this->m_render_width = bb_desc.Width;
-		this->m_render_height = bb_desc.Height;
-
-		D3D11_VIEWPORT vp{};
-		vp.Width = static_cast<float>(bb_desc.Width);
-		vp.Height = static_cast<float>(bb_desc.Height);
-		vp.MaxDepth = 1.0f;
-		this->m_context->RSSetViewports(1, &vp);
-	}
-
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	this->m_imgui_context_active = true;
@@ -3140,87 +3216,21 @@ bool overlay_t::create_color_target( )
 
 bool overlay_t::resize_graphics( const std::uint32_t width, const std::uint32_t height )
 {
-	if ( !this->m_swap_chain || width < 64 || height < 64 )
+	if ( width < 64 || height < 64 )
 	{
 		return false;
 	}
-	if ( this->m_composition_active
-		&& this->m_composition_swap_chain_ever_attached )
+	if ( this->m_composition_active )
 	{
-
-		using Microsoft::WRL::ComPtr;
-		ComPtr<IDXGIDevice> dxgi_device{};
-		ComPtr<IDXGIAdapter> adapter{};
-		ComPtr<IDXGIFactory2> factory{};
-		if ( FAILED( this->m_device->QueryInterface( IID_PPV_ARGS( &dxgi_device ) ) )
-			|| FAILED( dxgi_device->GetAdapter( &adapter ) )
-			|| FAILED( adapter->GetParent( IID_PPV_ARGS( &factory ) ) ) )
-		{
+		if ( this->m_presentation_attached )
 			return false;
-		}
-
-		DXGI_SWAP_CHAIN_DESC1 description{};
-		description.Width = width;
-		description.Height = height;
-		description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-		description.SampleDesc = { 1, 0 };
-		description.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-		description.BufferCount = 2;
-		description.Scaling = DXGI_SCALING_STRETCH;
-		description.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-		description.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
-		description.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT
-			| ( this->m_allow_tearing
-				? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0u );
-
-		ComPtr<IDXGISwapChain1> replacement1{};
-		ComPtr<IDXGISwapChain2> replacement2{};
-		ComPtr<IDXGISwapChain> replacement{};
-		ComPtr<ID3D11Texture2D> back_buffer{};
-		ComPtr<ID3D11RenderTargetView> render_target{};
-		if ( FAILED( factory->CreateSwapChainForComposition(
-			this->m_device, &description, nullptr, &replacement1 ) )
-			|| FAILED( replacement1.As( &replacement2 ) )
-			|| FAILED( replacement2->SetMaximumFrameLatency( 1 ) )
-			|| FAILED( replacement1.As( &replacement ) )
-			|| FAILED( replacement->GetBuffer(
-				0, IID_PPV_ARGS( &back_buffer ) ) )
-			|| FAILED( this->m_device->CreateRenderTargetView(
-				back_buffer.Get( ), nullptr, &render_target ) ) )
-		{
-			return false;
-		}
-		const auto replacement_waitable =
-			replacement2->GetFrameLatencyWaitableObject( );
-		if ( !replacement_waitable )
-			return false;
-
-		this->m_context->OMSetRenderTargets( 0, nullptr, nullptr );
-		this->m_context->ClearState( );
-		auto* old_render_target = this->m_rtv;
-		auto* old_back_buffer = this->m_back_buffer;
-		auto* old_swap_chain = this->m_swap_chain;
-		const auto old_waitable = this->m_frame_latency_waitable;
-		this->m_rtv = render_target.Detach( );
-		this->m_back_buffer = back_buffer.Detach( );
-		this->m_swap_chain = replacement.Detach( );
-		this->m_frame_latency_waitable = replacement_waitable;
-		if ( old_waitable ) ::CloseHandle( old_waitable );
-		if ( old_render_target ) old_render_target->Release( );
-		if ( old_back_buffer ) old_back_buffer->Release( );
-		if ( old_swap_chain ) old_swap_chain->Release( );
-
-		D3D11_VIEWPORT viewport{};
-		viewport.Width = static_cast<float>( width );
-		viewport.Height = static_cast<float>( height );
-		viewport.MaxDepth = 1.0f;
-		this->m_context->RSSetViewports( 1, &viewport );
+		this->close_composition_swap_chain( );
 		this->m_render_width = width;
 		this->m_render_height = height;
-		write_overlay_lifecycle_event(
-			"graphics.swap_chain_recreated", this->m_hwnd );
 		return true;
 	}
+	if ( !this->m_swap_chain )
+		return false;
 
 	this->m_context->OMSetRenderTargets( 0, nullptr, nullptr );
 	this->m_context->ClearState( );
@@ -3236,13 +3246,8 @@ bool overlay_t::resize_graphics( const std::uint32_t width, const std::uint32_t 
 		this->m_back_buffer = nullptr;
 	}
 
-	const UINT buffer_count = this->m_composition_active ? 2u : 0u;
-	const UINT flags = this->m_composition_active
-		? DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT
-			| ( this->m_allow_tearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0u )
-		: 0u;
 	if ( FAILED( this->m_swap_chain->ResizeBuffers(
-		buffer_count, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, flags ) ) )
+		0, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, 0 ) ) )
 	{
 		this->create_color_target( );
 		return false;

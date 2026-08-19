@@ -44,6 +44,11 @@ int main( )
 
 	const DWORD ui_access_result = ERROR_SUCCESS;
 #else
+	if ( !ui_access::elevated( ) )
+	{
+		const DWORD elevation_result = ui_access::elevate( );
+		return elevation_result == ERROR_SUCCESS ? 0 : 1;
+	}
 	const DWORD ui_access_result = ui_access::prepare( );
 #endif
 	const single_instance_guard instance{};

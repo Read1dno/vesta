@@ -110,6 +110,8 @@ struct projectile_snapshot
 	float spawn_time{};
 	float detonate_time{};
 	float remaining_lifetime{ -1.0f };
+	bool launch_valid{};
+	bool in_flight{};
 	bool detonated{};
 	bool smoke_active{};
 	foundation::vec3 smoke_detonation_pos{};

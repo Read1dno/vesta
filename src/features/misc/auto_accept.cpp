@@ -61,12 +61,17 @@ namespace
 	void trace_auto_accept( std::format_string<arguments_t...> format,
 		arguments_t&&... arguments )
 	{
+#if defined( _DEBUG ) || ( defined( VESTA_PERF_LOG ) && VESTA_PERF_LOG )
 		const auto path = platform::windows::runtime_storage::area(
 			"auto_accept.log" );
 		if ( path.empty( ) ) return;
 		std::ofstream stream{ path, std::ios::app };
 		if ( stream ) stream << std::format( format,
 			std::forward<arguments_t>( arguments )... ) << '\n';
+#else
+		static_cast<void>( format );
+		( static_cast<void>( arguments ), ... );
+#endif
 	}
 
 	[[nodiscard]] std::uint32_t decode_registry_offset(

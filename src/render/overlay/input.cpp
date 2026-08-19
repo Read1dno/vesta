@@ -1,6 +1,7 @@
 #include <stdafx.hpp>
 
 #include <render/overlay/input.hpp>
+#include <core/input/hotkeys.hpp>
 
 #include "imgui.h"
 
@@ -384,7 +385,8 @@ void input_router::thread_main( const std::stop_token stop )
 bool input_router::passthrough_key( const std::uint32_t key )
 {
 
-	return key == VK_ESCAPE || key == VK_INSERT || key == VK_END || key == VK_TAB
+	return platform::windows::is_lifecycle_key(
+		static_cast<std::uint16_t>( key ) ) || key == VK_TAB
 		|| key == VK_MENU || key == VK_LMENU || key == VK_RMENU
 		|| key == VK_LWIN || key == VK_RWIN;
 }

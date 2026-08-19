@@ -181,6 +181,18 @@ namespace config {
 
 		int language{ 0 };
 		float menu_scale{ 1.0f };
+		struct interface_palette
+		{
+			zdraw::rgba background{ 13, 13, 18, 217 };
+			zdraw::rgba panel{ 20, 20, 26, 179 };
+			zdraw::rgba card{ 28, 28, 36, 153 };
+			zdraw::rgba popup{ 13, 13, 18, 199 };
+			zdraw::rgba accent{ 124, 58, 237, 255 };
+			zdraw::rgba text{ 248, 248, 242, 255 };
+			zdraw::rgba muted_text{ 161, 161, 170, 255 };
+			zdraw::rgba border{ 255, 255, 255, 15 };
+			zdraw::rgba hover{ 255, 255, 255, 20 };
+		} palette{};
 
 		bool auto_accept{ true };
 		bool obs_bypass{ false };

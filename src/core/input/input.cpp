@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include <core/input/hotkeys.hpp>
 
 namespace platform::windows {
 
@@ -160,8 +161,7 @@ namespace platform::windows {
 		const std::uint16_t virtual_key, const bool enabled ) noexcept
 	{
 
-		const auto protected_key = virtual_key == VK_ESCAPE
-			|| virtual_key == VK_INSERT || virtual_key == VK_END;
+		const auto protected_key = is_lifecycle_key( virtual_key );
 		const auto next_key = enabled && !protected_key
 			&& virtual_key > 0 && virtual_key < 256
 			? virtual_key : std::uint16_t{};
@@ -195,8 +195,8 @@ namespace platform::windows {
 		{
 			for ( const auto key : virtual_keys )
 			{
-				if ( key > 0 && key < 256 && key != VK_ESCAPE
-					&& key != VK_INSERT && key != VK_END ) desired[ key ] = true;
+				if ( key > 0 && key < 256 && !is_lifecycle_key( key ) )
+					desired[ key ] = true;
 			}
 		}
 
@@ -236,6 +236,24 @@ namespace platform::windows {
 		m_gate_hook_ready.store( false, std::memory_order_release );
 		if ( const auto thread_id = m_gate_thread_id.load( std::memory_order_acquire ) )
 			::PostThreadMessageW( thread_id, k_gate_changed_message, 0, 0 );
+	}
+
+	bool input_gateway::physical_key_down(
+		const std::uint16_t virtual_key ) const noexcept
+	{
+		if ( virtual_key == 0 || virtual_key >= m_movement_gated.size( ) )
+			return false;
+		if ( m_primary_gate_enabled.load( std::memory_order_acquire )
+			&& m_gate_key.load( std::memory_order_acquire ) == virtual_key )
+		{
+			return m_gate_physical_down.load( std::memory_order_acquire );
+		}
+		if ( m_movement_gated[ virtual_key ].load( std::memory_order_acquire ) )
+		{
+			return m_movement_physical_down[ virtual_key ].load(
+				std::memory_order_acquire );
+		}
+		return ( ::GetAsyncKeyState( virtual_key ) & 0x8000 ) != 0;
 	}
 
 	LRESULT CALLBACK input_gateway::gate_proc(

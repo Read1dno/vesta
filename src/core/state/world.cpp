@@ -149,13 +149,11 @@ namespace {
 			|| ( config::combat_settings.global.grenade_aim.enabled
 				&& key_down( config::combat_settings.global.grenade_aim.key ) );
 		const auto& radar_cfg = config::visual_settings.m_radar;
-		const auto radar_active = radar_cfg.enabled
-			&& ( radar_cfg.activation_mode == config::visual_profile::radar::always_on
-				|| key_down( radar_cfg.activation_key ) );
+		const auto radar_active = radar_cfg.active( );
 
 		const auto players = game::world().script_demand(
 			game::script_data_demand::players ) || app::context().menu.is_open( )
-			|| config::visual_settings.m_player.enabled
+			|| config::visual_settings.m_player.active( )
 			|| config::visual_settings.m_chams.enabled
 			|| radar_active
 			|| config::visual_settings.m_sound.enabled
@@ -173,7 +171,7 @@ namespace {
 					|| config::visual_settings.m_radar.show_trajectories
 					|| config::visual_settings.m_radar.show_grenade_zones ) )
 			|| config::general_settings.m_grenades.enabled
-			|| ( config::visual_settings.m_player.enabled
+			|| ( config::visual_settings.m_player.active( )
 				&& config::visual_settings.m_player.m_legit_sync.enabled
 				&& config::visual_settings.m_player.m_legit_sync.direct_visible )
 			|| ( combat.aimbot.enabled && combat.aimbot.checks.smoke )
@@ -1229,6 +1227,13 @@ void world_sampler::collect_projectiles( const std::vector<entity_directory::cac
 	{
 		projectile_kind subtype{ projectile_kind::unknown };
 		std::chrono::steady_clock::time_point first_seen{};
+		std::chrono::steady_clock::time_point last_seen{};
+		foundation::vec3 last_origin{};
+		foundation::vec3 launch_position{};
+		foundation::vec3 launch_velocity{};
+		float spawn_time{};
+		bool launch_valid{};
+		bool launch_from_network{};
 	};
 	static std::unordered_map<std::uintptr_t, projectile_lifecycle> lifecycles{};
 	static thread_local std::vector<std::uintptr_t> live_projectiles{};
@@ -1332,10 +1337,69 @@ void world_sampler::collect_projectiles( const std::vector<entity_directory::cac
 		p.spawn_time = app::context().process.load<float>( entry.ptr + SCHEMA( "C_BaseCSGrenadeProjectile", "m_flSpawnTime"_id ) );
 		p.detonate_time = app::context().process.load<float>( entry.ptr + SCHEMA( "C_BaseGrenade", "m_flDetonateTime"_id ) );
 		live_projectiles.push_back( entry.ptr );
-		auto [ lifecycle_it, inserted ] = lifecycles.try_emplace( entry.ptr,
-			projectile_lifecycle{ subtype, observed_now } );
-		if ( !inserted && lifecycle_it->second.subtype != subtype )
-			lifecycle_it->second = { subtype, observed_now };
+		auto [ lifecycle_it, inserted ] = lifecycles.try_emplace( entry.ptr );
+		auto& lifecycle = lifecycle_it->second;
+		const auto recycled = !inserted && ( lifecycle.subtype != subtype
+			|| ( p.spawn_time > 0.0f && lifecycle.spawn_time > 0.0f
+				&& std::abs( p.spawn_time - lifecycle.spawn_time ) > 0.001f ) );
+		if ( inserted || recycled )
+		{
+			lifecycle = {};
+			lifecycle.subtype = subtype;
+			lifecycle.first_seen = observed_now;
+			lifecycle.last_seen = observed_now;
+			lifecycle.last_origin = p.origin;
+			lifecycle.spawn_time = p.spawn_time;
+		}
+
+		const auto finite = []( const foundation::vec3& value )
+		{
+			return std::isfinite( value.x ) && std::isfinite( value.y )
+				&& std::isfinite( value.z );
+		};
+		const auto network_launch_valid = finite( p.initial_position )
+			&& finite( p.initial_velocity )
+			&& p.initial_position.length_sqr( ) > 1.0f
+			&& p.initial_velocity.length_sqr( ) > 25.0f;
+		if ( network_launch_valid && !lifecycle.launch_from_network )
+		{
+			lifecycle.launch_position = p.initial_position;
+			lifecycle.launch_velocity = p.initial_velocity;
+			lifecycle.launch_valid = true;
+			lifecycle.launch_from_network = true;
+		}
+		auto observed_velocity = p.velocity;
+		const auto sample_seconds = std::chrono::duration<float>(
+			observed_now - lifecycle.last_seen ).count( );
+		if ( ( !finite( observed_velocity ) || observed_velocity.length_sqr( ) <= 25.0f )
+			&& sample_seconds >= 0.001f && sample_seconds <= 0.1f
+			&& finite( p.origin ) && finite( lifecycle.last_origin ) )
+		{
+			const auto derived = ( p.origin - lifecycle.last_origin )
+				* ( 1.0f / sample_seconds );
+			if ( finite( derived ) && derived.length_sqr( ) > 25.0f )
+				observed_velocity = derived;
+		}
+		if ( finite( observed_velocity ) && observed_velocity.length_sqr( ) > 25.0f )
+		{
+			p.velocity = observed_velocity;
+			if ( !lifecycle.launch_valid )
+			{
+				lifecycle.launch_position = lifecycle.last_origin;
+				lifecycle.launch_velocity = observed_velocity;
+				lifecycle.launch_valid = true;
+			}
+		}
+		if ( lifecycle.spawn_time <= 0.0f && p.spawn_time > 0.0f )
+			lifecycle.spawn_time = p.spawn_time;
+		lifecycle.last_origin = p.origin;
+		lifecycle.last_seen = observed_now;
+		p.launch_valid = lifecycle.launch_valid;
+		if ( lifecycle.launch_valid )
+		{
+			p.initial_position = lifecycle.launch_position;
+			p.initial_velocity = lifecycle.launch_velocity;
+		}
 
 		p.remaining_lifetime = -1.0f;
 		if ( subtype == projectile_kind::he_grenade
@@ -1382,6 +1446,9 @@ void world_sampler::collect_projectiles( const std::vector<entity_directory::cac
 		{
 			p.effect_tick_begin = app::context().process.load<std::int32_t>( entry.ptr + SCHEMA( "C_DecoyProjectile", "m_nDecoyShotTick"_id ) );
 		}
+		p.in_flight = p.launch_valid && finite( p.velocity )
+			&& p.velocity.length_sqr( ) > 25.0f && !p.detonated
+			&& subtype != projectile_kind::molotov_fire;
 
 		fresh.push_back( std::move( p ) );
 	}

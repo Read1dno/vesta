@@ -2052,7 +2052,7 @@ namespace chams {
 		this->m_diag.players_drawn = 0;
 
 		if ( !backbuffer_rtv || !frame || !frame->world
-			|| !this->m_ready || !config::visual_settings.m_player.enabled
+			|| !this->m_ready || !config::visual_settings.m_player.active( )
 			|| !cfg.enabled || !game::local_player().valid( ) )
 		{
 			return;

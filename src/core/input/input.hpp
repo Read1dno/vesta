@@ -70,6 +70,8 @@ namespace platform::windows {
 				&& m_movement_physical_down[ virtual_key ].load(
 					std::memory_order_acquire );
 		}
+		[[nodiscard]] bool physical_key_down(
+			std::uint16_t virtual_key ) const noexcept;
 		[[nodiscard]] bool key_gate_held( ) const noexcept
 		{
 			return m_gate_physical_down.load( std::memory_order_acquire );

@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <render/draw.hpp>
+#include <core/input/activation.hpp>
 
 namespace config {
 
@@ -12,13 +13,13 @@ namespace config {
 	{
 		struct activation
 		{
-			enum mode : int { hold = 0, always = 1 };
+			enum mode : int { hold = 0, always = 1, toggle = 2 };
 		};
 		[[nodiscard]] static bool activation_active(
 			int mode, int key ) noexcept
 		{
-			return mode == activation::always
-				|| ( key > 0 && ( ::GetAsyncKeyState( key ) & 0x8000 ) != 0 );
+			return platform::windows::binding_active( mode, key,
+				activation::always, activation::hold, activation::toggle );
 		}
 
 		struct wall_policy
@@ -181,6 +182,10 @@ namespace config {
 			int aimbot_humanize{ 50 };
 			bool aimbot_autowall{ true };
 			float aimbot_min_damage{ 90.0f };
+			bool aimbot_min_damage_override_enabled{};
+			float aimbot_min_damage_override{ 1.0f };
+			int aimbot_min_damage_override_mode{ activation::hold };
+			int aimbot_min_damage_override_key{};
 			bool aimbot_lethal_only{};
 			int aimbot_hitbox_parts{ aim_part::head };
 			bool aimbot_multipoint{ true };
@@ -217,6 +222,10 @@ namespace config {
 			bool triggerbot_lethal_only{};
 			int triggerbot_reaction_time{ 0 };
 			float triggerbot_min_damage{ 90.0f };
+			bool triggerbot_min_damage_override_enabled{};
+			float triggerbot_min_damage_override{ 1.0f };
+			int triggerbot_min_damage_override_mode{ activation::hold };
+			int triggerbot_min_damage_override_key{};
 			bool triggerbot_autowall{ true };
 			bool triggerbot_autostop{ false };
 			bool triggerbot_predictive{ true };

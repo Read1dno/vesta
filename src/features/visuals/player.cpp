@@ -161,7 +161,7 @@ namespace features::visuals {
 		const std::shared_ptr<const game::player_pose_frame>& frame )
 	{
 		const auto& cfg = config::visual_settings.m_player;
-		if ( !cfg.enabled || !frame || !frame->world )
+		if ( !cfg.active( ) || !frame || !frame->world )
 		{
 			return;
 		}

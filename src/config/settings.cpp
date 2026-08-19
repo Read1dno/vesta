@@ -43,6 +43,10 @@ static void to_json(json& j, const combat_profile::global_settings& g)
 		{"aimbot_humanize", g.aimbot_humanize},
 		{"aimbot_autowall", g.aimbot_autowall},
 		{"aimbot_min_damage", g.aimbot_min_damage},
+		{"aimbot_min_damage_override_enabled", g.aimbot_min_damage_override_enabled},
+		{"aimbot_min_damage_override", g.aimbot_min_damage_override},
+		{"aimbot_min_damage_override_mode", g.aimbot_min_damage_override_mode},
+		{"aimbot_min_damage_override_key", g.aimbot_min_damage_override_key},
 		{"aimbot_lethal_only", g.aimbot_lethal_only},
 		{"aimbot_hitbox_parts", g.aimbot_hitbox_parts},
 			{"aimbot_multipoint", g.aimbot_multipoint},
@@ -75,6 +79,10 @@ static void to_json(json& j, const combat_profile::global_settings& g)
 		{"triggerbot_lethal_only", g.triggerbot_lethal_only},
 		{"triggerbot_reaction_time", g.triggerbot_reaction_time},
 		{"triggerbot_min_damage", g.triggerbot_min_damage},
+		{"triggerbot_min_damage_override_enabled", g.triggerbot_min_damage_override_enabled},
+		{"triggerbot_min_damage_override", g.triggerbot_min_damage_override},
+		{"triggerbot_min_damage_override_mode", g.triggerbot_min_damage_override_mode},
+		{"triggerbot_min_damage_override_key", g.triggerbot_min_damage_override_key},
 		{"triggerbot_autowall", g.triggerbot_autowall},
 		{"triggerbot_autostop", g.triggerbot_autostop},
 		{"triggerbot_predictive", g.triggerbot_predictive},
@@ -94,12 +102,21 @@ static void from_json(const json& j, combat_profile::global_settings& g)
 	if (j.contains("aimbot_activation_mode")) j.at("aimbot_activation_mode").get_to(g.aimbot_activation_mode);
 	g.aimbot_activation_mode = std::clamp(g.aimbot_activation_mode,
 		static_cast<int>(combat_profile::activation::hold),
-		static_cast<int>(combat_profile::activation::always));
+		static_cast<int>(combat_profile::activation::toggle));
 	if (j.contains("aimbot_fov")) j.at("aimbot_fov").get_to(g.aimbot_fov);
 	if (j.contains("aimbot_smoothing")) j.at("aimbot_smoothing").get_to(g.aimbot_smoothing);
 	if (j.contains("aimbot_humanize")) j.at("aimbot_humanize").get_to(g.aimbot_humanize);
 	if (j.contains("aimbot_autowall")) j.at("aimbot_autowall").get_to(g.aimbot_autowall);
 	if (j.contains("aimbot_min_damage")) j.at("aimbot_min_damage").get_to(g.aimbot_min_damage);
+	if (j.contains("aimbot_min_damage_override_enabled")) j.at("aimbot_min_damage_override_enabled").get_to(g.aimbot_min_damage_override_enabled);
+	if (j.contains("aimbot_min_damage_override")) j.at("aimbot_min_damage_override").get_to(g.aimbot_min_damage_override);
+	if (j.contains("aimbot_min_damage_override_mode")) j.at("aimbot_min_damage_override_mode").get_to(g.aimbot_min_damage_override_mode);
+	if (j.contains("aimbot_min_damage_override_key")) j.at("aimbot_min_damage_override_key").get_to(g.aimbot_min_damage_override_key);
+	g.aimbot_min_damage_override = std::clamp(g.aimbot_min_damage_override, 1.0f, 100.0f);
+	g.aimbot_min_damage_override_mode = std::clamp(g.aimbot_min_damage_override_mode,
+		static_cast<int>(combat_profile::activation::hold),
+		static_cast<int>(combat_profile::activation::toggle));
+	g.aimbot_min_damage_override_key = std::clamp(g.aimbot_min_damage_override_key, 0, 255);
 	if (j.contains("aimbot_lethal_only")) j.at("aimbot_lethal_only").get_to(g.aimbot_lethal_only);
 	if (j.contains("aimbot_hitbox_parts")) j.at("aimbot_hitbox_parts").get_to(g.aimbot_hitbox_parts);
 	if (j.contains("aimbot_multipoint")) j.at("aimbot_multipoint").get_to(g.aimbot_multipoint);
@@ -130,7 +147,7 @@ static void from_json(const json& j, combat_profile::global_settings& g)
 	if (j.contains("triggerbot_activation_mode")) j.at("triggerbot_activation_mode").get_to(g.triggerbot_activation_mode);
 	g.triggerbot_activation_mode = std::clamp(g.triggerbot_activation_mode,
 		static_cast<int>(combat_profile::activation::hold),
-		static_cast<int>(combat_profile::activation::always));
+		static_cast<int>(combat_profile::activation::toggle));
 
 	const auto legacy_simple_mode = j.value("triggerbot_mode", 0) == 1;
 	if (j.contains("triggerbot_seed_type"))
@@ -161,6 +178,15 @@ static void from_json(const json& j, combat_profile::global_settings& g)
 			j.value("triggerbot_simple_delay", g.triggerbot_delay), 0, 500);
 	}
 	if (j.contains("triggerbot_min_damage")) j.at("triggerbot_min_damage").get_to(g.triggerbot_min_damage);
+	if (j.contains("triggerbot_min_damage_override_enabled")) j.at("triggerbot_min_damage_override_enabled").get_to(g.triggerbot_min_damage_override_enabled);
+	if (j.contains("triggerbot_min_damage_override")) j.at("triggerbot_min_damage_override").get_to(g.triggerbot_min_damage_override);
+	if (j.contains("triggerbot_min_damage_override_mode")) j.at("triggerbot_min_damage_override_mode").get_to(g.triggerbot_min_damage_override_mode);
+	if (j.contains("triggerbot_min_damage_override_key")) j.at("triggerbot_min_damage_override_key").get_to(g.triggerbot_min_damage_override_key);
+	g.triggerbot_min_damage_override = std::clamp(g.triggerbot_min_damage_override, 1.0f, 100.0f);
+	g.triggerbot_min_damage_override_mode = std::clamp(g.triggerbot_min_damage_override_mode,
+		static_cast<int>(combat_profile::activation::hold),
+		static_cast<int>(combat_profile::activation::toggle));
+	g.triggerbot_min_damage_override_key = std::clamp(g.triggerbot_min_damage_override_key, 0, 255);
 	if (j.contains("triggerbot_autowall")) j.at("triggerbot_autowall").get_to(g.triggerbot_autowall);
 	if (j.contains("triggerbot_autostop")) j.at("triggerbot_autostop").get_to(g.triggerbot_autostop);
 	if (j.value("triggerbot_early_autostop", false)) g.triggerbot_autostop = true;
@@ -830,6 +856,8 @@ static void to_json(json& j, const visual_profile::player& p)
 {
 	j = json{
 		{"enabled", p.enabled},
+		{"activation_mode", p.activation_mode},
+		{"activation_key", p.activation_key},
 		{"spectator_sync", p.spectator_sync},
 		{"m_legit_sync", json{
 			{"enabled", p.m_legit_sync.enabled},
@@ -858,6 +886,12 @@ static void to_json(json& j, const visual_profile::player& p)
 static void from_json(const json& j, visual_profile::player& p)
 {
 	if (j.contains("enabled")) j.at("enabled").get_to(p.enabled);
+	if (j.contains("activation_mode")) j.at("activation_mode").get_to(p.activation_mode);
+	if (j.contains("activation_key")) j.at("activation_key").get_to(p.activation_key);
+	p.activation_mode = std::clamp(p.activation_mode,
+		static_cast<int>(visual_profile::player::always_on),
+		static_cast<int>(visual_profile::player::toggle));
+	p.activation_key = std::clamp(p.activation_key, 0, 255);
 	if (j.contains("spectator_sync")) j.at("spectator_sync").get_to(p.spectator_sync);
 	if (j.contains("m_legit_sync"))
 	{
@@ -1108,7 +1142,7 @@ static void from_json(const json& j, visual_profile::radar& r)
 	if (j.contains("activation_key")) j.at("activation_key").get_to(r.activation_key);
 	r.activation_mode = std::clamp(r.activation_mode,
 		static_cast<int>(visual_profile::radar::always_on),
-		static_cast<int>(visual_profile::radar::hold));
+		static_cast<int>(visual_profile::radar::toggle));
 	r.activation_key = std::clamp(r.activation_key, 0, 255);
 	if (j.contains("show_names")) j.at("show_names").get_to(r.show_names);
 	if (j.contains("show_health")) j.at("show_health").get_to(r.show_health);
@@ -1708,6 +1742,12 @@ static void to_json(json& j, const general_profile& m)
 		{"m_auto_stop", m.m_auto_stop},
 		{"language", m.language},
 		{"menu_scale", m.menu_scale},
+		{"palette", json{
+			{"background", m.palette.background}, {"panel", m.palette.panel},
+			{"card", m.palette.card}, {"popup", m.palette.popup},
+			{"accent", m.palette.accent}, {"text", m.palette.text},
+			{"muted_text", m.palette.muted_text}, {"border", m.palette.border},
+			{"hover", m.palette.hover}}},
 		{"auto_accept", m.auto_accept},
 		{"obs_bypass", m.obs_bypass},
 		{"lua_enabled", m.lua_enabled},
@@ -1737,6 +1777,19 @@ static void from_json(const json& j, general_profile& m)
 	render::localization::set(static_cast<render::localization::id>(m.language));
 	if (j.contains("menu_scale")) j.at("menu_scale").get_to(m.menu_scale);
 	m.menu_scale = std::isfinite(m.menu_scale) ? std::clamp(m.menu_scale, 0.50f, 1.50f) : 1.0f;
+	if (j.contains("palette"))
+	{
+		const auto& p = j.at("palette");
+		if (p.contains("background")) p.at("background").get_to(m.palette.background);
+		if (p.contains("panel")) p.at("panel").get_to(m.palette.panel);
+		if (p.contains("card")) p.at("card").get_to(m.palette.card);
+		if (p.contains("popup")) p.at("popup").get_to(m.palette.popup);
+		if (p.contains("accent")) p.at("accent").get_to(m.palette.accent);
+		if (p.contains("text")) p.at("text").get_to(m.palette.text);
+		if (p.contains("muted_text")) p.at("muted_text").get_to(m.palette.muted_text);
+		if (p.contains("border")) p.at("border").get_to(m.palette.border);
+		if (p.contains("hover")) p.at("hover").get_to(m.palette.hover);
+	}
 	if (j.contains("auto_accept")) j.at("auto_accept").get_to(m.auto_accept);
 	if (j.contains("obs_bypass")) j.at("obs_bypass").get_to(m.obs_bypass);
 	if (j.contains("lua_enabled")) j.at("lua_enabled").get_to(m.lua_enabled);
@@ -1761,6 +1814,10 @@ combat_profile::resolved_config combat_profile::get( std::uint32_t weapon_type )
 	cfg.aimbot.humanize = ov.use_global ? gl.aimbot_humanize : ov.aimbot_humanize;
 	cfg.aimbot.autowall = ov.use_global ? gl.aimbot_autowall : ov.aimbot_autowall;
 	cfg.aimbot.min_damage = ov.use_global ? gl.aimbot_min_damage : ov.aimbot_min_damage;
+	if (gl.aimbot_min_damage_override_enabled
+		&& combat_profile::activation_active(gl.aimbot_min_damage_override_mode,
+			gl.aimbot_min_damage_override_key))
+		cfg.aimbot.min_damage = gl.aimbot_min_damage_override;
 	cfg.aimbot.lethal_only = ov.use_global ? gl.aimbot_lethal_only : ov.aimbot_lethal_only;
 	cfg.aimbot.hitbox_parts = ov.use_global ? gl.aimbot_hitbox_parts : ov.aimbot_hitbox_parts;
 	cfg.aimbot.multipoint = ov.use_global ? gl.aimbot_multipoint : ov.aimbot_multipoint;
@@ -1795,6 +1852,10 @@ combat_profile::resolved_config combat_profile::get( std::uint32_t weapon_type )
 	cfg.triggerbot.reaction_time = ov.use_global ? gl.triggerbot_reaction_time : ov.triggerbot_reaction_time;
 	cfg.triggerbot.autowall = ov.use_global ? gl.triggerbot_autowall : ov.triggerbot_autowall;
 	cfg.triggerbot.min_damage = ov.use_global ? gl.triggerbot_min_damage : ov.triggerbot_min_damage;
+	if (gl.triggerbot_min_damage_override_enabled
+		&& combat_profile::activation_active(gl.triggerbot_min_damage_override_mode,
+			gl.triggerbot_min_damage_override_key))
+		cfg.triggerbot.min_damage = gl.triggerbot_min_damage_override;
 	cfg.triggerbot.autostop = ov.use_global ? gl.triggerbot_autostop : ov.triggerbot_autostop;
 	cfg.triggerbot.predictive = ov.use_global ? gl.triggerbot_predictive : ov.triggerbot_predictive;
 	cfg.triggerbot.revolver_pre_cock = ov.use_global ? gl.triggerbot_revolver_pre_cock : ov.triggerbot_revolver_pre_cock;

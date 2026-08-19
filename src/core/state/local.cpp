@@ -194,7 +194,7 @@ namespace game {
 			( game_type == 2 && game_mode == 0 );
 		const auto tick = app::context().process.load<std::uint32_t>( controller_address +
 			SCHEMA( "CBasePlayerController", "m_nTickBase"_id ) );
-		const auto needs_game_time = config::visual_settings.m_player.enabled
+		const auto needs_game_time = config::visual_settings.m_player.active( )
 			|| config::visual_settings.m_projectile.enabled
 			|| config::visual_settings.m_bomb.enabled;
 		const auto global_vars = needs_game_time
