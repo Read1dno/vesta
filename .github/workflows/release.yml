@@ -46,7 +46,7 @@ jobs:
 
           $repositoryUrl = "${{ github.server_url }}/${{ github.repository }}"
           $runUrl = "$repositoryUrl/actions/runs/${{ github.run_id }}"
-          $releaseNotes = @(
+          $verificationNotes = @(
             "## Verified GitHub Actions build"
             ""
             "The attached vesta.exe was compiled from this tag by GitHub Actions. Its signed build provenance links the binary to this repository, workflow run, commit, and tag."
@@ -59,6 +59,13 @@ jobs:
             "gh attestation verify .\\vesta.exe --repo ${{ github.repository }}"
             '```'
           ) -join "`n"
+          $changeLogPath = ".github/release-notes/$tag.md"
+          if (Test-Path -LiteralPath $changeLogPath) {
+            $changeLog = (Get-Content -LiteralPath $changeLogPath -Raw).Trim()
+            $releaseNotes = "$changeLog`n`n$verificationNotes"
+          } else {
+            $releaseNotes = $verificationNotes
+          }
           $releaseNotes | Set-Content -Encoding utf8 RELEASE_NOTES.md
 
           $releaseJson = gh release view $tag --json isDraft 2>$null

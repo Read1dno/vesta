@@ -1,6 +1,8 @@
-﻿#include <stdafx.hpp>
+#include <stdafx.hpp>
 
 #include <simulation/collision_segments.hpp>
+#include <simulation/swept_hull.hpp>
+#include <simulation/swept_sphere.hpp>
 
 namespace game {
 
@@ -771,6 +773,8 @@ namespace game {
 		const ray_query& ray, const triangle& candidate, std::int32_t triangle_index,
 		float distance_limit )
 	{
+		if ( ( candidate.surface.contents & grenade_clip_contents ) != 0 )
+			return std::nullopt;
 		constexpr float parallel_epsilon = 1e-8f;
 		constexpr float contact_epsilon = 1e-5f;
 		const auto edge_a = candidate.v1 - candidate.v0;
@@ -874,6 +878,111 @@ namespace game {
 		}
 	}
 
+	void collision_world::traverse_sphere( const ray_query& ray, const float radius,
+		std::int32_t excluded_triangle, std::vector<ray_contact>& contacts ) const
+	{
+		if ( m_nodes.empty( ) || radius <= 0.0f ) return;
+		static thread_local std::vector<std::int32_t> pending{};
+		pending.clear( );
+		if ( pending.capacity( ) < 64 ) pending.reserve( 64 );
+		pending.push_back( 0 );
+		auto distance_limit = ray.length;
+
+		while ( !pending.empty( ) )
+		{
+			const auto node_index = pending.back( );
+			pending.pop_back( );
+			if ( node_index < 0 || static_cast<std::size_t>( node_index ) >= m_nodes.size( ) ) continue;
+			const auto& node = m_nodes[ node_index ];
+			if ( !node.bounds.intersects_ray( ray.origin_components,
+				ray.inverse_direction, distance_limit, radius ) ) continue;
+			if ( node.left >= 0 )
+			{
+				if ( node.right >= 0 ) pending.push_back( node.right );
+				pending.push_back( node.left );
+				continue;
+			}
+
+			const auto first = std::max( node.tri_start, 0 );
+			const auto last = std::min<std::int32_t>( node.tri_start + node.tri_count,
+				static_cast<std::int32_t>( m_indices.size( ) ) );
+			for ( auto slot = first; slot < last; ++slot )
+			{
+				const auto triangle_index = m_indices[ slot ];
+				if ( triangle_index == excluded_triangle || triangle_index < 0
+					|| static_cast<std::size_t>( triangle_index ) >= m_triangles.size( ) ) continue;
+				const auto& triangle = m_triangles[ triangle_index ];
+				const auto contact = simulation::geometry::sweep_sphere_triangle(
+					ray.origin, ray.direction, distance_limit, radius,
+					triangle.v0, triangle.v1, triangle.v2 );
+				if ( !contact ) continue;
+				contacts.assign( 1, ray_contact{
+					.distance = contact->distance,
+					.position = contact->center,
+					.normal = contact->normal,
+					.surface = triangle.surface,
+					.triangle_index = triangle_index,
+					.entering = true,
+					.solid_id = triangle.solid_id } );
+				distance_limit = contact->distance;
+			}
+		}
+	}
+
+	void collision_world::traverse_hull( const ray_query& ray,
+		const foundation::vec3& half_extents, std::int32_t excluded_triangle,
+		std::vector<ray_contact>& contacts ) const
+	{
+		if ( m_nodes.empty( ) ) return;
+		static thread_local std::vector<std::int32_t> pending{};
+		pending.clear( );
+		if ( pending.capacity( ) < 64 ) pending.reserve( 64 );
+		pending.push_back( 0 );
+		auto distance_limit = ray.length;
+		const auto broadphase_padding = std::max( {
+			half_extents.x, half_extents.y, half_extents.z } );
+
+		while ( !pending.empty( ) )
+		{
+			const auto node_index = pending.back( );
+			pending.pop_back( );
+			if ( node_index < 0 || static_cast<std::size_t>( node_index ) >= m_nodes.size( ) ) continue;
+			const auto& node = m_nodes[ node_index ];
+			if ( !node.bounds.intersects_ray( ray.origin_components,
+				ray.inverse_direction, distance_limit, broadphase_padding ) ) continue;
+			if ( node.left >= 0 )
+			{
+				if ( node.right >= 0 ) pending.push_back( node.right );
+				pending.push_back( node.left );
+				continue;
+			}
+
+			const auto first = std::max( node.tri_start, 0 );
+			const auto last = std::min<std::int32_t>( node.tri_start + node.tri_count,
+				static_cast<std::int32_t>( m_indices.size( ) ) );
+			for ( auto slot = first; slot < last; ++slot )
+			{
+				const auto triangle_index = m_indices[ slot ];
+				if ( triangle_index == excluded_triangle || triangle_index < 0
+					|| static_cast<std::size_t>( triangle_index ) >= m_triangles.size( ) ) continue;
+				const auto& triangle = m_triangles[ triangle_index ];
+				const auto contact = simulation::geometry::sweep_aabb_triangle(
+					ray.origin, ray.direction, distance_limit, half_extents,
+					triangle.v0, triangle.v1, triangle.v2 );
+				if ( !contact ) continue;
+				contacts.assign( 1, ray_contact{
+					.distance = contact->distance,
+					.position = contact->center,
+					.normal = contact->normal,
+					.surface = triangle.surface,
+					.triangle_index = triangle_index,
+					.entering = true,
+					.solid_id = triangle.solid_id } );
+				distance_limit = contact->distance;
+			}
+		}
+	}
+
 	collision_world::trace_result collision_world::trace_ray( const foundation::vec3& start,
 		const foundation::vec3& end, std::int32_t exclude_tri ) const
 	{
@@ -907,6 +1016,93 @@ namespace game {
 		{
 			const auto entity_exclusion = exclude_tri < -1 ? -exclude_tri - 2 : -1;
 			auto dynamic = entity_collision->trace_ray( start, end, entity_exclusion );
+			if ( dynamic.hit && ( !result.hit || dynamic.distance < result.distance ) )
+			{
+				dynamic.triangle_index = -dynamic.triangle_index - 2;
+				return dynamic;
+			}
+		}
+		return result;
+	}
+
+	collision_world::trace_result collision_world::sweep_sphere(
+		const foundation::vec3& start, const foundation::vec3& end,
+		const float radius, const std::int32_t exclude_tri ) const
+	{
+		trace_result result{};
+		result.end_pos = end;
+		const auto ray = make_ray_query( start, end );
+		if ( !ray || !std::isfinite( radius ) || radius <= 0.0f ) return result;
+
+		std::shared_ptr<const collision_world> entity_collision{};
+		std::shared_lock lock( m_mutex );
+		static thread_local std::vector<ray_contact> contacts{};
+		contacts.clear( );
+		if ( contacts.capacity( ) < 1 ) contacts.reserve( 1 );
+		traverse_sphere( *ray, radius, exclude_tri, contacts );
+		entity_collision = m_entity_collision;
+		if ( !contacts.empty( ) )
+		{
+			const auto& contact = contacts.front( );
+			result.hit = true;
+			result.fraction = contact.distance / ray->length;
+			result.distance = contact.distance;
+			result.end_pos = contact.position;
+			result.normal = contact.normal;
+			result.surface = contact.surface;
+			result.triangle_index = contact.triangle_index;
+		}
+		lock.unlock( );
+
+		if ( entity_collision )
+		{
+			const auto entity_exclusion = exclude_tri < -1 ? -exclude_tri - 2 : -1;
+			auto dynamic = entity_collision->sweep_sphere( start, end, radius, entity_exclusion );
+			if ( dynamic.hit && ( !result.hit || dynamic.distance < result.distance ) )
+			{
+				dynamic.triangle_index = -dynamic.triangle_index - 2;
+				return dynamic;
+			}
+		}
+		return result;
+	}
+
+	collision_world::trace_result collision_world::sweep_hull(
+		const foundation::vec3& start, const foundation::vec3& end,
+		const foundation::vec3& half_extents, const std::int32_t exclude_tri ) const
+	{
+		trace_result result{};
+		result.end_pos = end;
+		const auto ray = make_ray_query( start, end );
+		if ( !ray || !std::isfinite( half_extents.x ) || !std::isfinite( half_extents.y )
+			|| !std::isfinite( half_extents.z ) || half_extents.x <= 0.0f
+			|| half_extents.y <= 0.0f || half_extents.z <= 0.0f ) return result;
+
+		std::shared_ptr<const collision_world> entity_collision{};
+		std::shared_lock lock( m_mutex );
+		static thread_local std::vector<ray_contact> contacts{};
+		contacts.clear( );
+		if ( contacts.capacity( ) < 1 ) contacts.reserve( 1 );
+		traverse_hull( *ray, half_extents, exclude_tri, contacts );
+		entity_collision = m_entity_collision;
+		if ( !contacts.empty( ) )
+		{
+			const auto& contact = contacts.front( );
+			result.hit = true;
+			result.fraction = contact.distance / ray->length;
+			result.distance = contact.distance;
+			result.end_pos = contact.position;
+			result.normal = contact.normal;
+			result.surface = contact.surface;
+			result.triangle_index = contact.triangle_index;
+		}
+		lock.unlock( );
+
+		if ( entity_collision )
+		{
+			const auto entity_exclusion = exclude_tri < -1 ? -exclude_tri - 2 : -1;
+			auto dynamic = entity_collision->sweep_hull(
+				start, end, half_extents, entity_exclusion );
 			if ( dynamic.hit && ( !result.hit || dynamic.distance < result.distance ) )
 			{
 				dynamic.triangle_index = -dynamic.triangle_index - 2;
@@ -1052,14 +1248,14 @@ namespace game {
 	}
 
 	bool collision_world::aabb::intersects_ray( const float origin[ 3 ],
-		const float inverse_direction[ 3 ], float max_distance ) const
+		const float inverse_direction[ 3 ], float max_distance, const float padding ) const
 	{
 		float entrance{};
 		auto exit = max_distance;
 		for ( int axis = 0; axis < 3; ++axis )
 		{
-			auto near_distance = ( mins[ axis ] - origin[ axis ] ) * inverse_direction[ axis ];
-			auto far_distance = ( maxs[ axis ] - origin[ axis ] ) * inverse_direction[ axis ];
+			auto near_distance = ( mins[ axis ] - padding - origin[ axis ] ) * inverse_direction[ axis ];
+			auto far_distance = ( maxs[ axis ] + padding - origin[ axis ] ) * inverse_direction[ axis ];
 			if ( near_distance > far_distance )
 				std::swap( near_distance, far_distance );
 
@@ -1197,6 +1393,8 @@ namespace game {
 				if ( triangle_index < first_triangle || triangle_index >= end_triangle )
 					continue;
 				const auto& triangle = m_triangles[ triangle_index ];
+				if ( ( triangle.surface.contents & grenade_clip_contents ) != 0 )
+					continue;
 				append_vertex( triangle.v0 );
 				append_vertex( triangle.v1 );
 				append_vertex( triangle.v2 );

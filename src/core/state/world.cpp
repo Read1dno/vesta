@@ -166,6 +166,7 @@ namespace {
 			game::script_data_demand::items ) || config::visual_settings.m_item.enabled;
 		const auto projectiles = game::world().script_demand(
 			game::script_data_demand::projectiles ) || config::visual_settings.m_projectile.enabled
+			|| config::visual_settings.m_no_smoke.enabled
 			|| ( radar_active
 				&& ( config::visual_settings.m_radar.show_projectiles
 					|| config::visual_settings.m_radar.show_trajectories

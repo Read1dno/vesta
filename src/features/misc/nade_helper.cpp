@@ -618,6 +618,7 @@ namespace features::misc {
 				this->cancel_throw( false );
 			this->m_activation_latched = false;
 			this->m_aim_error = {};
+			this->m_aim_velocity = {};
 			this->m_last_aim_update = {};
 			this->reset_lock( );
 			return;
@@ -641,6 +642,7 @@ namespace features::misc {
 		{
 			this->cancel_throw( activation_held );
 			this->m_aim_error = {};
+			this->m_aim_velocity = {};
 			return;
 		}
 
@@ -672,6 +674,7 @@ namespace features::misc {
 		if ( !activation_held || this->m_activation_latched )
 		{
 			this->m_aim_error = {};
+			this->m_aim_velocity = {};
 			this->m_last_aim_update = {};
 			return;
 		}
@@ -692,6 +695,7 @@ namespace features::misc {
 		if ( index < 0 )
 		{
 			this->m_aim_error = {};
+			this->m_aim_velocity = {};
 			this->m_last_aim_update = {};
 			this->reset_lock( );
 			return;
@@ -832,6 +836,7 @@ namespace features::misc {
 		this->m_run_start_tick = 0;
 		this->m_jump_tick = 0;
 		this->m_aim_error = {};
+		this->m_aim_velocity = {};
 		this->m_last_aim_update = {};
 		this->reset_lock( );
 		this->m_activation_latched = latch;
@@ -1128,18 +1133,36 @@ namespace features::misc {
 
 		out_error = std::sqrtf( delta_x * delta_x + delta_y * delta_y );
 
+		const auto dt = this->m_last_aim_update == std::chrono::steady_clock::time_point{}
+			? game::rules::simulation_step
+			: std::clamp( std::chrono::duration<float>(
+				now - this->m_last_aim_update ).count( ), 0.0005f, 0.05f );
 		if ( cfg.aim_smoothing > 1 )
 		{
-
-			const auto dt = this->m_last_aim_update == std::chrono::steady_clock::time_point{}
-				? game::rules::simulation_step
-				: std::clamp( std::chrono::duration<float>(
-					now - this->m_last_aim_update ).count( ), 0.0005f, 0.05f );
 			const auto response_seconds = ( 12.0f
 				+ static_cast<float>( cfg.aim_smoothing - 1 ) * 8.0f ) * 0.001f;
-			const auto amount = 1.0f - std::exp( -dt / response_seconds );
-			delta_x *= amount;
-			delta_y *= amount;
+			const auto desired_pitch = std::clamp( delta_x / response_seconds, -720.0f, 720.0f );
+			const auto desired_yaw = std::clamp( delta_y / response_seconds, -720.0f, 720.0f );
+			const auto velocity_blend = 1.0f - std::exp(
+				-dt / std::max( 0.006f, response_seconds * 0.2f ) );
+			constexpr auto maximum_acceleration{ 18000.0f };
+			const auto maximum_velocity_change = maximum_acceleration * dt;
+			const auto approach = [ & ]( float current, float desired )
+			{
+				const auto blended = current + ( desired - current ) * velocity_blend;
+				return current + std::clamp( blended - current,
+					-maximum_velocity_change, maximum_velocity_change );
+			};
+			this->m_aim_velocity.x = approach( this->m_aim_velocity.x, desired_pitch );
+			this->m_aim_velocity.y = approach( this->m_aim_velocity.y, desired_yaw );
+			delta_x = std::copysign( std::min( std::abs( delta_x ),
+				std::abs( this->m_aim_velocity.x * dt ) ), delta_x );
+			delta_y = std::copysign( std::min( std::abs( delta_y ),
+				std::abs( this->m_aim_velocity.y * dt ) ), delta_y );
+		}
+		else
+		{
+			this->m_aim_velocity = {};
 		}
 		this->m_last_aim_update = now;
 

@@ -1205,6 +1205,20 @@ static void from_json(const json& j, visual_profile::no_flash& n)
 	if (j.contains("wireframe_color")) j.at("wireframe_color").get_to(n.wireframe_color);
 }
 
+static void to_json(json& j, const visual_profile::no_smoke& n)
+{
+	j = json{
+		{"enabled", n.enabled},
+		{"wireframe_color", n.wireframe_color}
+	};
+}
+
+static void from_json(const json& j, visual_profile::no_smoke& n)
+{
+	if (j.contains("enabled")) j.at("enabled").get_to(n.enabled);
+	if (j.contains("wireframe_color")) j.at("wireframe_color").get_to(n.wireframe_color);
+}
+
 static void to_json(json& j, const visual_profile::crosshair& c)
 {
 	j = json{
@@ -1379,6 +1393,7 @@ static void to_json(json& j, const visual_profile& e)
 		{"m_radar", e.m_radar},
 		{"m_sound", e.m_sound},
 		{"m_no_flash", e.m_no_flash},
+		{"m_no_smoke", e.m_no_smoke},
 		{"m_crosshair", e.m_crosshair}
 	};
 }
@@ -1393,6 +1408,7 @@ static void from_json(const json& j, visual_profile& e)
 	if (j.contains("m_radar")) j.at("m_radar").get_to(e.m_radar);
 	if (j.contains("m_sound")) j.at("m_sound").get_to(e.m_sound);
 	if (j.contains("m_no_flash")) j.at("m_no_flash").get_to(e.m_no_flash);
+	if (j.contains("m_no_smoke")) j.at("m_no_smoke").get_to(e.m_no_smoke);
 	if (j.contains("m_crosshair")) j.at("m_crosshair").get_to(e.m_crosshair);
 }
 
@@ -1546,7 +1562,10 @@ static void from_json(const json& j, general_profile::spectator_list& s)
 static void to_json(json& j, const general_profile::event_log& e)
 {
 	j = json{{"enabled", e.enabled}, {"layout", e.layout},
-		{"duration", e.duration}, {"max_entries", e.max_entries}};
+		{"duration", e.duration}, {"max_entries", e.max_entries},
+		{"show_shots", e.show_shots}, {"show_hits", e.show_hits},
+		{"show_kills", e.show_kills}, {"show_misses", e.show_misses},
+		{"show_blocked", e.show_blocked}, {"show_info", e.show_info}};
 }
 
 static void from_json(const json& j, general_profile::event_log& e)
@@ -1555,19 +1574,30 @@ static void from_json(const json& j, general_profile::event_log& e)
 	if (j.contains("layout")) j.at("layout").get_to(e.layout);
 	if (j.contains("duration")) j.at("duration").get_to(e.duration);
 	if (j.contains("max_entries")) j.at("max_entries").get_to(e.max_entries);
+	if (j.contains("show_shots")) j.at("show_shots").get_to(e.show_shots);
+	if (j.contains("show_hits")) j.at("show_hits").get_to(e.show_hits);
+	if (j.contains("show_kills")) j.at("show_kills").get_to(e.show_kills);
+	if (j.contains("show_misses")) j.at("show_misses").get_to(e.show_misses);
+	if (j.contains("show_blocked")) j.at("show_blocked").get_to(e.show_blocked);
+	if (j.contains("show_info")) j.at("show_info").get_to(e.show_info);
 	e.duration = std::isfinite(e.duration) ? std::clamp(e.duration, 0.5f, 20.0f) : 5.0f;
 	e.max_entries = std::clamp(e.max_entries, 1, 5);
 }
 
 static void to_json(json& j, const general_profile::keybind_list& k)
 {
-	j = json{{"enabled", k.enabled}, {"layout", k.layout}};
+	j = json{{"enabled", k.enabled}, {"layout", k.layout},
+		{"show_always", k.show_always}, {"show_hold", k.show_hold},
+		{"show_toggle", k.show_toggle}};
 }
 
 static void from_json(const json& j, general_profile::keybind_list& k)
 {
 	if (j.contains("enabled")) j.at("enabled").get_to(k.enabled);
 	if (j.contains("layout")) j.at("layout").get_to(k.layout);
+	if (j.contains("show_always")) j.at("show_always").get_to(k.show_always);
+	if (j.contains("show_hold")) j.at("show_hold").get_to(k.show_hold);
+	if (j.contains("show_toggle")) j.at("show_toggle").get_to(k.show_toggle);
 }
 
 static void to_json(json& j, const general_profile::bomb_info& b)

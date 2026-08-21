@@ -7,6 +7,8 @@
 
 namespace simulation {
 
+inline constexpr foundation::vec3 grenade_collision_half_extents{ 2.0f, 2.0f, 2.0f };
+
 struct grenade_path
 {
 	std::vector<foundation::vec3> points{};
@@ -53,9 +55,11 @@ private:
 		const foundation::vec3& velocity, int tick );
 
 	static constexpr int maximum_ticks{ 1024 };
-	static constexpr int sample_stride{ 4 };
+	static constexpr int sample_stride{ 1 };
 	static constexpr float gravity_scale{ 0.4f };
 	static constexpr float bounce_elasticity{ 0.45f };
+	static constexpr float collision_skin{ 1.0f / 32.0f };
+	static constexpr int maximum_contacts_per_tick{ 4 };
 };
 
 }

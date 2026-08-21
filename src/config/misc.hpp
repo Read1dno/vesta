@@ -145,12 +145,21 @@ namespace config {
 			screen_layout layout{ 40.0f, 410.0f };
 			float duration{ 5.0f };
 			int max_entries{ 5 };
+			bool show_shots{ true };
+			bool show_hits{ true };
+			bool show_kills{ true };
+			bool show_misses{ true };
+			bool show_blocked{ true };
+			bool show_info{ true };
 		} m_event_log{};
 
 		struct keybind_list
 		{
 			bool enabled{ false };
 			screen_layout layout{ 40.0f, 260.0f };
+			bool show_always{ true };
+			bool show_hold{ true };
+			bool show_toggle{ true };
 		} m_keybind_list{};
 
 		struct bomb_info

@@ -16,6 +16,8 @@ namespace game {
 class collision_world
 {
 public:
+	static constexpr std::uint32_t grenade_clip_contents{ 0x80000000u };
+
 	struct surface_info
 	{
 		float penetration{};
@@ -140,6 +142,12 @@ public:
 	[[nodiscard]] std::vector<global_surface_entry> read_surface_table( ) const;
 	[[nodiscard]] trace_result trace_ray( const foundation::vec3& start,
 		const foundation::vec3& end, std::int32_t exclude_tri = -1 ) const;
+	[[nodiscard]] trace_result sweep_sphere( const foundation::vec3& start,
+		const foundation::vec3& end, float radius,
+		std::int32_t exclude_tri = -1 ) const;
+	[[nodiscard]] trace_result sweep_hull( const foundation::vec3& start,
+		const foundation::vec3& end, const foundation::vec3& half_extents,
+		std::int32_t exclude_tri = -1 ) const;
 	[[nodiscard]] std::vector<hit_entry> trace_ray_all( const foundation::vec3& start,
 		const foundation::vec3& end ) const;
 	[[nodiscard]] segment_build_result build_segments(
@@ -161,7 +169,8 @@ private:
 		void expand( const aabb& other );
 		[[nodiscard]] int longest_axis( ) const;
 		[[nodiscard]] bool intersects_ray( const float origin[ 3 ],
-			const float inverse_direction[ 3 ], float max_distance ) const;
+			const float inverse_direction[ 3 ], float max_distance,
+			float padding = 0.0f ) const;
 	};
 
 	struct bvh_node
@@ -203,6 +212,10 @@ private:
 		float distance_limit );
 	void traverse_ray( const ray_query& ray, std::int32_t excluded_triangle,
 		bool nearest_only, std::vector<ray_contact>& contacts ) const;
+	void traverse_sphere( const ray_query& ray, float radius,
+		std::int32_t excluded_triangle, std::vector<ray_contact>& contacts ) const;
+	void traverse_hull( const ray_query& ray, const foundation::vec3& half_extents,
+		std::int32_t excluded_triangle, std::vector<ray_contact>& contacts ) const;
 	[[nodiscard]] std::uintptr_t surface_manager( ) const;
 
 	static constexpr auto k_surface_manager_attempts{ 3 };

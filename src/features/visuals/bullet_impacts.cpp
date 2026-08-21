@@ -671,7 +671,8 @@ namespace features::visuals {
 	}
 
 	void bullet_impacts_t::emit_confirmed_hit( const std::uintptr_t pawn,
-		const foundation::vec3& position, const int damage, const bool killed )
+		const foundation::vec3& position, const int damage, const bool killed,
+		const bool correlate_trigger )
 	{
 		if ( !pawn || damage <= 0 || !finite_vector( position ) ) return;
 		const auto now = std::chrono::steady_clock::now( );
@@ -685,11 +686,17 @@ namespace features::visuals {
 				this->m_confirmed_hits.erase( this->m_confirmed_hits.begin( ),
 					this->m_confirmed_hits.end( ) - 64 );
 		}
-		features::visuals::event_log( ).push(
-			killed ? std::format( "Kill: {} damage", damage )
-				: std::format( "Hit: -{} HP", damage ),
-			killed ? features::visuals::event_kind::kill
-				: features::visuals::event_kind::hit );
+		const auto correlated = correlate_trigger
+			&& features::visuals::event_log( ).resolve_latest_trigger_shot(
+				damage, killed );
+		if ( !correlated )
+			features::visuals::event_log( ).push(
+				killed ? std::format( "Kill: {} damage", damage )
+					: std::format( "Hit: -{} HP", damage ),
+				killed ? features::visuals::event_kind::kill
+					: features::visuals::event_kind::hit,
+				killed ? features::visuals::event_category::kill
+					: features::visuals::event_category::hit );
 		if ( config::general_settings.m_hitmarker.enabled )
 		{
 			this->m_hitmarkers.push_back( { position, now } );
@@ -1404,7 +1411,7 @@ namespace features::visuals {
 					return pending.pawn == pawn
 						&& now - pending.timestamp < std::chrono::milliseconds( 500 );
 				} );
-			this->emit_confirmed_hit( pawn, position, damage, killed );
+			this->emit_confirmed_hit( pawn, position, damage, killed, false );
 
 			auto closest = this->m_action_feedback.end( );
 			auto closest_delta = std::chrono::steady_clock::duration{
@@ -1843,7 +1850,8 @@ namespace features::visuals {
 		const auto impact_feedback = hitmarker_cfg.enabled || hitsound_cfg.enabled
 			|| hitsound_cfg.show_damage
 			|| config::visual_settings.m_chams.on_shot.enabled
-			|| config::visual_settings.m_chams.kill_effect.enabled;
+			|| config::visual_settings.m_chams.kill_effect.enabled
+			|| config::general_settings.m_event_log.enabled;
 		if ( !cfg.enabled && !impact_feedback )
 		{
 			this->m_tracers.clear( );

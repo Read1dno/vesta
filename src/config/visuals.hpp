@@ -290,6 +290,12 @@ namespace config {
 			zdraw::rgba wireframe_color{ 200, 200, 200, 150 };
 		} m_no_flash{};
 
+		struct no_smoke
+		{
+			bool enabled{ false };
+			zdraw::rgba wireframe_color{ 190, 210, 220, 180 };
+		} m_no_smoke{};
+
 		struct crosshair
 		{
 			bool enabled{ false };

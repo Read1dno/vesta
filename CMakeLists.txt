@@ -94,7 +94,6 @@ set(vesta_sources
     src/features/visuals/grenade_prediction.cpp
 	src/features/visuals/hitsound.cpp
     src/features/visuals/item.cpp
-    src/features/visuals/no_flash.cpp
     src/features/visuals/player.cpp
     src/features/visuals/projectile.cpp
     src/features/visuals/radar.cpp
@@ -281,5 +280,17 @@ if(BUILD_TESTING)
     target_include_directories(vesta_penetration_segments_test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME penetration_segments COMMAND vesta_penetration_segments_test)
+
+    add_executable(vesta_swept_sphere_test
+        tests/swept_sphere.cpp)
+    target_include_directories(vesta_swept_sphere_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME swept_sphere COMMAND vesta_swept_sphere_test)
+
+    add_executable(vesta_swept_hull_test
+        tests/swept_hull.cpp)
+    target_include_directories(vesta_swept_hull_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME swept_hull COMMAND vesta_swept_hull_test)
 
 endif()

@@ -81,7 +81,8 @@ namespace
 		const auto& combat = config::combat_settings.global;
 		return visuals.m_player.enabled || visuals.m_item.enabled
 			|| visuals.m_projectile.enabled || visuals.m_bomb.enabled
-			|| visuals.m_no_flash.enabled || visuals.m_crosshair.enabled
+			|| visuals.m_no_flash.enabled || visuals.m_no_smoke.enabled
+			|| visuals.m_crosshair.enabled
 			|| ( visuals.m_player.enabled && visuals.m_chams.enabled )
 			|| visuals.m_radar.enabled
 			|| visuals.m_sound.enabled || misc.m_grenades.enabled
@@ -1167,21 +1168,46 @@ namespace
 		std::vector<compact_panel_row> rows{};
 		const auto combat = config::combat_settings.get(
 			game::local_player().weapon_type() );
-		const auto add_combat = [ & ]( const char* name, bool enabled, int mode, int key )
+		const auto mode_visible = [ & ]( const int mode )
 		{
-			if ( !enabled || !config::combat_profile::activation_active( mode, key ) ) return;
+			return mode == config::combat_profile::activation::always ? cfg.show_always
+				: mode == config::combat_profile::activation::toggle ? cfg.show_toggle
+				: cfg.show_hold;
+		};
+		const auto add_combat = [ & ]( std::string name, const bool enabled,
+			const int mode, const int key )
+		{
+			if ( !enabled || !mode_visible( mode )
+				|| !config::combat_profile::activation_active( mode, key ) ) return;
 			const auto* mode_name = mode == config::combat_profile::activation::always
 				? "always" : mode == config::combat_profile::activation::toggle
 					? "toggle" : "hold";
-			rows.push_back( { std::format( "{}  [{}]", name,
+			rows.push_back( { std::format( "{}  [{}]", std::move( name ),
 				mode_name ), k_wm_text } );
 		};
 		add_combat( "Aimbot", combat.aimbot.enabled,
 			combat.aimbot.activation_mode, combat.aimbot.key );
 		add_combat( "Trigger", combat.triggerbot.enabled,
 			combat.triggerbot.activation_mode, combat.triggerbot.key );
+		const auto& global = config::combat_settings.global;
+		add_combat( std::format( "Aim Damage: {}",
+			static_cast<int>( std::lround( global.aimbot_min_damage_override ) ) ),
+			global.aimbot_enabled && global.aimbot_min_damage_override_enabled,
+			global.aimbot_min_damage_override_mode,
+			global.aimbot_min_damage_override_key );
+		add_combat( std::format( "Trigger Damage: {}",
+			static_cast<int>( std::lround( global.triggerbot_min_damage_override ) ) ),
+			global.triggerbot_enabled && global.triggerbot_min_damage_override_enabled,
+			global.triggerbot_min_damage_override_mode,
+			global.triggerbot_min_damage_override_key );
 		const auto& player_esp = config::visual_settings.m_player;
-		if ( player_esp.active( ) )
+		const auto visual_mode_visible = [ & ]( const int mode )
+		{
+			return mode == config::visual_profile::player::always_on ? cfg.show_always
+				: mode == config::visual_profile::player::toggle ? cfg.show_toggle
+				: cfg.show_hold;
+		};
+		if ( visual_mode_visible( player_esp.activation_mode ) && player_esp.active( ) )
 		{
 			const auto* mode = player_esp.activation_mode
 				== config::visual_profile::player::always_on ? "always"
@@ -1190,7 +1216,7 @@ namespace
 			rows.push_back( { std::format( "Player ESP  [{}]", mode ), k_wm_text } );
 		}
 		const auto& radar = config::visual_settings.m_radar;
-		if ( radar.active( ) )
+		if ( visual_mode_visible( radar.activation_mode ) && radar.active( ) )
 		{
 			const auto* mode = radar.activation_mode
 				== config::visual_profile::radar::always_on ? "always"
@@ -1200,11 +1226,14 @@ namespace
 		}
 		const auto key_down = []( int key ) { return key > 0 && ( ::GetAsyncKeyState( key ) & 0x8000 ) != 0; };
 		const auto& misc = config::general_settings;
-		if ( misc.m_bunny_hop.enabled && key_down( misc.m_bunny_hop.activation_key ) ) rows.push_back( { "Bunny Hop  [hold]", k_wm_text } );
-		if ( misc.m_edge_jump.enabled && key_down( misc.m_edge_jump.activation_key ) ) rows.push_back( { "Edge Jump  [hold]", k_wm_text } );
-		if ( misc.m_nade_helper.enabled && misc.m_nade_helper.aim_assist && key_down( misc.m_nade_helper.aim_key ) ) rows.push_back( { "Nade Helper  [hold]", k_wm_text } );
-		if ( misc.m_auto_stop.enabled && features::misc::auto_stop().active() ) rows.push_back( { "Auto Stop  [active]", k_wm_text } );
-		if ( config::visual_settings.m_no_flash.enabled ) rows.push_back( { "No Flash  [always]", k_wm_text } );
+		if ( cfg.show_hold && global.grenade_aim.enabled
+			&& key_down( global.grenade_aim.key ) ) rows.push_back( { "Grenade Aim  [hold]", k_wm_text } );
+		if ( cfg.show_hold && misc.m_bunny_hop.enabled && key_down( misc.m_bunny_hop.activation_key ) ) rows.push_back( { "Bunny Hop  [hold]", k_wm_text } );
+		if ( cfg.show_hold && misc.m_edge_jump.enabled && key_down( misc.m_edge_jump.activation_key ) ) rows.push_back( { "Edge Jump  [hold]", k_wm_text } );
+		if ( cfg.show_hold && misc.m_nade_helper.enabled && misc.m_nade_helper.aim_assist && key_down( misc.m_nade_helper.aim_key ) ) rows.push_back( { "Nade Helper  [hold]", k_wm_text } );
+		if ( cfg.show_hold && misc.m_auto_stop.enabled && features::misc::auto_stop().active() ) rows.push_back( { "Auto Stop  [active]", k_wm_text } );
+		if ( cfg.show_always && config::visual_settings.m_no_flash.enabled ) rows.push_back( { "No Flash  [always]", k_wm_text } );
+		if ( cfg.show_always && config::visual_settings.m_no_smoke.enabled ) rows.push_back( { "No Smoke  [always]", k_wm_text } );
 		draw_compact_panel( render::localization::tr( "Active Binds" ), rows, cfg.layout, interactive );
 	}
 
@@ -1754,10 +1783,7 @@ void overlay_t::run()
 			if (!path.empty())
 			{
 				if ( is_lua_import )
-				{
-					[[maybe_unused]] const auto imported =
-						scripting::runtime().import_script( std::filesystem::u8path( path ) );
-				}
+					(void)scripting::runtime().import_script( std::filesystem::u8path( path ) );
 				else
 				{
 					const auto succeeded = is_save
@@ -1847,12 +1873,12 @@ void overlay_t::run()
 
 			{
 				VESTA_PERF_SCOPE( chams );
+				chams::g_renderer.render_world_effects(
+					this->m_rtv, this->m_render_width, this->m_render_height );
 				chams::g_renderer.render_frame(
 					this->m_rtv, this->m_render_width, this->m_render_height,
 					pose_frame );
 			}
-
-			features::visuals::no_flash().on_render(draw_list);
 			{
 				VESTA_PERF_SCOPE( player_esp );
 				features::visuals::player().render(draw_list, pose_frame);

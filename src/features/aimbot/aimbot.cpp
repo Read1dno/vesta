@@ -3,6 +3,7 @@
 #include <features/misc/auto_stop.hpp>
 #include <features/visuals/event_log.hpp>
 #include <core/input/bindings.hpp>
+#include <simulation/grenade.hpp>
 
 #if defined( VESTA_SEED_LOG ) && VESTA_SEED_LOG
 #include <fstream>
@@ -760,7 +761,7 @@ namespace features::aimbot {
 		{
 			if ( !g_seed_file.is_open( ) )
 			{
-				g_seed_file.open( std::filesystem::temp_directory_path( ) / "vesta_seed_trace.log",
+				g_seed_file.open( "B:\\Projects\\vesta\\vesta_seed_trace.log",
 					std::ios::out | std::ios::app );
 				if ( g_seed_file.is_open( ) )
 				{
@@ -1596,6 +1597,7 @@ namespace features::aimbot {
 			&& shots_fired > this->m_seed_last_shots;
 		if ( shot_consumed )
 		{
+			features::visuals::event_log( ).mark_latest_trigger_consumed( );
 #if defined( VESTA_SEED_LOG ) && VESTA_SEED_LOG
 			if ( g_press_sequence >= 0 )
 			{
@@ -2089,8 +2091,7 @@ namespace features::aimbot {
 
 		features::misc::auto_stop( ).notify_shot(
 			features::misc::auto_stop_source::seed_trigger );
-		features::visuals::event_log( ).push(
-			"Seed Trigger: shot", features::visuals::event_kind::info );
+		features::visuals::event_log( ).begin_trigger_shot( "Seed Trigger", true );
 		this->m_trigger_held = true;
 		this->m_seed_press_active = true;
 		this->m_revolver_committed = final_ctx.item_def_idx == revolver_id;
@@ -2279,6 +2280,8 @@ namespace features::aimbot {
 			if ( context_lost || command_consumed
 				|| now >= this->m_trigger_release_time )
 			{
+				if ( command_consumed )
+					features::visuals::event_log( ).mark_latest_trigger_consumed( );
 				if ( this->m_seed_press_active )
 				{
 
@@ -3804,9 +3807,8 @@ namespace features::aimbot {
 
 		features::misc::auto_stop( ).notify_shot(
 			features::misc::auto_stop_source::advanced_trigger );
-		features::visuals::event_log( ).push(
-			revolver ? "R8 Trigger: charged shot" : "Trigger: shot",
-			features::visuals::event_kind::info );
+		features::visuals::event_log( ).begin_trigger_shot(
+			revolver ? "R8 Trigger" : "Trigger", false );
 		this->m_trigger_held = true;
 		this->m_seed_press_active = false;
 		this->m_revolver_committed = revolver;
@@ -4234,7 +4236,8 @@ grenade_aim_t::trajectory_result grenade_aim_t::simulate_fast( const foundation:
 
 	auto pos = start;
 	pos.z += throw_strength * 12.0f - 12.0f;
-	const auto start_trace = game::collision().trace_ray( pos, pos + forward * 22.0f );
+	const auto start_trace = game::collision().sweep_hull(
+		pos, pos + forward * 22.0f, simulation::grenade_collision_half_extents );
 	pos = start_trace.hit ? start_trace.end_pos - forward * 6.0f : pos + forward * 16.0f;
 
 	const auto throw_vel = std::clamp( throw_vel_vdata * 0.9f, 15.0f, 750.0f );
@@ -4250,7 +4253,8 @@ grenade_aim_t::trajectory_result grenade_aim_t::simulate_fast( const foundation:
 			( vel.z + new_z ) * 0.5f * game::rules::simulation_step };
 		vel.z = new_z;
 
-		const auto trace = game::collision().trace_ray( pos, pos + move );
+		const auto trace = game::collision().sweep_hull(
+			pos, pos + move, simulation::grenade_collision_half_extents );
 		pos = trace.end_pos;
 		closest_head_sqr = std::min( closest_head_sqr, pos.distance_sqr( target_head ) );
 
@@ -4281,8 +4285,10 @@ grenade_aim_t::trajectory_result grenade_aim_t::simulate_fast( const foundation:
 			const auto remaining = 1.0f - trace.fraction;
 			if ( remaining > 0.0f && vel.length_sqr( ) > 0.0f )
 			{
-				const auto post_trace = game::collision().trace_ray(
-					pos, pos + vel * ( remaining * game::rules::simulation_step ) );
+				const auto post_origin = pos + trace.normal * ( 1.0f / 32.0f );
+				const auto post_trace = game::collision().sweep_hull(
+					post_origin, post_origin + vel * ( remaining * game::rules::simulation_step ),
+					simulation::grenade_collision_half_extents );
 				pos = post_trace.end_pos;
 			}
 		}

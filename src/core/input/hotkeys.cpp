@@ -23,7 +23,9 @@ namespace platform::windows {
 			name = trim( std::move( name ) );
 			if ( name.size( ) >= 2 && ( ( name.front( ) == '"' && name.back( ) == '"' )
 				|| ( name.front( ) == '\'' && name.back( ) == '\'' ) ) )
+			{
 				name = name.substr( 1, name.size( ) - 2 );
+			}
 			std::ranges::transform( name, name.begin( ), [ ]( const unsigned char value )
 			{
 				return static_cast<char>( std::toupper( value ) );
@@ -73,7 +75,9 @@ namespace platform::windows {
 				std::pair{ std::string_view{ "TILDE" }, std::uint16_t{ VK_OEM_3 } },
 			};
 			for ( const auto& [ key_name, virtual_key ] : names )
+			{
 				if ( name == key_name ) return virtual_key;
+			}
 			return 0;
 		}
 
@@ -84,6 +88,7 @@ namespace platform::windows {
 			if ( std::filesystem::exists( path, error ) ) return;
 			std::filesystem::create_directories( path.parent_path( ), error );
 			if ( error ) return;
+
 			std::ofstream output( path, std::ios::binary | std::ios::trunc );
 			if ( !output ) return;
 			output <<
@@ -109,7 +114,10 @@ namespace platform::windows {
 			{
 				if ( line.size( ) >= 3 && static_cast<unsigned char>( line[0] ) == 0xef
 					&& static_cast<unsigned char>( line[1] ) == 0xbb
-					&& static_cast<unsigned char>( line[2] ) == 0xbf ) line.erase( 0, 3 );
+					&& static_cast<unsigned char>( line[2] ) == 0xbf )
+				{
+					line.erase( 0, 3 );
+				}
 				line = trim( std::move( line ) );
 				if ( line.empty( ) || line.front( ) == '#' || line.front( ) == ';' )
 					continue;

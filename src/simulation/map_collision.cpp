@@ -98,15 +98,18 @@ namespace game {
 				return false;
 			}
 
+			bool grenade_clip{};
 			for ( std::size_t i = 0; i < interact->size( ); ++i )
 			{
 				const auto s = lower( interact->at( i )->as_string( ) );
-				if ( s != "playerclip" && s != "npcclip" && s != "csgo_grenadeclip" && s != "sky" )
+				if ( s == "csgo_grenadeclip" )
+					grenade_clip = true;
+				else if ( s != "playerclip" && s != "npcclip" && s != "sky" )
 				{
 					return false;
 				}
 			}
-			return true;
+			return !grenade_clip;
 		}
 
 		[[nodiscard]] std::uint32_t attribute_contents( const chams::kv3::object* attr )
@@ -129,6 +132,11 @@ namespace game {
 			{
 				for ( std::size_t index = 0; index < interact->size( ); ++index )
 				{
+					auto value = interact->at( index )->as_string( );
+					for ( auto& c : value )
+						c = static_cast<char>( std::tolower( static_cast<unsigned char>( c ) ) );
+					if ( value == "csgo_grenadeclip" )
+						return collision_world::grenade_clip_contents;
 					if ( is_grate( interact->at( index )->as_string( ) ) )
 						return 0x2000;
 				}

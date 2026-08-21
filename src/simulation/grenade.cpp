@@ -43,36 +43,43 @@ namespace simulation {
 			( velocity.z + next_vertical_speed ) * 0.5f * game::rules::simulation_step };
 		result.velocity.z = next_vertical_speed;
 
-		const auto contact = game::collision().trace_ray( position, position + displacement );
-		result.position = contact.end_pos;
-		result.collided = contact.hit;
-		result.collision_normal = contact.normal;
-		if ( !contact.hit )
-			return result;
-
-		result.velocity = reflected_velocity( result.velocity, contact.normal );
-		if ( contact.normal.z > 0.7f )
+		result.position = position;
+		auto movement = displacement;
+		auto remaining_fraction = 1.0f;
+		for ( int contact_index = 0;
+			contact_index < maximum_contacts_per_tick && movement.length_sqr( ) > 1e-8f;
+			++contact_index )
 		{
-			const auto speed_squared = result.velocity.length_sqr( );
-			if ( speed_squared > 96000.0f )
+			const auto contact = game::collision().sweep_hull(
+				result.position, result.position + movement, grenade_collision_half_extents );
+			if ( !contact.hit )
 			{
-				const auto alignment = result.velocity.normalized().dot( contact.normal );
-				if ( alignment > 0.5f )
-					result.velocity = result.velocity * ( 1.5f - alignment );
+				result.position = contact.end_pos;
+				break;
 			}
-			if ( speed_squared < 400.0f )
-			{
-				result.velocity = {};
-				return result;
-			}
-		}
 
-		const auto remaining_fraction = 1.0f - contact.fraction;
-		if ( remaining_fraction > 0.0f )
-		{
-			const auto continuation = game::collision().trace_ray( result.position,
-				result.position + result.velocity * ( remaining_fraction * game::rules::simulation_step ) );
-			result.position = continuation.end_pos;
+			result.position = contact.end_pos + contact.normal * collision_skin;
+			result.collided = true;
+			result.collision_normal = contact.normal;
+			result.velocity = reflected_velocity( result.velocity, contact.normal );
+			if ( contact.normal.z > 0.7f )
+			{
+				const auto speed_squared = result.velocity.length_sqr( );
+				if ( speed_squared > 96000.0f )
+				{
+					const auto alignment = result.velocity.normalized().dot( contact.normal );
+					if ( alignment > 0.5f ) result.velocity *= 1.5f - alignment;
+				}
+				if ( speed_squared < 400.0f )
+				{
+					result.velocity = {};
+					break;
+				}
+			}
+
+			remaining_fraction *= std::clamp( 1.0f - contact.fraction, 0.0f, 1.0f );
+			if ( remaining_fraction <= 1e-4f ) break;
+			movement = result.velocity * ( remaining_fraction * game::rules::simulation_step );
 		}
 		return result;
 	}

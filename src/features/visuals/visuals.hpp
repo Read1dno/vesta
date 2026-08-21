@@ -207,19 +207,6 @@ namespace features::visuals {
 			void on_render( zdraw::draw_list& draw_list );
 		};
 
-		class no_flash_t
-		{
-		public:
-			void on_render( zdraw::draw_list& draw_list );
-
-		private:
-			void rebuild_cache( const foundation::vec3& eye_pos, float max_distance );
-
-			std::vector<game::collision_world::triangle> m_cached_tris{};
-			foundation::vec3 m_cache_origin{};
-			bool m_cache_valid{ false };
-		};
-
 		class crosshair_t
 		{
 		public:
@@ -270,10 +257,12 @@ namespace features::visuals {
 
 			std::vector<in_flight_grenade> m_in_flight{};
 			grenade_path m_preview{};
+			grenade_path m_display_preview{};
 			grenade_trajectory_engine m_trajectory_engine{};
 			std::chrono::steady_clock::time_point m_last_throw_time{};
 			std::chrono::steady_clock::time_point m_last_flight_update{};
 			std::chrono::steady_clock::time_point m_last_preview_update{};
+			std::chrono::steady_clock::time_point m_last_preview_blend{};
 			bool m_was_holding{ false };
 
 			static constexpr auto throw_cooldown{ 1.0f };
@@ -442,7 +431,8 @@ namespace features::visuals {
 			void resolve_action_feedback( );
 			void resolve_server_damage( );
 			void emit_confirmed_hit( std::uintptr_t pawn,
-				const foundation::vec3& position, int damage, bool killed );
+				const foundation::vec3& position, int damage, bool killed,
+				bool correlate_trigger = true );
 			void resolve_hitmarkers( );
 			void render_hitmarkers( zdraw::draw_list& draw_list );
 			void render_damage_numbers( zdraw::draw_list& draw_list );
@@ -463,7 +453,6 @@ namespace features::visuals {
 	inline grenade_prediction_t& grenade_prediction( ) { static grenade_prediction_t value{}; return value; }
 	inline bullet_impacts_t& bullet_impacts( ) { static bullet_impacts_t value{}; return value; }
 	inline radar_t& radar( ) { static radar_t value{}; return value; }
-	inline no_flash_t& no_flash( ) { static no_flash_t value{}; return value; }
 	inline crosshair_t& crosshair( ) { static crosshair_t value{}; return value; }
 
 }

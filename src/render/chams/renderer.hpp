@@ -25,6 +25,8 @@ namespace chams {
 		void render_frame( ID3D11RenderTargetView* backbuffer_rtv,
 			UINT target_width, UINT target_height,
 			const std::shared_ptr<const game::player_pose_frame>& frame );
+		void render_world_effects( ID3D11RenderTargetView* backbuffer_rtv,
+			UINT target_width, UINT target_height );
 		void begin_2d_bloom_frame( );
 		void add_2d_bloom_segment( float x0, float y0, float x1, float y1,
 			float thickness, float radius, zdraw::rgba color );
@@ -166,10 +168,12 @@ namespace chams {
 		ID3D11Buffer* m_cb_bones{};
 		ID3D11Buffer* m_cb_material{};
 		ID3D11Buffer* m_cb_bloom{};
+		ID3D11Buffer* m_cb_world_effect{};
 		std::vector<ID3D11Buffer*> m_frame_bone_buffers{};
 
 		ID3D11RasterizerState* m_rs_solid{};
 		ID3D11RasterizerState* m_rs_wireframe{};
+		ID3D11RasterizerState* m_rs_wireframe_scissor{};
 		ID3D11RasterizerState* m_rs_world_scissor{};
 		ID3D11BlendState* m_blend_state{};
 		ID3D11BlendState* m_bloom_blend_state{};
@@ -228,6 +232,7 @@ namespace chams {
 		float m_bloom_2d_radius{};
 
 		ID3D11VertexShader* m_world_vertex_shader{};
+		ID3D11PixelShader* m_world_pixel_shader{};
 		ID3D11InputLayout* m_world_input_layout{};
 
 		ID3D11DepthStencilState* m_depth_state_equal{};

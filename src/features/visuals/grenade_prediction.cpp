@@ -96,10 +96,12 @@ namespace {
 		if ( !collision_ready || !preview_allowed( weapon ) )
 		{
 			m_preview.valid = false;
+			m_display_preview.valid = false;
+			m_last_preview_blend = {};
 			return;
 		}
 
-		if ( !m_preview.valid || now - m_last_preview_update >= std::chrono::milliseconds( 16 ) )
+		if ( !m_preview.valid || now - m_last_preview_update >= std::chrono::milliseconds( 8 ) )
 		{
 			m_last_preview_update = now;
 			refresh_weapon_profile( weapon );
@@ -109,7 +111,35 @@ namespace {
 		}
 
 		if ( m_preview.valid )
-			draw_path( draw_list, m_preview, 1.0f );
+		{
+			const auto topology_matches = m_display_preview.valid
+				&& m_display_preview.points.size( ) == m_preview.points.size( )
+				&& m_display_preview.bounces.size( ) == m_preview.bounces.size( );
+			if ( !topology_matches )
+			{
+				m_display_preview = m_preview;
+			}
+			else
+			{
+				const auto dt = m_last_preview_blend == steady_clock::time_point{}
+					? 1.0f / 120.0f
+					: std::clamp( seconds_since( m_last_preview_blend, now ), 0.0f, 0.05f );
+				const auto blend = 1.0f - std::exp( -dt / 0.022f );
+				for ( std::size_t index = 0; index < m_preview.points.size( ); ++index )
+					m_display_preview.points[ index ] +=
+						( m_preview.points[ index ] - m_display_preview.points[ index ] ) * blend;
+				for ( std::size_t index = 0; index < m_preview.bounces.size( ); ++index )
+					m_display_preview.bounces[ index ] +=
+						( m_preview.bounces[ index ] - m_display_preview.bounces[ index ] ) * blend;
+				m_display_preview.end_pos +=
+					( m_preview.end_pos - m_display_preview.end_pos ) * blend;
+				m_display_preview.duration = m_preview.duration;
+				m_display_preview.end_tick = m_preview.end_tick;
+				m_display_preview.valid = true;
+			}
+			m_last_preview_blend = now;
+			draw_path( draw_list, m_display_preview, 1.0f );
+		}
 	}
 
 	grenade_prediction_t::held_grenade_snapshot grenade_prediction_t::sample_held_grenade( )
@@ -198,7 +228,8 @@ namespace {
 		angles.to_directions( &forward, &right, &up );
 		auto eye = direct_sample ? direct_origin : game::camera().origin( );
 		eye.z += strength * 12.0f - 12.0f;
-		const auto obstruction = game::collision().trace_ray( eye, eye + forward * 22.0f );
+		const auto obstruction = game::collision().sweep_hull(
+			eye, eye + forward * 22.0f, simulation::grenade_collision_half_extents );
 		origin = obstruction.hit ? obstruction.end_pos - forward * 6.0f : eye + forward * 16.0f;
 
 		const auto pawn_velocity = app::context().process.load<foundation::vec3>(

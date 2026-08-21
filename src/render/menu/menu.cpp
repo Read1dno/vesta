@@ -4033,6 +4033,15 @@ void menu_t::draw_visuals( )
 						color_row( "Wireframe Color", no_flash.wireframe_color );
 					} );
 			} );
+
+		auto& no_smoke = config::visual_settings.m_no_smoke;
+		card( "no_smoke", "NO SMOKE (WIREFRAME)", 1, [ & ]
+			{
+				toggle_popup_row( "Enable Visual No Smoke", no_smoke.enabled, 1, [ & ]
+					{
+						color_row( "Smoke Wireframe Color", no_smoke.wireframe_color );
+					} );
+			} );
 	}
 	else
 	{
@@ -4273,13 +4282,34 @@ void menu_t::draw_misc( )
 				toggle_row( "Show FPS", p.m_watermark.show_fps );
 			} );
 			toggle_row( "Show Spectators", p.m_spectator_list.enabled );
-			toggle_popup_row( "Show Event Log", p.m_event_log.enabled, 2, [ & ]
+			toggle_popup_row( "Show Event Log", p.m_event_log.enabled, 3, [ & ]
 			{
 				slider_row( "Duration", p.m_event_log.duration,
 					0.5f, 20.0f, " s", 0.5f );
 				slider_row( "Maximum Entries", p.m_event_log.max_entries, 1, 5 );
+				int event_mask = ( p.m_event_log.show_shots ? 1 : 0 )
+					| ( p.m_event_log.show_hits ? 2 : 0 )
+					| ( p.m_event_log.show_kills ? 4 : 0 )
+					| ( p.m_event_log.show_misses ? 8 : 0 )
+					| ( p.m_event_log.show_blocked ? 16 : 0 )
+					| ( p.m_event_log.show_info ? 32 : 0 );
+				static constexpr std::pair<const char*, int> event_options[]{
+					{ "Shots", 1 }, { "Hits", 2 }, { "Kills", 4 },
+					{ "Misses", 8 }, { "Blocked", 16 }, { "Info", 32 } };
+				multiselect_row( "Events", event_mask, event_options, 63 );
+				p.m_event_log.show_shots = ( event_mask & 1 ) != 0;
+				p.m_event_log.show_hits = ( event_mask & 2 ) != 0;
+				p.m_event_log.show_kills = ( event_mask & 4 ) != 0;
+				p.m_event_log.show_misses = ( event_mask & 8 ) != 0;
+				p.m_event_log.show_blocked = ( event_mask & 16 ) != 0;
+				p.m_event_log.show_info = ( event_mask & 32 ) != 0;
 			} );
-			toggle_row( "Show Active Binds", p.m_keybind_list.enabled );
+			toggle_popup_row( "Show Active Binds", p.m_keybind_list.enabled, 3, [ & ]
+			{
+				toggle_row( "Always On Binds", p.m_keybind_list.show_always );
+				toggle_row( "Hold Binds", p.m_keybind_list.show_hold );
+				toggle_row( "Toggle Binds", p.m_keybind_list.show_toggle );
+			} );
 			toggle_row( "Show Bomb Info",
 				config::visual_settings.m_bomb.show_info_panel );
 		} );

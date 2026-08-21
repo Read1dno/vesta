@@ -72,6 +72,17 @@ namespace chams {
 		};
 		static_assert( sizeof( cb_bloom ) % 16 == 0 );
 
+		struct cb_world_effect
+		{
+			float color[ 4 ]{};
+			float eye_and_distance[ 4 ]{};
+			float smoke_spheres[ 8 ][ 4 ]{};
+			std::uint32_t smoke_count{};
+			std::uint32_t clip_to_smoke{};
+			float padding[ 2 ]{};
+		};
+		static_assert( sizeof( cb_world_effect ) % 16 == 0 );
+
 		void write_gpu_material( gpu_material& out,
 			const config::visual_profile::chams::material& material )
 		{
@@ -354,7 +365,7 @@ namespace chams {
 					g_Visible.Color.a);
 			}
 
-)";
+		)";
 
 		constexpr const char* k_world_shader_source = R"(
 			cbuffer CBViewProjection : register(b0)
@@ -364,11 +375,52 @@ namespace chams {
 				float  g_Time;
 			};
 
-			float4 VS_World(float3 position : POSITION) : SV_POSITION
+			cbuffer CBWorldEffect : register(b1)
 			{
-				return mul(g_ViewProjection, float4(position, 1.0f));
+				float4 g_WorldColor;
+				float4 g_EyeAndDistance;
+				float4 g_SmokeSpheres[8];
+				uint g_SmokeCount;
+				uint g_ClipToSmoke;
+				float2 g_WorldPadding;
+			};
+
+			struct WORLD_OUTPUT
+			{
+				float4 Position : SV_POSITION;
+				float3 WorldPos : TEXCOORD0;
+			};
+
+			WORLD_OUTPUT VS_World(float3 position : POSITION)
+			{
+				WORLD_OUTPUT output;
+				output.Position = mul(g_ViewProjection, float4(position, 1.0f));
+				output.WorldPos = position;
+				return output;
 			}
-)";
+
+			float4 PS_World(WORLD_OUTPUT input) : SV_TARGET
+			{
+				if (g_EyeAndDistance.w > 0.0f
+					&& distance(input.WorldPos, g_EyeAndDistance.xyz) > g_EyeAndDistance.w)
+					discard;
+
+				if (g_ClipToSmoke != 0)
+				{
+					bool inside = false;
+					[loop]
+					for (uint i = 0; i < min(g_SmokeCount, 8u); ++i)
+					{
+						float3 delta = input.WorldPos - g_SmokeSpheres[i].xyz;
+						inside = inside || dot(delta, delta)
+							<= g_SmokeSpheres[i].w * g_SmokeSpheres[i].w;
+					}
+					if (!inside) discard;
+			}
+
+				return g_WorldColor;
+			}
+		)";
 
 		constexpr const char* k_resolve_shader_source = R"(
 			Texture2DMS<float4> g_MsaaColor : register(t0);
@@ -395,7 +447,7 @@ namespace chams {
 				color.rgb /= color.a;
 				return color;
 			}
-)";
+		)";
 
 		constexpr const char* k_bloom_shader_source = R"(
 			Texture2D<float4> g_Source : register(t0);
@@ -516,7 +568,7 @@ namespace chams {
 
 				return float4(input.color.rgb * input.color.a, input.color.a);
 			}
-)";
+		)";
 
 		[[nodiscard]] bone_matrix compose_world_bone( const foundation::vec3& pos, const foundation::rotation& rot )
 		{
@@ -639,6 +691,7 @@ namespace chams {
 		if ( this->m_cb_bones ) this->m_cb_bones->Release( );
 		if ( this->m_cb_material ) this->m_cb_material->Release( );
 		if ( this->m_cb_bloom ) this->m_cb_bloom->Release( );
+		if ( this->m_cb_world_effect ) this->m_cb_world_effect->Release( );
 		for ( auto* buffer : this->m_frame_bone_buffers )
 		{
 			if ( buffer ) buffer->Release( );
@@ -646,6 +699,7 @@ namespace chams {
 		this->m_frame_bone_buffers.clear( );
 		if ( this->m_rs_solid ) this->m_rs_solid->Release( );
 		if ( this->m_rs_wireframe ) this->m_rs_wireframe->Release( );
+		if ( this->m_rs_wireframe_scissor ) this->m_rs_wireframe_scissor->Release( );
 		if ( this->m_rs_world_scissor ) this->m_rs_world_scissor->Release( );
 		if ( this->m_blend_state ) this->m_blend_state->Release( );
 		if ( this->m_bloom_blend_state ) this->m_bloom_blend_state->Release( );
@@ -657,6 +711,7 @@ namespace chams {
 		if ( this->m_world_depth_state ) this->m_world_depth_state->Release( );
 		if ( this->m_depth_state_equal ) this->m_depth_state_equal->Release( );
 		if ( this->m_world_vertex_shader ) this->m_world_vertex_shader->Release( );
+		if ( this->m_world_pixel_shader ) this->m_world_pixel_shader->Release( );
 		if ( this->m_world_input_layout ) this->m_world_input_layout->Release( );
 		this->release_world_geometry( );
 		this->release_depth_buffer( );
@@ -759,6 +814,7 @@ namespace chams {
 		}
 
 		ID3DBlob* world_blob{};
+		ID3DBlob* world_pixel_blob{};
 		hr = D3DCompile( k_world_shader_source, std::strlen( k_world_shader_source ), nullptr, nullptr, nullptr,
 			"VS_World", "vs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &world_blob, &error_blob );
 		if ( FAILED( hr ) )
@@ -780,6 +836,23 @@ namespace chams {
 
 		hr = this->m_device->CreateInputLayout( world_layout, 1, world_blob->GetBufferPointer( ), world_blob->GetBufferSize( ), &this->m_world_input_layout );
 		world_blob->Release( );
+		if ( FAILED( hr ) ) return false;
+
+		hr = D3DCompile( k_world_shader_source, std::strlen( k_world_shader_source ), nullptr, nullptr, nullptr,
+			"PS_World", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &world_pixel_blob, &error_blob );
+		if ( FAILED( hr ) )
+		{
+			if ( error_blob )
+			{
+				app::context().diagnostics.warning( "[chams] world PS compile error: {}",
+					static_cast<const char*>( error_blob->GetBufferPointer( ) ) );
+				error_blob->Release( );
+			}
+			return false;
+		}
+		hr = this->m_device->CreatePixelShader( world_pixel_blob->GetBufferPointer( ),
+			world_pixel_blob->GetBufferSize( ), nullptr, &this->m_world_pixel_shader );
+		world_pixel_blob->Release( );
 		if ( FAILED( hr ) ) return false;
 
 		ID3DBlob* resolve_vs_blob{};
@@ -896,7 +969,8 @@ namespace chams {
 			&& this->m_vertex_shader && this->m_pixel_shader
 			&& this->m_bloom_mask_shader
 			&& this->m_death_geometry_shader
-			&& this->m_world_vertex_shader && this->m_world_input_layout;
+			&& this->m_world_vertex_shader && this->m_world_pixel_shader
+			&& this->m_world_input_layout;
 	}
 
 	bool renderer::create_constant_buffers( )
@@ -918,6 +992,9 @@ namespace chams {
 		desc.ByteWidth = sizeof( cb_bloom );
 		if ( FAILED( this->m_device->CreateBuffer( &desc, nullptr, &this->m_cb_bloom ) ) ) return false;
 
+		desc.ByteWidth = sizeof( cb_world_effect );
+		if ( FAILED( this->m_device->CreateBuffer( &desc, nullptr, &this->m_cb_world_effect ) ) ) return false;
+
 		return true;
 	}
 
@@ -933,9 +1010,11 @@ namespace chams {
 
 		rs.FillMode = D3D11_FILL_WIREFRAME;
 		if ( FAILED( this->m_device->CreateRasterizerState( &rs, &this->m_rs_wireframe ) ) ) return false;
+		rs.ScissorEnable = TRUE;
+		if ( FAILED( this->m_device->CreateRasterizerState(
+			&rs, &this->m_rs_wireframe_scissor ) ) ) return false;
 
 		rs.FillMode = D3D11_FILL_SOLID;
-		rs.ScissorEnable = TRUE;
 		if ( FAILED( this->m_device->CreateRasterizerState(
 			&rs, &this->m_rs_world_scissor ) ) ) return false;
 
@@ -2037,6 +2116,299 @@ namespace chams {
 		this->m_context->IASetIndexBuffer( gpu->index_buffer, DXGI_FORMAT_R32_UINT, 0 );
 
 		this->m_context->DrawIndexed( gpu->index_count, 0, 0 );
+	}
+
+	void renderer::render_world_effects( ID3D11RenderTargetView* backbuffer_rtv,
+		const UINT target_width, const UINT target_height )
+	{
+		if ( !this->m_ready || !backbuffer_rtv || target_width == 0 || target_height == 0
+			|| !game::local_player().valid( ) ) return;
+
+		const auto& flash_cfg = config::visual_settings.m_no_flash;
+		const auto& smoke_cfg = config::visual_settings.m_no_smoke;
+		const auto raw_flash = game::local_player().flash_alpha( );
+		const auto blindness = std::clamp(
+			raw_flash > 1.5f ? raw_flash / 255.0f : raw_flash, 0.0f, 1.0f );
+		const bool dim_flash = flash_cfg.enabled && blindness >= 0.01f;
+		const bool draw_flash_world = flash_cfg.enabled && blindness >= 0.5f;
+
+		struct smoke_sphere
+		{
+			foundation::vec3 center{};
+			float radius{};
+		};
+		static thread_local std::vector<smoke_sphere> smoke_spheres{};
+		smoke_spheres.clear( );
+		const auto eye = game::camera().origin( );
+		if ( smoke_cfg.enabled )
+		{
+			if ( const auto projectiles = game::world().projectiles( ) )
+			{
+				for ( const auto& projectile : *projectiles )
+				{
+					if ( projectile.subtype != game::projectile_kind::smoke_grenade
+						|| !projectile.smoke_active ) continue;
+					auto center = projectile.smoke_detonation_pos;
+					if ( center.length_sqr( ) <= 0.001f ) center = projectile.origin;
+					if ( !std::isfinite( center.x ) || !std::isfinite( center.y )
+						|| !std::isfinite( center.z ) ) continue;
+					smoke_spheres.push_back( {
+						center, projectile.smoke_volume_received ? 145.0f : 160.0f } );
+				}
+			}
+			std::ranges::sort( smoke_spheres, [ & ]( const smoke_sphere& lhs,
+				const smoke_sphere& rhs )
+				{
+					return eye.distance_sqr( lhs.center ) < eye.distance_sqr( rhs.center );
+				} );
+			if ( smoke_spheres.size( ) > 8 ) smoke_spheres.resize( 8 );
+		}
+
+		if ( !dim_flash && !draw_flash_world && smoke_spheres.empty( ) ) return;
+
+		if ( dim_flash )
+		{
+			const auto alpha = blindness * ( flash_cfg.background_color.a / 255.0f );
+			const float background[ 4 ]{
+				( flash_cfg.background_color.r / 255.0f ) * alpha,
+				( flash_cfg.background_color.g / 255.0f ) * alpha,
+				( flash_cfg.background_color.b / 255.0f ) * alpha,
+				alpha };
+			this->m_context->ClearRenderTargetView( backbuffer_rtv, background );
+		}
+		if ( !draw_flash_world && smoke_spheres.empty( ) ) return;
+		if ( !this->ensure_world_geometry( )
+			|| !this->ensure_depth_buffer( target_width, target_height ) ) return;
+
+		const auto view_projection = game::camera().matrix( );
+		this->update_view_projection( view_projection, eye );
+		this->m_context->ClearDepthStencilView(
+			this->m_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0 );
+
+		float selection_distance = draw_flash_world
+			? std::max( flash_cfg.max_distance, 1.0f ) : 0.0f;
+		for ( const auto& sphere : smoke_spheres )
+			selection_distance = std::max( selection_distance,
+				eye.distance( sphere.center ) + sphere.radius );
+		const auto selection_distance_sqr = selection_distance * selection_distance;
+
+		const auto aabb_distance_sqr = [ & ]( const world_bounds& bounds )
+		{
+			float result{};
+			for ( int axis = 0; axis < 3; ++axis )
+			{
+				const float value = axis == 0 ? eye.x : axis == 1 ? eye.y : eye.z;
+				const float low = axis == 0 ? bounds.mins.x : axis == 1 ? bounds.mins.y : bounds.mins.z;
+				const float high = axis == 0 ? bounds.maxs.x : axis == 1 ? bounds.maxs.y : bounds.maxs.z;
+				const float delta = value < low ? low - value : value > high ? value - high : 0.0f;
+				result += delta * delta;
+			}
+			return result;
+		};
+		const auto intersects_frustum = [ & ]( const world_bounds& bounds )
+		{
+			bool left{ true }, right{ true }, bottom{ true }, top{ true };
+			bool near_plane{ true }, far_plane{ true };
+			for ( int corner = 0; corner < 8; ++corner )
+			{
+				const foundation::vec3 point{
+					( corner & 1 ) ? bounds.maxs.x : bounds.mins.x,
+					( corner & 2 ) ? bounds.maxs.y : bounds.mins.y,
+					( corner & 4 ) ? bounds.maxs.z : bounds.mins.z };
+				const auto x = view_projection[ 0 ][ 0 ] * point.x
+					+ view_projection[ 0 ][ 1 ] * point.y
+					+ view_projection[ 0 ][ 2 ] * point.z + view_projection[ 0 ][ 3 ];
+				const auto y = view_projection[ 1 ][ 0 ] * point.x
+					+ view_projection[ 1 ][ 1 ] * point.y
+					+ view_projection[ 1 ][ 2 ] * point.z + view_projection[ 1 ][ 3 ];
+				const auto z = view_projection[ 2 ][ 0 ] * point.x
+					+ view_projection[ 2 ][ 1 ] * point.y
+					+ view_projection[ 2 ][ 2 ] * point.z + view_projection[ 2 ][ 3 ];
+				const auto w = view_projection[ 3 ][ 0 ] * point.x
+					+ view_projection[ 3 ][ 1 ] * point.y
+					+ view_projection[ 3 ][ 2 ] * point.z + view_projection[ 3 ][ 3 ];
+				left &= x < -w; right &= x > w;
+				bottom &= y < -w; top &= y > w;
+				near_plane &= z < 0.0f; far_plane &= z > w;
+			}
+			return !( left || right || bottom || top || near_plane || far_plane );
+		};
+
+		struct draw_range
+		{
+			std::uint32_t first_index{};
+			std::uint32_t index_count{};
+		};
+		static thread_local std::vector<draw_range> static_chunks{};
+		static thread_local std::vector<draw_range> dynamic_chunks{};
+		const auto select_chunks = [ & ]( const world_geometry& geometry,
+			std::vector<draw_range>& selected )
+		{
+			selected.clear( );
+			if ( selected.capacity( ) < geometry.chunks.size( ) )
+				selected.reserve( geometry.chunks.size( ) );
+			for ( const auto& chunk : geometry.chunks )
+			{
+				if ( aabb_distance_sqr( chunk.bounds ) > selection_distance_sqr
+					|| !intersects_frustum( chunk.bounds ) ) continue;
+				if ( !selected.empty( ) && selected.back( ).first_index
+					+ selected.back( ).index_count == chunk.first_index )
+				{
+					selected.back( ).index_count += chunk.index_count;
+				}
+				else
+				{
+					selected.push_back( { chunk.first_index, chunk.index_count } );
+				}
+			}
+		};
+		select_chunks( this->m_static_world, static_chunks );
+		select_chunks( this->m_dynamic_world, dynamic_chunks );
+
+		const auto bind_geometry = [ & ]( const world_geometry& geometry )
+		{
+			if ( !geometry.vertex_buffer || !geometry.index_buffer || !geometry.index_count )
+				return false;
+			const UINT stride = sizeof( foundation::vec3 );
+			const UINT offset{};
+			this->m_context->IASetVertexBuffers(
+				0, 1, &geometry.vertex_buffer, &stride, &offset );
+			this->m_context->IASetIndexBuffer(
+				geometry.index_buffer, DXGI_FORMAT_R32_UINT, 0 );
+			return true;
+		};
+		const auto draw_selected = [ & ]( const world_geometry& geometry,
+			const std::vector<draw_range>& selected )
+		{
+			if ( !bind_geometry( geometry ) ) return;
+			for ( const auto& chunk : selected )
+				this->m_context->DrawIndexed(
+					chunk.index_count, chunk.first_index, 0 );
+		};
+
+		D3D11_RECT effect_scissor{ 0, 0,
+			static_cast<LONG>( target_width ), static_cast<LONG>( target_height ) };
+		const bool smoke_scissor = !draw_flash_world && !smoke_spheres.empty( );
+		if ( smoke_scissor )
+		{
+			float min_x = static_cast<float>( target_width );
+			float min_y = static_cast<float>( target_height );
+			float max_x{};
+			float max_y{};
+			bool valid{};
+			bool crosses_near{};
+			for ( const auto& sphere : smoke_spheres )
+			{
+				for ( int corner = 0; corner < 8; ++corner )
+				{
+					const foundation::vec3 point{
+						sphere.center.x + ( ( corner & 1 ) ? sphere.radius : -sphere.radius ),
+						sphere.center.y + ( ( corner & 2 ) ? sphere.radius : -sphere.radius ),
+						sphere.center.z + ( ( corner & 4 ) ? sphere.radius : -sphere.radius ) };
+					const auto x = view_projection[ 0 ][ 0 ] * point.x
+						+ view_projection[ 0 ][ 1 ] * point.y
+						+ view_projection[ 0 ][ 2 ] * point.z + view_projection[ 0 ][ 3 ];
+					const auto y = view_projection[ 1 ][ 0 ] * point.x
+						+ view_projection[ 1 ][ 1 ] * point.y
+						+ view_projection[ 1 ][ 2 ] * point.z + view_projection[ 1 ][ 3 ];
+					const auto w = view_projection[ 3 ][ 0 ] * point.x
+						+ view_projection[ 3 ][ 1 ] * point.y
+						+ view_projection[ 3 ][ 2 ] * point.z + view_projection[ 3 ][ 3 ];
+					if ( w <= 0.001f )
+					{
+						crosses_near = true;
+						continue;
+					}
+					const auto screen_x = ( x / w * 0.5f + 0.5f ) * target_width;
+					const auto screen_y = ( 0.5f - y / w * 0.5f ) * target_height;
+					min_x = std::min( min_x, screen_x );
+					min_y = std::min( min_y, screen_y );
+					max_x = std::max( max_x, screen_x );
+					max_y = std::max( max_y, screen_y );
+					valid = true;
+				}
+			}
+			if ( valid && !crosses_near )
+			{
+				effect_scissor.left = std::clamp<LONG>(
+					static_cast<LONG>( std::floor( min_x ) ) - 2, 0, target_width );
+				effect_scissor.top = std::clamp<LONG>(
+					static_cast<LONG>( std::floor( min_y ) ) - 2, 0, target_height );
+				effect_scissor.right = std::clamp<LONG>(
+					static_cast<LONG>( std::ceil( max_x ) ) + 2, 0, target_width );
+				effect_scissor.bottom = std::clamp<LONG>(
+					static_cast<LONG>( std::ceil( max_y ) ) + 2, 0, target_height );
+			}
+		}
+
+		D3D11_VIEWPORT viewport{};
+		viewport.Width = static_cast<float>( target_width );
+		viewport.Height = static_cast<float>( target_height );
+		viewport.MinDepth = 0.0f;
+		viewport.MaxDepth = 1.0f;
+		this->m_context->RSSetViewports( 1, &viewport );
+		this->m_context->IASetInputLayout( this->m_world_input_layout );
+		this->m_context->IASetPrimitiveTopology( D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST );
+		this->m_context->VSSetShader( this->m_world_vertex_shader, nullptr, 0 );
+		this->m_context->GSSetShader( nullptr, nullptr, 0 );
+		this->m_context->VSSetConstantBuffers( 0, 1, &this->m_cb_view_projection );
+		this->m_context->PSSetShader( nullptr, nullptr, 0 );
+		this->m_context->OMSetRenderTargets( 0, nullptr, this->m_dsv );
+		this->m_context->OMSetDepthStencilState( this->m_world_depth_state, 0 );
+		this->m_context->RSSetState(
+			smoke_scissor ? this->m_rs_world_scissor : this->m_rs_solid );
+		if ( smoke_scissor ) this->m_context->RSSetScissorRects( 1, &effect_scissor );
+		draw_selected( this->m_static_world, static_chunks );
+		draw_selected( this->m_dynamic_world, dynamic_chunks );
+
+		const auto render_wireframe = [ & ]( const zdraw::rgba color,
+			const float alpha_scale, const float max_distance,
+			const bool clip_to_smoke )
+		{
+			cb_world_effect constants{};
+			constants.color[ 0 ] = color.r / 255.0f;
+			constants.color[ 1 ] = color.g / 255.0f;
+			constants.color[ 2 ] = color.b / 255.0f;
+			constants.color[ 3 ] = ( color.a / 255.0f ) * alpha_scale;
+			constants.eye_and_distance[ 0 ] = eye.x;
+			constants.eye_and_distance[ 1 ] = eye.y;
+			constants.eye_and_distance[ 2 ] = eye.z;
+			constants.eye_and_distance[ 3 ] = max_distance;
+			constants.smoke_count = static_cast<std::uint32_t>( smoke_spheres.size( ) );
+			constants.clip_to_smoke = clip_to_smoke ? 1u : 0u;
+			for ( std::size_t i = 0; i < smoke_spheres.size( ); ++i )
+			{
+				constants.smoke_spheres[ i ][ 0 ] = smoke_spheres[ i ].center.x;
+				constants.smoke_spheres[ i ][ 1 ] = smoke_spheres[ i ].center.y;
+				constants.smoke_spheres[ i ][ 2 ] = smoke_spheres[ i ].center.z;
+				constants.smoke_spheres[ i ][ 3 ] = smoke_spheres[ i ].radius;
+			}
+			D3D11_MAPPED_SUBRESOURCE mapped{};
+			if ( FAILED( this->m_context->Map( this->m_cb_world_effect, 0,
+				D3D11_MAP_WRITE_DISCARD, 0, &mapped ) ) ) return;
+			std::memcpy( mapped.pData, &constants, sizeof( constants ) );
+			this->m_context->Unmap( this->m_cb_world_effect, 0 );
+
+			this->m_context->OMSetRenderTargets( 1, &backbuffer_rtv, this->m_dsv );
+			this->m_context->PSSetShader( this->m_world_pixel_shader, nullptr, 0 );
+			this->m_context->PSSetConstantBuffers( 1, 1, &this->m_cb_world_effect );
+			this->m_context->OMSetDepthStencilState( this->m_depth_state_read_only, 0 );
+			this->m_context->RSSetState( clip_to_smoke && smoke_scissor
+				? this->m_rs_wireframe_scissor : this->m_rs_wireframe );
+			if ( clip_to_smoke && smoke_scissor )
+				this->m_context->RSSetScissorRects( 1, &effect_scissor );
+			const float blend_factor[ 4 ]{};
+			this->m_context->OMSetBlendState(
+				this->m_blend_state, blend_factor, 0xFFFFFFFF );
+			draw_selected( this->m_static_world, static_chunks );
+			draw_selected( this->m_dynamic_world, dynamic_chunks );
+		};
+
+		if ( draw_flash_world )
+			render_wireframe( flash_cfg.wireframe_color, blindness,
+				std::max( flash_cfg.max_distance, 1.0f ), false );
+		if ( !smoke_spheres.empty( ) && !draw_flash_world )
+			render_wireframe( smoke_cfg.wireframe_color, 1.0f, 0.0f, true );
 	}
 
 	void renderer::render_frame( ID3D11RenderTargetView* backbuffer_rtv,

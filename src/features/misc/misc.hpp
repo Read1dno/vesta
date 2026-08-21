@@ -75,6 +75,7 @@ namespace features::misc {
 				const foundation::vec3& eye_pos, bool selected, bool converged ) const;
 
 			foundation::vec2 m_aim_error{};
+			foundation::vec2 m_aim_velocity{};
 			std::vector<std::uint16_t> m_gated_keys{};
 			std::vector<lineup_view> m_render_scratch{};
 			std::vector<lineup_view> m_tick_scratch{};
