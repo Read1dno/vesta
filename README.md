@@ -29,6 +29,24 @@ That is all you need. Profiles are managed from **Misc → Configs**. On a compa
 keyboard, change the menu and exit keys in `%TEMP%\vesta\hotkeys.cfg`, then
 restart Vesta.
 
+## Important
+
+> [!CAUTION]
+> **Lua scripts.** Never run an unreviewed Lua script: it may be harmful. Vetted,
+> popular scripts will be published in this repository and on the Vesta website.
+
+> [!TIP]
+> **Performance.** An external overlay shares CPU and GPU resources with the
+> game. If ESP appears delayed or the overlay FPS is low, select the **Fullscreen**
+> render mode and set model, texture, shader, and particle detail to Low in CS2.
+
+> [!WARNING]
+> **VAC / VAC Live — observed on 21 August 2026.** There are no confirmed reports
+> of Vesta causing a permanent client-side VAC ban. For Premier, use `fps_max 86`,
+> keep Aimbot disabled, and avoid repeated impossible multi-kill rounds. Seed
+> Trigger jump and no-scope shots were usable in current testing, but anti-cheat
+> behavior can change and this is not a permanent guarantee.
+
 ## Features
 
 Open a section only when you need its settings.
@@ -172,9 +190,8 @@ pinned third-party dependencies during the first configure.
 - Want to submit a change? Read [Contributing](.github/CONTRIBUTING.md).
 - Community discussion lives in the [UnknownCheats thread](https://www.unknowncheats.me/forum/counter-strike-2-a/764247-vesta-external.html).
 
-For persistent ESP delay or low overlay FPS, lower the in-game graphics settings
-before disabling visual features. After a CS2 update, use the latest Vesta build
-before reporting changed offsets or signatures.
+After a CS2 update, use the latest Vesta build before reporting changed offsets
+or signatures.
 
 ## License
 
