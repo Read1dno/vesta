@@ -905,6 +905,9 @@ const canvas = document.querySelector('#radar-canvas'),
       connPill = document.querySelector('#conn-pill'),
       connLabel = document.querySelector('#conn-label');
 
+const demoMode = location.hostname.endsWith('github.io') ||
+                 new URLSearchParams(location.search).get('demo') === '1';
+
 const defaults = {
   terrorists: true,
   counterTerrorists: true,
@@ -1402,7 +1405,7 @@ function updateRoster() {
 
 async function loadMap(name) {
   try {
-    const response = await fetch('map-meta', { cache: 'no-store' });
+    const response = await fetch(demoMode ? 'demo-meta.json' : 'map-meta', { cache: 'no-store' });
     if (!response.ok) throw Error(response.status);
     const nextMeta = await response.json();
     if (!nextMeta) return;
@@ -1410,11 +1413,11 @@ async function loadMap(name) {
 
     const suffix = '?map=' + encodeURIComponent(name) + '&v=5';
     primaryImage = new Image();
-    primaryImage.src = 'overview' + suffix;
+    primaryImage.src = demoMode ? 'assets/overview-de_mirage.png' : 'overview' + suffix;
     lowerImage = null;
     if (meta.has_lower) {
       lowerImage = new Image();
-      lowerImage.src = 'overview-lower' + suffix;
+      lowerImage.src = demoMode ? 'assets/overview-de_mirage.png' : 'overview-lower' + suffix;
     }
   } catch {}
 }
@@ -1423,7 +1426,7 @@ async function poll() {
   const controller = new AbortController(),
         timer = setTimeout(() => controller.abort(), 1800);
   try {
-    const response = await fetch('state', { cache: 'no-store', signal: controller.signal });
+    const response = await fetch(demoMode ? 'demo-state.json' : 'state', { cache: 'no-store', signal: controller.signal });
     if (!response.ok) throw Error(response.status);
     const next = await response.json();
 
@@ -1451,7 +1454,7 @@ async function poll() {
     }
   } finally {
     clearTimeout(timer);
-    setTimeout(poll, 50);
+    setTimeout(poll, demoMode ? 1000 : 50);
   }
 }
 
