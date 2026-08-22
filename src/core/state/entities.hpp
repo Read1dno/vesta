@@ -81,6 +81,7 @@ struct player_snapshot
 	bool is_visible{};
 	bool is_spotted{};
 	bool legit_visible{ true };
+	float legit_opacity{ 1.0f };
 	hitbox_catalog::set hitboxes{};
 	skeleton_reader::data bones{};
 };

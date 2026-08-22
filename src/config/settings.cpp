@@ -866,7 +866,10 @@ static void to_json(json& j, const visual_profile::player& p)
 			{"sound", p.m_legit_sync.sound},
 			{"radar_hold", p.m_legit_sync.radar_hold},
 			{"sound_hold", p.m_legit_sync.sound_hold},
-			{"sound_distance", p.m_legit_sync.sound_distance}}},
+			{"sound_distance", p.m_legit_sync.sound_distance},
+			{"pulse_min_opacity", p.m_legit_sync.pulse_min_opacity},
+			{"pulse_max_opacity", p.m_legit_sync.pulse_max_opacity},
+			{"pulse_period", p.m_legit_sync.pulse_period}}},
 		{"m_layout", p.m_layout},
 		{"m_box", p.m_box},
 		{"m_skeleton", p.m_skeleton},
@@ -906,10 +909,17 @@ static void from_json(const json& j, visual_profile::player& p)
 		if (l.contains("radar_hold")) l.at("radar_hold").get_to(p.m_legit_sync.radar_hold);
 		if (l.contains("sound_hold")) l.at("sound_hold").get_to(p.m_legit_sync.sound_hold);
 		if (l.contains("sound_distance")) l.at("sound_distance").get_to(p.m_legit_sync.sound_distance);
+		if (l.contains("pulse_min_opacity")) l.at("pulse_min_opacity").get_to(p.m_legit_sync.pulse_min_opacity);
+		if (l.contains("pulse_max_opacity")) l.at("pulse_max_opacity").get_to(p.m_legit_sync.pulse_max_opacity);
+		if (l.contains("pulse_period")) l.at("pulse_period").get_to(p.m_legit_sync.pulse_period);
 	}
 	p.m_legit_sync.radar_hold = std::clamp(p.m_legit_sync.radar_hold, 0.1f, 10.0f);
 	p.m_legit_sync.sound_hold = std::clamp(p.m_legit_sync.sound_hold, 0.1f, 10.0f);
 	p.m_legit_sync.sound_distance = std::clamp(p.m_legit_sync.sound_distance, 100.0f, 2500.0f);
+	p.m_legit_sync.pulse_min_opacity = std::clamp(p.m_legit_sync.pulse_min_opacity, 0.0f, 1.0f);
+	p.m_legit_sync.pulse_max_opacity = std::clamp(p.m_legit_sync.pulse_max_opacity,
+		p.m_legit_sync.pulse_min_opacity, 1.0f);
+	p.m_legit_sync.pulse_period = std::clamp(p.m_legit_sync.pulse_period, 0.4f, 5.0f);
 	if (j.contains("m_layout")) j.at("m_layout").get_to(p.m_layout);
 	if (j.contains("m_box")) j.at("m_box").get_to(p.m_box);
 	if (j.contains("m_skeleton")) j.at("m_skeleton").get_to(p.m_skeleton);
@@ -1023,6 +1033,7 @@ static void to_json(json& j, const visual_profile::projectile& p)
 {
 	j = json{
 		{"enabled", p.enabled},
+		{"display_mode", p.display_mode},
 		{"show_icon", p.show_icon},
 		{"show_timer_ring", p.show_timer_ring},
 		{"show_inferno_bounds", p.show_inferno_bounds},
@@ -1043,6 +1054,10 @@ static void to_json(json& j, const visual_profile::projectile& p)
 static void from_json(const json& j, visual_profile::projectile& p)
 {
 	if (j.contains("enabled")) j.at("enabled").get_to(p.enabled);
+	if (j.contains("display_mode")) j.at("display_mode").get_to(p.display_mode);
+	p.display_mode = std::clamp(p.display_mode,
+		visual_profile::projectile::indicator,
+		visual_profile::projectile::text_only);
 	if (j.contains("show_icon")) j.at("show_icon").get_to(p.show_icon);
 	if (j.contains("show_timer_ring")) j.at("show_timer_ring").get_to(p.show_timer_ring);
 	else if (j.contains("show_timer_bar")) j.at("show_timer_bar").get_to(p.show_timer_ring);
@@ -1065,6 +1080,7 @@ static void to_json(json& j, const visual_profile::bomb& b)
 {
 	j = json{
 		{"enabled", b.enabled},
+		{"display_mode", b.display_mode},
 		{"show_active_bomb", b.show_active_bomb},
 		{"active_bomb_color", b.active_bomb_color},
 		{"show_planted_bomb", b.show_planted_bomb},
@@ -1085,6 +1101,10 @@ static void to_json(json& j, const visual_profile::bomb& b)
 static void from_json(const json& j, visual_profile::bomb& b)
 {
 	if (j.contains("enabled")) j.at("enabled").get_to(b.enabled);
+	if (j.contains("display_mode")) j.at("display_mode").get_to(b.display_mode);
+	b.display_mode = std::clamp(b.display_mode,
+		visual_profile::bomb::indicator,
+		visual_profile::bomb::text_only);
 	if (j.contains("show_active_bomb")) j.at("show_active_bomb").get_to(b.show_active_bomb);
 	if (j.contains("active_bomb_color")) j.at("active_bomb_color").get_to(b.active_bomb_color);
 	if (j.contains("show_planted_bomb")) j.at("show_planted_bomb").get_to(b.show_planted_bomb);

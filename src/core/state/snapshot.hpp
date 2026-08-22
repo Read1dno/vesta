@@ -87,6 +87,14 @@ private:
 	std::unordered_map<std::uintptr_t, std::chrono::steady_clock::time_point> m_last_radar_seen{};
 	std::unordered_map<std::uintptr_t, std::uint64_t> m_last_spotted_mask{};
 	std::unordered_map<std::uintptr_t, std::chrono::steady_clock::time_point> m_last_sound_heard{};
+	struct legit_fade_state
+	{
+		float opacity{};
+		std::uint8_t signal_mode{};
+		std::chrono::steady_clock::time_point updated{};
+		std::chrono::steady_clock::time_point pulse_started{};
+	};
+	std::unordered_map<std::uintptr_t, legit_fade_state> m_legit_fades{};
 	struct cached_player_bones
 	{
 		std::uintptr_t bone_cache{};

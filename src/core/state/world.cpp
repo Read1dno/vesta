@@ -1132,16 +1132,75 @@ void world_sampler::collect_players( const std::vector<entity_directory::cached>
 		}
 		player.is_spotted = fresh_radar_edge || teammate_spotted;
 		if ( player.is_spotted ) this->m_last_radar_seen[ player.pawn ] = sync_now;
-		player.legit_visible = !( config::visual_settings.m_player.spectator_sync
-			&& this->local_spectated( ) )
-			&& ( !legit.enabled
-			|| ( legit.direct_visible && player.is_visible
-				&& !line_through_active_smoke(
-					view_origin, player.bones.get_position( 7 ) ) )
-			|| ( legit.radar && recently( this->m_last_radar_seen,
+		const auto spectator_blocked = config::visual_settings.m_player.spectator_sync
+			&& this->local_spectated( );
+		const auto direct_signal = !spectator_blocked && legit.direct_visible
+			&& player.is_visible && !line_through_active_smoke(
+				view_origin, player.bones.get_position( 7 ) );
+		const auto indirect_signal = !spectator_blocked && (
+			( legit.radar && recently( this->m_last_radar_seen,
 				player.pawn, legit.radar_hold ) )
 			|| ( legit.sound && recently( this->m_last_sound_heard,
 				player.pawn, legit.sound_hold ) ) );
+
+		if ( !legit.enabled )
+		{
+			player.legit_visible = !spectator_blocked;
+			player.legit_opacity = player.legit_visible ? 1.0f : 0.0f;
+			this->m_legit_fades.erase( player.pawn );
+		}
+		else if ( spectator_blocked )
+		{
+			player.legit_visible = false;
+			player.legit_opacity = 0.0f;
+			this->m_legit_fades.erase( player.pawn );
+		}
+		else
+		{
+			auto& fade = this->m_legit_fades[ player.pawn ];
+			if ( fade.updated.time_since_epoch( ).count( ) == 0 )
+			{
+				fade.updated = sync_now;
+				fade.pulse_started = sync_now;
+			}
+			const std::uint8_t signal_mode = direct_signal ? 2u
+				: indirect_signal ? 1u : 0u;
+			if ( signal_mode == 1u && fade.signal_mode != 1u )
+				fade.pulse_started = sync_now;
+
+			const auto delta = std::clamp(
+				std::chrono::duration<float>( sync_now - fade.updated ).count( ),
+				0.0f, 0.1f );
+			if ( direct_signal )
+			{
+				fade.opacity = 1.0f;
+			}
+			else
+			{
+				float target{};
+				if ( indirect_signal )
+				{
+					const auto elapsed = std::chrono::duration<float>(
+						sync_now - fade.pulse_started ).count( );
+					const auto phase = 0.5f + 0.5f * std::cos(
+						elapsed * 2.0f * std::numbers::pi_v<float>
+							/ std::max( legit.pulse_period, 0.01f ) );
+					const auto smooth_phase = phase * phase * ( 3.0f - 2.0f * phase );
+					target = std::lerp( legit.pulse_min_opacity,
+						legit.pulse_max_opacity, smooth_phase );
+				}
+				const auto response = indirect_signal ? 0.12f : 0.28f;
+				const auto blend = delta > 0.0f
+					? 1.0f - std::exp( -delta / response ) : 0.0f;
+				fade.opacity = std::lerp( fade.opacity, target, blend );
+			}
+			if ( signal_mode == 0u && fade.opacity < 0.01f ) fade.opacity = 0.0f;
+			fade.signal_mode = signal_mode;
+			fade.updated = sync_now;
+
+			player.legit_opacity = std::clamp( fade.opacity, 0.0f, 1.0f );
+			player.legit_visible = player.legit_opacity > 0.0f;
+		}
 	}
 
 	std::ranges::sort( fresh,[ &view_origin ]( const player_snapshot& a, const player_snapshot& b ) {
@@ -1159,6 +1218,7 @@ void world_sampler::collect_players( const std::vector<entity_directory::cached>
 	prune( this->m_last_radar_seen );
 	prune( this->m_last_spotted_mask );
 	prune( this->m_last_sound_heard );
+	prune( this->m_legit_fades );
 	prune( this->m_last_valid_bones );
 
 	auto snapshot = std::make_shared<const std::vector<player_snapshot>>( std::move( fresh ) );

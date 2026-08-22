@@ -1,3 +1,7 @@
+-- Vesta Web Radar single-file distribution. Generated; edit vesta_web_radar sources.
+
+-- Copy only this file into %TEMP%\vesta\lua\scripts, refresh, then enable it.
+
 __VESTA_WEB_RADAR_HELPER = [====[param(
     [Parameter(Mandatory=$true)][string]$Root,
     [Parameter(Mandatory=$true)][string]$Runtime,
@@ -124,7 +128,9 @@ function Install-Cloudflared([string]$LocalUrl) {
 
 function Start-CloudflareTunnel([int]$Port, [string]$LocalUrl) {
     Remove-Item -LiteralPath $tunnelOut,$tunnelErr -Force -ErrorAction SilentlyContinue
-
+    # Never inherit ~/.cloudflared/config.yml. A named-tunnel ingress config can
+    # accept the Quick Tunnel connection but answer every public request with
+    # its catch-all 404 route.
     [IO.File]::WriteAllText($cloudflaredConfig, "no-autoupdate: true`n", [Text.UTF8Encoding]::new($false))
     $processInfo = [Diagnostics.ProcessStartInfo]::new()
     $processInfo.FileName = $cloudflaredExe
@@ -294,72 +300,1170 @@ __VESTA_WEB_RADAR_HTML = [====[<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Vesta Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-@font-face{font-family:VestaWeapons;src:url('weapon-icons.ttf') format('truetype');font-display:block}
-:root{color-scheme:dark;font-family:"Segoe UI Variable Text","Aptos","SF Pro Text",ui-sans-serif,sans-serif;background:#62656a;color:#f7f8fa;--ct:#58aef5;--t:#efb351;--glass:#15171bd9;--line:#ffffff15;--muted:#a5a9b1}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#62656a}button,input{font:inherit}
-#radar{position:fixed;inset:0;width:100%;height:100%;display:block}.team{position:fixed;top:14px;bottom:14px;width:clamp(208px,16.5vw,248px);display:flex;flex-direction:column;gap:7px;pointer-events:none}.team.t{left:14px}.team.ct{right:14px}.team-head{display:flex;align-items:center;justify-content:space-between;height:32px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--glass);backdrop-filter:blur(16px) saturate(125%);box-shadow:0 10px 30px #00000024;font-size:9.5px;font-weight:720;letter-spacing:.105em}.team.t .team-head{color:var(--t)}.team.ct .team-head{color:var(--ct)}.team-total{color:#f3f4f7;font-variant-numeric:tabular-nums;letter-spacing:.02em}
-.roster{display:flex;flex-direction:column;gap:5px}.player-card{min-height:54px;padding:6px 8px;border:1px solid #ffffff0f;border-radius:9px;background:#15171bc7;backdrop-filter:blur(14px) saturate(120%);box-shadow:0 8px 26px #0000001f;overflow:hidden}.player-top,.player-bottom{display:flex;align-items:center;gap:6px;min-width:0}.player-top{height:17px}.player-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:650;letter-spacing:.005em}.player-money{font-size:9.5px;font-weight:680;color:#72da99;font-variant-numeric:tabular-nums}.player-hp{display:flex;align-items:baseline;gap:2px;font-size:9.5px;text-align:right;font-weight:750;font-variant-numeric:tabular-nums}.player-hp small{font-size:6.5px;color:var(--muted);font-weight:760;letter-spacing:.08em}.health-track{height:2px;margin:4px 0 5px;background:#05060999;border-radius:2px;overflow:hidden}.health-fill{height:100%;background:#68df93}.player-bottom{height:15px;color:#c9ccd2;font-size:9px;overflow:hidden}.equip{position:relative;display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;min-width:17px;height:16px;padding:0 2px;color:#bfc3ca}.equip sup{position:absolute;right:-1px;top:-4px;font-size:6px;color:#fff}.equip.active{min-width:31px;padding:0 3px;color:#f7f8fa}.weapon-icon{display:inline-block;font-family:VestaWeapons,sans-serif;font-size:14px;line-height:1;font-weight:400;white-space:nowrap}.equip.active .weapon-icon{font-size:17px}.equip.utility{min-width:16px;padding:0 1px}.equip.utility .weapon-icon{font-size:13px}.armor{margin-left:auto;display:inline-flex;align-items:center;gap:3px;color:#a9ccef;font-weight:680;font-variant-numeric:tabular-nums}.armor svg,.kit svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.kit{display:inline-flex;color:#72bdff}
-.gear{position:fixed;left:50%;top:14px;transform:translateX(-50%);width:36px;height:36px;display:grid;place-items:center;border:1px solid #ffffff21;border-radius:10px;background:#15171bd9;color:#fff;backdrop-filter:blur(14px);box-shadow:0 7px 22px #0004;cursor:pointer;z-index:3}.gear:hover{background:#1d2025e8;border-color:#ffffff32}.gear svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8}.settings{position:fixed;left:50%;top:58px;width:260px;padding:11px;border:1px solid #fff2;border-radius:14px;background:#17191df2;backdrop-filter:blur(18px);box-shadow:0 18px 50px #0008;opacity:0;transform:translate(-50%,-5px) scale(.97);transform-origin:top center;pointer-events:none;transition:.16s ease;z-index:3}.settings.open{opacity:1;transform:translateX(-50%);pointer-events:auto}.settings h1{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#aeb2ba;margin:2px 5px 9px}.setting{height:35px;padding:0 5px;border-top:1px solid #ffffff0c;display:flex;align-items:center;justify-content:space-between;font-size:12px}.setting:first-of-type{border-top:0}.toggle{appearance:none;width:34px;height:19px;border-radius:19px;background:#3a3d43;position:relative;cursor:pointer;transition:.15s}.toggle:after{content:"";position:absolute;left:3px;top:3px;width:13px;height:13px;border-radius:50%;background:#d9dbe0;transition:.15s}.toggle:checked{background:#7f5be8}.toggle:checked:after{transform:translateX(15px);background:#fff}.range{width:98px;accent-color:#8967ed}
-.connection{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:center;gap:7px;padding:5px 8px;border:1px solid #ffffff10;border-radius:8px;background:#15171bb8;backdrop-filter:blur(14px);font-size:9px;font-weight:620;color:#d9dbe0;opacity:.9}.connection i{width:5px;height:5px;border-radius:50%;background:#ef626b;box-shadow:0 0 7px #ef626b}.connection.live i{background:#62df95;box-shadow:0 0 7px #62df95}.connection.stale i{background:#edba62;box-shadow:0 0 7px #edba62}
-@media(max-width:1050px){.team{width:205px}}
-@media(max-width:760px){.team{top:auto;bottom:6px;width:calc(50% - 9px);height:148px}.team.t{left:6px}.team.ct{right:6px}.team-head{height:27px;padding:0 7px;border-radius:8px;font-size:8px}.roster{gap:3px;overflow:hidden}.player-card{min-height:0;height:21px;padding:2px 5px;border-radius:5px}.player-top{height:16px}.player-name{font-size:8.5px}.player-money{font-size:7.5px}.player-hp{font-size:8px}.player-hp small,.health-track,.player-bottom{display:none}.gear{top:9px}.settings{top:53px;width:min(260px,calc(100% - 20px))}.connection{bottom:158px}.team-total{font-size:8px}}
+@font-face {
+  font-family: VestaWeapons;
+  src: url('weapon-icons.ttf') format('truetype');
+  font-display: block;
+}
+
+:root {
+  color-scheme: dark;
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  --bg-radar: #62656a;
+  --bg-panel: rgba(18, 21, 26, 0.92);
+  --bg-card: rgba(26, 30, 38, 0.88);
+  --bg-card-dead: rgba(26, 30, 38, 0.35);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.04);
+
+  --t-color: #efb351;
+  --t-glow: rgba(239, 179, 81, 0.15);
+  --ct-color: #58aef5;
+  --ct-glow: rgba(88, 174, 245, 0.15);
+
+  --green: #4ade80;
+  --yellow: #facc15;
+  --red: #f87171;
+
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  font-feature-settings: "tnum" 1, "cv02" 1, "cv03" 1, "cv04" 1;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-radar);
+  font-family: var(--font);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Base Canvas */
+#radar-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Top Control Bar */
+.top-hud {
+  position: fixed;
+  top: calc(12px + var(--sat));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 20;
+}
+
+.status-pill {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-main);
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 8px var(--red);
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+.status-pill.live .status-dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.status-pill.stale .status-dot { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+
+.settings-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  transition: color 0.15s, background-color 0.15s;
+}
+.settings-btn:hover { color: #fff; background: rgba(30, 35, 45, 0.95); }
+.settings-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }
+
+/* Desktop Team Columns */
+.desktop-roster {
+  position: fixed;
+  top: calc(14px + var(--sat));
+  bottom: calc(14px + var(--sab));
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 10;
+  pointer-events: none;
+}
+.desktop-roster.t { left: calc(14px + var(--sal)); }
+.desktop-roster.ct { right: calc(14px + var(--sar)); }
+
+.team-header {
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.team-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.team-tag {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+}
+.desktop-roster.t .team-tag { background: var(--t-glow); color: var(--t-color); border: 1px solid rgba(239, 179, 81, 0.3); }
+.desktop-roster.ct .team-tag { background: var(--ct-glow); color: var(--ct-color); border: 1px solid rgba(88, 174, 245, 0.3); }
+
+.team-name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.desktop-roster.t .team-name { color: var(--t-color); }
+.desktop-roster.ct .team-name { color: var(--ct-color); }
+
+.team-total {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+}
+
+.cards-container {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  pointer-events: auto;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.cards-container::-webkit-scrollbar { display: none; }
+
+/* Player Card Component */
+.player-card {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  transition: opacity 0.2s ease;
+}
+.player-card.dead {
+  background: var(--bg-card-dead);
+  opacity: 0.45;
+}
+
+.card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  height: 16px;
+}
+
+.player-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.player-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.player-money {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--green);
+}
+
+.player-hp {
+  font-size: 10.5px;
+  font-weight: 700;
+  min-width: 26px;
+  text-align: right;
+}
+
+/* HP Progress Bar */
+.hp-track {
+  height: 2.5px;
+  margin: 5px 0 6px;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.hp-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.2s ease, background-color 0.2s ease;
+}
+
+/* Equipment Row */
+.card-bottom {
+  display: flex;
+  align-items: center;
+  height: 16px;
+  gap: 4px;
+}
+
+.equip {
+  position: relative;
+  min-width: 22px;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.04);
+}
+.equip.active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.equip sup {
+  position: absolute;
+  right: -2px;
+  top: -3px;
+  font-size: 7px;
+  font-weight: 800;
+  color: #fff;
+  background: #0f172a;
+  padding: 1px 2px;
+  border-radius: 3px;
+  line-height: 1;
+}
+
+.weapon-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: VestaWeapons, sans-serif;
+  font-size: 13.5px;
+  line-height: 16px;
+  min-width: 14px;
+  height: 16px;
+}
+.equip.active .weapon-icon { font-size: 14.5px; }
+.equip.utility .weapon-icon { font-size: 12px; }
+
+.card-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+.armor-item, .kit-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.armor-item { color: #93c5fd; }
+.kit-item { color: #38bdf8; }
+.armor-item svg, .kit-item svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Mobile Bottom Dock */
+.mobile-roster-dock {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 8px 10px calc(8px + var(--sab));
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  z-index: 20;
+}
+
+.mobile-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.tab-btn {
+  flex: 1;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.tab-btn.t { color: var(--t-color); }
+.tab-btn.ct { color: var(--ct-color); }
+.tab-btn.t.active { background: var(--t-glow); border-color: var(--t-color); color: #fff; }
+.tab-btn.ct.active { background: var(--ct-glow); border-color: var(--ct-color); color: #fff; }
+
+.mobile-cards-scroll {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 1px 0;
+}
+.mobile-cards-scroll::-webkit-scrollbar { display: none; }
+.mobile-cards-scroll .player-card {
+  min-width: 145px;
+  max-width: 165px;
+  flex: 0 0 auto;
+}
+
+/* Settings Modal */
+.settings-menu {
+  position: fixed;
+  top: calc(52px + var(--sat));
+  left: 50%;
+  transform: translateX(-50%) scale(0.96);
+  width: min(280px, calc(100% - 24px));
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(18, 21, 26, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 30;
+}
+.settings-menu.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) scale(1);
+}
+
+.settings-menu h2 {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.setting-row {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-main);
+  border-top: 1px solid var(--border-subtle);
+}
+.setting-row:first-of-type { border-top: none; }
+
+/* Custom Sliders & Toggles */
+.toggle-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  position: relative;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 0.2s ease;
+}
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  transition: transform 0.2s ease;
+}
+.toggle-switch:checked { background: #3b82f6; }
+.toggle-switch:checked::after { transform: translateX(15px); }
+
+.range-slider {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 90px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.16);
+  outline: none;
+}
+.range-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+
+@media (max-width: 780px) {
+  .desktop-roster { display: none !important; }
+  .mobile-roster-dock { display: block; }
+  .top-hud { top: calc(8px + var(--sat)); }
+}
+.card-bottom { height: 18px; gap: 5px; }
+.equip,
+.equip.active,
+.equip.utility {
+  height: 18px;
+  min-width: 23px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 4px;
+  line-height: 18px;
+}
+.equip.active { background: rgba(255, 255, 255, 0.12); }
+.equip.utility { background: rgba(255, 255, 255, 0.055); }
+.weapon-icon,
+.equip.active .weapon-icon,
+.equip.utility .weapon-icon {
+  height: 18px;
+  line-height: 18px;
+  transform: translateY(-0.5px);
+}
 </style>
 </head>
 <body>
-<canvas id="radar"></canvas>
-<section class="team t"><div class="team-head"><span>TERRORISTS</span><span class="team-total" id="t-total">$0</span></div><div class="roster" id="t-roster"></div></section>
-<section class="team ct"><div class="team-head"><span>COUNTER-TERRORISTS</span><span class="team-total" id="ct-total">$0</span></div><div class="roster" id="ct-roster"></div></section>
-<button class="gear" id="gear" aria-label="Radar settings"><svg viewBox="0 0 24 24"><path d="M9.8 3.1h4.4l.55 2.05 1.55.9 2.05-.55 2.2 3.8-1.5 1.5v1.8l1.5 1.5-2.2 3.8-2.05-.55-1.55.9-.55 2.05H9.8l-.55-2.05-1.55-.9-2.05.55-2.2-3.8 1.5-1.5v-1.8l-1.5-1.5 2.2-3.8 2.05.55 1.55-.9z"/><circle cx="12" cy="11.7" r="3.2"/></svg></button>
-<aside class="settings" id="settings"><h1>Radar settings</h1>
-  <label class="setting">Terrorists<input class="toggle" type="checkbox" data-setting="terrorists"></label>
-  <label class="setting">Counter-Terrorists<input class="toggle" type="checkbox" data-setting="counterTerrorists"></label>
-  <label class="setting">Names & health<input class="toggle" type="checkbox" data-setting="labels"></label>
-  <label class="setting">Economy panels<input class="toggle" type="checkbox" data-setting="economy"></label>
-  <label class="setting">Grenades<input class="toggle" type="checkbox" data-setting="grenades"></label>
-  <label class="setting">Trajectories<input class="toggle" type="checkbox" data-setting="trajectories"></label>
-  <label class="setting">Effect bounds<input class="toggle" type="checkbox" data-setting="zones"></label>
-  <label class="setting">Bomb<input class="toggle" type="checkbox" data-setting="bomb"></label>
-  <label class="setting">Marker size<input class="range" type="range" min="0.7" max="1.5" step="0.05" data-setting="markerSize"></label>
+
+<canvas id="radar-canvas"></canvas>
+
+<!-- Top Status & Settings -->
+<header class="top-hud">
+  <div class="status-pill" id="conn-pill">
+    <span class="status-dot"></span>
+    <span id="conn-label">Connecting</span>
+  </div>
+  <button class="settings-btn" id="settings-toggle" aria-label="Settings">
+    <svg viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3.2"/></svg>
+  </button>
+</header>
+
+<!-- Desktop T Panel -->
+<aside class="desktop-roster t" id="dt-t-panel">
+  <div class="team-header">
+    <div class="team-meta">
+
+      <span class="team-name">Terrorists</span>
+    </div>
+    <span class="team-total" id="dt-t-cash">$0</span>
+  </div>
+  <div class="cards-container" id="dt-t-cards"></div>
 </aside>
-<div class="connection" id="connection"><i></i><span>connecting</span></div>
+
+<!-- Desktop CT Panel -->
+<aside class="desktop-roster ct" id="dt-ct-panel">
+  <div class="team-header">
+    <div class="team-meta">
+
+      <span class="team-name">Counter-Terrorists</span>
+    </div>
+    <span class="team-total" id="dt-ct-cash">$0</span>
+  </div>
+  <div class="cards-container" id="dt-ct-cards"></div>
+</aside>
+
+<!-- Mobile Dock -->
+<section class="mobile-roster-dock">
+  <div class="mobile-tabs">
+    <button class="tab-btn t active" id="tab-t" onclick="selectMobileTab(2)">
+      <span>Terrorists</span>
+      <span id="mob-t-cash">$0</span>
+    </button>
+    <button class="tab-btn ct" id="tab-ct" onclick="selectMobileTab(3)">
+      <span>Counter-Terrorists</span>
+      <span id="mob-ct-cash">$0</span>
+    </button>
+  </div>
+  <div class="mobile-cards-scroll" id="mobile-cards-list"></div>
+</section>
+
+<!-- Settings Drawer -->
+<aside class="settings-menu" id="settings-menu">
+  <h2>Radar Settings</h2>
+  <label class="setting-row">Terrorists<input class="toggle-switch" type="checkbox" data-setting="terrorists"></label>
+  <label class="setting-row">Counter-Terrorists<input class="toggle-switch" type="checkbox" data-setting="counterTerrorists"></label>
+  <label class="setting-row">Player Tags & HP<input class="toggle-switch" type="checkbox" data-setting="labels"></label>
+  <label class="setting-row">Economy Info<input class="toggle-switch" type="checkbox" data-setting="economy"></label>
+  <label class="setting-row">Grenades<input class="toggle-switch" type="checkbox" data-setting="grenades"></label>
+  <label class="setting-row">Trajectories<input class="toggle-switch" type="checkbox" data-setting="trajectories"></label>
+  <label class="setting-row">Effect Bounds<input class="toggle-switch" type="checkbox" data-setting="zones"></label>
+  <label class="setting-row">Bomb Status<input class="toggle-switch" type="checkbox" data-setting="bomb"></label>
+  <label class="setting-row">Marker Scale<input class="range-slider" type="range" min="0.7" max="1.5" step="0.05" data-setting="markerSize"></label>
+</aside>
+
 <script>
-const canvas=document.querySelector('#radar'),ctx=canvas.getContext('2d',{alpha:false}),gear=document.querySelector('#gear'),settingsPanel=document.querySelector('#settings'),connection=document.querySelector('#connection');
-const defaults={terrorists:true,counterTerrorists:true,labels:true,economy:true,grenades:true,trajectories:true,zones:true,bomb:true,markerSize:1};let stored={};try{stored=JSON.parse(localStorage.getItem('vesta-radar-settings-v2')||'{}')||{}}catch{}const prefs={...defaults,...stored};
-for(const input of document.querySelectorAll('[data-setting]')){const key=input.dataset.setting;input[input.type==='checkbox'?'checked':'value']=prefs[key];input.addEventListener('input',()=>{prefs[key]=input.type==='checkbox'?input.checked:Number(input.value);localStorage.setItem('vesta-radar-settings-v2',JSON.stringify(prefs));updateRoster()})}gear.onclick=e=>{e.stopPropagation();settingsPanel.classList.toggle('open')};document.addEventListener('pointerdown',e=>{if(!settingsPanel.contains(e.target)&&!gear.contains(e.target))settingsPanel.classList.remove('open')});
-let state=null,meta=null,mapName='',primaryImage=null,lowerImage=null,lastOk=0,lastFrame=performance.now(),positions=new Map(),rosterSequence=-1;
-const colors={2:'#efb759',3:'#65aff6'},grenadeColors=['#d5d7dc','#ff785f','#eef1f6','#a99af4','#ff6f56','#ff6f56','#b78cf1'];
-function fit(){const d=Math.min(devicePixelRatio||1,2),r=canvas.getBoundingClientRect(),w=Math.max(1,Math.round(r.width*d)),h=Math.max(1,Math.round(r.height*d));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}ctx.setTransform(d,0,0,d,0,0);return{w:r.width,h:r.height}}
-function mapRect(w,h){const mobile=w<=760,side=mobile?8:(w<=1050?218:268),bottom=mobile?164:12,availableW=Math.max(180,w-(mobile?16:side*2)),availableH=Math.max(180,h-bottom-12),size=Math.min(availableW,availableH);return{x:(w-size)/2,y:Math.max(6,(h-bottom-size)/2),w:size,h:size}}
-function toMap(v,r){if(!meta||!v)return null;return[r.x+(v[0]-meta.pos_x)/(meta.scale*meta.width)*r.w,r.y+(meta.pos_y-v[1])/(meta.scale*meta.height)*r.h]}
-function text(value,x,y,size=10,color='#fff',align='center'){ctx.font=`700 ${size}px Inter,Segoe UI,sans-serif`;ctx.textAlign=align;ctx.textBaseline='middle';ctx.lineJoin='round';ctx.lineWidth=Math.max(2.4,size*.26);ctx.strokeStyle='#0a0c10e8';ctx.strokeText(value,x,y);ctx.fillStyle=color;ctx.fillText(value,x,y)}
-function hull(points){if(points.length<3)return points;points=[...points].sort((a,b)=>a[0]-b[0]||a[1]-b[1]);const cross=(a,b,c)=>(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]),lo=[],hi=[];for(const p of points){while(lo.length>1&&cross(lo.at(-2),lo.at(-1),p)<=0)lo.pop();lo.push(p)}for(let i=points.length-1;i>=0;i--){const p=points[i];while(hi.length>1&&cross(hi.at(-2),hi.at(-1),p)<=0)hi.pop();hi.push(p)}lo.pop();hi.pop();return lo.concat(hi)}
-function drawPlayer(p,r,dt){if((p.team===2&&!prefs.terrorists)||(p.team===3&&!prefs.counterTerrorists))return;const target=toMap(p.origin,r);if(!target)return;let q=positions.get(p.id)||{x:target[0],y:target[1]};const k=1-Math.exp(-dt*28);q.x+=(target[0]-q.x)*k;q.y+=(target[1]-q.y)*k;positions.set(p.id,q);const s=7.5*prefs.markerSize,c=colors[p.team]||'#ddd',yaw=(90-(p.angles?.[1]||0))*Math.PI/180;ctx.save();ctx.translate(q.x,q.y);ctx.rotate(yaw);ctx.beginPath();ctx.moveTo(0,-s*2.7);ctx.lineTo(s*.72,-s*.75);ctx.lineTo(-s*.72,-s*.75);ctx.closePath();const g=ctx.createLinearGradient(0,-s*2.7,0,-s*.65);g.addColorStop(0,c+'06');g.addColorStop(1,c+'9e');ctx.fillStyle=g;ctx.fill();ctx.restore();ctx.beginPath();ctx.arc(q.x,q.y,s,0,Math.PI*2);ctx.fillStyle=c;ctx.fill();ctx.strokeStyle='#111318';ctx.lineWidth=2;ctx.stroke();ctx.save();ctx.translate(q.x,q.y);ctx.rotate(yaw);ctx.beginPath();ctx.moveTo(0,-s*.55);ctx.lineTo(0,-s*1.5);ctx.strokeStyle='#fff';ctx.lineWidth=1.3;ctx.stroke();ctx.restore();if(prefs.labels){text(p.name||'Player',q.x,q.y-s-8,Math.max(8,9*prefs.markerSize));text(`HP ${Math.max(0,p.hp)}`,q.x,q.y+s+8,Math.max(7,8*prefs.markerSize),p.hp<30?'#ff7179':'#f5f6f8')}}
-function clean(v){return String(v||'').replace(/^weapon_/,'').replaceAll('_',' ').toUpperCase()}
-const weaponGlyphs={knife_ct:']',knife_t:'[',knife:']',deagle:'A',elite:'B',fiveseven:'C',glock:'D',revolver:'J',hkp2000:'E',p2000:'E',p250:'F',usp_silencer:'G',usps:'G',tec9:'H',cz75a:'I',cz75:'I',mac10:'K',ump45:'L',bizon:'M',mp7:'N',mp5sd:'N',mp9:'R',p90:'O',galilar:'Q',famas:'R',m4a1_silencer:'T',m4a1s:'T',m4a1:'S',m4a4:'S',aug:'U',sg556:'V',sg553:'V',ak47:'W',g3sg1:'X',scar20:'Y',awp:'Z',ssg08:'a',xm1014:'b',sawedoff:'c',sawed_off:'c',mag7:'d',nova:'e',negev:'f',m249:'g',taser:'h',flashbang:'i',hegrenade:'j',smokegrenade:'k',molotov:'l',decoy:'m',incgrenade:'n',c4:'o'};
-function weaponGlyph(raw){const n=String(raw||'').replace(/^weapon_/,'').toLowerCase();return weaponGlyphs[n]||'?'}
-function weaponIcon(raw){return`<span class="weapon-icon" title="${escapeHtml(clean(raw)||'Equipment')}">${escapeHtml(weaponGlyph(raw))}</span>`}
-const armorSvg='<svg viewBox="0 0 16 16"><path d="M3 3l5-2 5 2v4c0 3.3-1.8 5.9-5 7.5C4.8 12.9 3 10.3 3 7z"/></svg>',helmetSvg='<svg viewBox="0 0 16 16"><path d="M2.5 9a5.5 5.5 0 0111 0v2H9l-1.5 2H3zM11 9v2"/></svg>',kitSvg='<svg viewBox="0 0 16 16"><path d="M4 2l3.4 4.1M12 2L8.6 6.1M7.4 6.1L3 14M8.6 6.1L13 14M5 9h6"/></svg>';
-function circleWorld(origin,radius,r){const a=toMap(origin,r),b=toMap([origin[0]+radius,origin[1],origin[2]||0],r);return a&&b?{x:a[0],y:a[1],radius:Math.hypot(b[0]-a[0],b[1]-a[1])}:null}
-function drawProjectile(p,r){const c=grenadeColors[p.kind]||'#eee';if(prefs.trajectories&&p.trajectory?.length>1){ctx.beginPath();let first=true;for(const point of p.trajectory){const q=toMap(point,r);if(!q)continue;first?(ctx.moveTo(...q),first=false):ctx.lineTo(...q)}ctx.setLineDash([]);ctx.strokeStyle=c+'d8';ctx.lineWidth=1.1;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke()}if(prefs.zones&&p.kind===5&&p.fire_points?.length>2){const points=[];for(const fire of p.fire_points)for(let i=0;i<10;i++){const a=i*Math.PI/5,edge=[fire[0]+Math.cos(a)*60,fire[1]+Math.sin(a)*60,fire[2]];const q=toMap(edge,r);if(q)points.push(q)}const poly=hull(points);if(poly.length>2){ctx.beginPath();poly.forEach((q,i)=>i?ctx.lineTo(...q):ctx.moveTo(...q));ctx.closePath();ctx.fillStyle=c+'32';ctx.fill();ctx.strokeStyle=c+'c8';ctx.lineWidth=1.5;ctx.stroke()}}else if(prefs.zones&&p.smoke){const z=circleWorld(p.origin,144,r);if(z){ctx.beginPath();ctx.arc(z.x,z.y,z.radius,0,Math.PI*2);ctx.fillStyle=c+'28';ctx.fill();ctx.strokeStyle=c+'b8';ctx.lineWidth=1.4;ctx.stroke()}}if(!prefs.grenades)return;const q=toMap(p.origin,r);if(!q)return;ctx.beginPath();ctx.arc(q[0],q[1],8,0,Math.PI*2);ctx.fillStyle='#15171de8';ctx.fill();ctx.strokeStyle=c;ctx.lineWidth=1.5;ctx.stroke();const names=['','hegrenade','flashbang','smokegrenade','molotov','molotov','decoy'],time=p.effect_remaining>0?p.effect_remaining:p.remaining>0?p.remaining:0;ctx.font='400 13px VestaWeapons';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=c;ctx.fillText(weaponGlyph(names[p.kind]),q[0],q[1]+1);if(time>0)text(`${time.toFixed(1)}s`,q[0],q[1]+14,7.5,c)}
-function drawBomb(r){if(!prefs.bomb||!state?.bomb?.active)return;const b=state.bomb,q=toMap(b.origin,r);if(q){ctx.beginPath();ctx.arc(q[0],q[1],10,0,Math.PI*2);ctx.fillStyle='#15171de8';ctx.fill();ctx.strokeStyle=b.defusing?'#65aff6':'#efb759';ctx.lineWidth=1.7;ctx.stroke();ctx.font='400 16px VestaWeapons';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=b.defusing?'#65aff6':'#efb759';ctx.fillText('o',q[0],q[1]+1);if(b.planted)text(`SITE ${b.site===1?'B':'A'}`,q[0],q[1]+17,8.5,'#f5f6f8')}if(!b.planted)return;const x=r.x+r.w/2,y=r.y+68,def=b.defusing?`  DEF ${Number(b.defuse||0).toFixed(1)}`:'';const label=`SITE ${b.site===1?'B':'A'}   ${Number(b.time||0).toFixed(1)}s${def}`;ctx.font='700 11px Segoe UI,sans-serif';const w=ctx.measureText(label).width+22;ctx.fillStyle='#15171bdf';ctx.beginPath();ctx.roundRect(x-w/2,y-13,w,26,9);ctx.fill();text(label,x,y,11,b.defusing?'#65aff6':b.time<10?'#ff6b73':'#efb759')}
-function localEntry(){const p=state?.local;if(!p?.alive||!p.origin)return null;return{id:-1,name:p.name||'Player',team:p.team,hp:p.hp,armor:0,money:0,origin:p.origin,angles:p.angles,weapon:'',loadout:[],local:true}}
-function render(now){const{w,h}=fit(),dt=Math.min(.1,(now-lastFrame)/1000);lastFrame=now;ctx.fillStyle='#62656a';ctx.fillRect(0,0,w,h);const r=mapRect(w,h),image=state?.layer==='lower'&&lowerImage?lowerImage:primaryImage;if(image?.complete&&image.naturalWidth){ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(image,r.x,r.y,r.w,r.h)}else{ctx.fillStyle='#575a5f';ctx.fillRect(r.x,r.y,r.w,r.h)}if(state&&meta){for(const p of state.projectiles||[])drawProjectile(p,r);for(const p of state.players||[])drawPlayer(p,r,dt);const local=localEntry();if(local)drawPlayer(local,r,dt);drawBomb(r)}requestAnimationFrame(render)}
-function equipHtml(p){const counts={};for(const raw of p.loadout||[]){const key=String(raw||'').toLowerCase();counts[key]=(counts[key]||0)+1}const active=String(p.weapon||''),utilities=['flashbang','hegrenade','smokegrenade','molotov','incgrenade','decoy'];let output=active?`<span class="equip active">${weaponIcon(active)}</span>`:'';for(const [raw,count] of Object.entries(counts)){const kind=raw.replace(/^weapon_/,'');if(!utilities.includes(kind))continue;output+=`<span class="equip utility">${weaponIcon(raw)}${count>1?`<sup>${count}</sup>`:''}</span>`}if(p.armor)output+=`<span class="armor">${p.helmet?helmetSvg:armorSvg}<span>${Math.max(0,p.armor)}</span></span>`;if(p.kit)output+=`<span class="kit" title="Defuse kit">${kitSvg}</span>`;return output}
-function escapeHtml(v){return String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function card(p){const hp=Math.max(0,Math.min(100,p.hp)),health=hp>50?'#68df93':hp>20?'#ffc462':'#ff6872';return`<article class="player-card"><div class="player-top"><span class="player-name">${escapeHtml(p.name||'Player')}</span><span class="player-money">$${Number(p.money||0).toLocaleString()}</span><span class="player-hp"><small>HP</small>${hp}</span></div><div class="health-track"><div class="health-fill" style="width:${hp}%;background:${health}"></div></div><div class="player-bottom">${equipHtml(p)}</div></article>`}
-function updateRoster(){if(!state)return;const players=[...(state.players||[])],local=localEntry();if(local)players.push(local);const t=players.filter(p=>p.team===2),ct=players.filter(p=>p.team===3);document.querySelector('#t-roster').innerHTML=prefs.economy?t.map(card).join(''):'';document.querySelector('#ct-roster').innerHTML=prefs.economy?ct.map(card).join(''):'';document.querySelector('#t-total').textContent='$'+t.reduce((n,p)=>n+Number(p.money||0),0).toLocaleString();document.querySelector('#ct-total').textContent='$'+ct.reduce((n,p)=>n+Number(p.money||0),0).toLocaleString();document.querySelector('.team.t').style.display=prefs.terrorists?'flex':'none';document.querySelector('.team.ct').style.display=prefs.counterTerrorists?'flex':'none'}
-async function loadMap(name){try{const response=await fetch('map-meta',{cache:'no-store'});if(!response.ok)throw Error(response.status);const nextMeta=await response.json();if(!nextMeta)return;meta=nextMeta;const suffix='?map='+encodeURIComponent(name)+'&v=5';primaryImage=new Image();primaryImage.src='overview'+suffix;lowerImage=null;if(meta.has_lower){lowerImage=new Image();lowerImage.src='overview-lower'+suffix}}catch{}}
-async function poll(){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),1800);try{const response=await fetch('state',{cache:'no-store',signal:controller.signal});if(!response.ok)throw Error(response.status);const next=await response.json();if(next.connected){state=next;lastOk=Date.now();connection.className='connection live';connection.querySelector('span').textContent=next.map||'live';if(next.map&&next.map!==mapName){mapName=next.map;loadMap(mapName)}if(next.sequence!==rosterSequence){rosterSequence=next.sequence;updateRoster()}}else{connection.className=state?'connection stale':'connection';connection.querySelector('span').textContent=state?'reconnecting · last snapshot':'waiting'}}catch{if(Date.now()-lastOk>900){connection.className=state?'connection stale':'connection';connection.querySelector('span').textContent=state?'reconnecting · last snapshot':'offline'}}finally{clearTimeout(timer);setTimeout(poll,50)}}
-requestAnimationFrame(render);poll();
+const canvas = document.querySelector('#radar-canvas'),
+      ctx = canvas.getContext('2d', { alpha: false }),
+      settingsToggle = document.querySelector('#settings-toggle'),
+      settingsMenu = document.querySelector('#settings-menu'),
+      connPill = document.querySelector('#conn-pill'),
+      connLabel = document.querySelector('#conn-label');
+
+const defaults = {
+  terrorists: true,
+  counterTerrorists: true,
+  labels: true,
+  economy: true,
+  grenades: true,
+  trajectories: true,
+  zones: true,
+  bomb: true,
+  markerSize: 1
+};
+
+let stored = {};
+try { stored = JSON.parse(localStorage.getItem('vesta-radar-v4') || '{}') || {}; } catch {}
+const prefs = { ...defaults, ...stored };
+
+for (const input of document.querySelectorAll('[data-setting]')) {
+  const key = input.dataset.setting;
+  input[input.type === 'checkbox' ? 'checked' : 'value'] = prefs[key];
+  input.addEventListener('input', () => {
+    prefs[key] = input.type === 'checkbox' ? input.checked : Number(input.value);
+    localStorage.setItem('vesta-radar-v4', JSON.stringify(prefs));
+    updateRoster();
+  });
+}
+
+settingsToggle.onclick = e => { e.stopPropagation(); settingsMenu.classList.toggle('open'); };
+document.addEventListener('pointerdown', e => {
+  if (!settingsMenu.contains(e.target) && !settingsToggle.contains(e.target)) {
+    settingsMenu.classList.remove('open');
+  }
+});
+
+let currentMobileTab = 2;
+function selectMobileTab(team) {
+  currentMobileTab = team;
+  document.querySelector('#tab-t').classList.toggle('active', team === 2);
+  document.querySelector('#tab-ct').classList.toggle('active', team === 3);
+  updateRoster();
+}
+
+let state = null,
+    meta = null,
+    mapName = '',
+    primaryImage = null,
+    lowerImage = null,
+    lastOk = 0,
+    lastFrame = performance.now(),
+    positions = new Map(),
+    rosterSequence = -1;
+
+const colors = { 2: '#efb351', 3: '#58aef5' };
+const grenadeColors = ['#cbd5e1', '#f87171', '#f8fafc', '#c084fc', '#fb923c', '#fb923c', '#e879f9'];
+
+function fit() {
+  const d = Math.min(devicePixelRatio || 1, 2),
+        r = canvas.getBoundingClientRect(),
+        w = Math.max(1, Math.round(r.width * d)),
+        h = Math.max(1, Math.round(r.height * d));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  return { w: r.width, h: r.height };
+}
+
+function mapRect(w, h) {
+  const isMobile = w <= 780;
+  if (isMobile) {
+    const topGap = 52, bottomGap = 115;
+    const size = Math.min(w - 16, h - topGap - bottomGap);
+    return {
+      x: (w - size) / 2,
+      y: topGap + (h - topGap - bottomGap - size) / 2,
+      w: size,
+      h: size
+    };
+  }
+
+  const sideBar = w <= 1100 ? 245 : 265;
+  const size = Math.min(Math.max(200, w - (sideBar * 2)), Math.max(200, h - 28));
+  return {
+    x: (w - size) / 2,
+    y: (h - size) / 2,
+    w: size,
+    h: size
+  };
+}
+
+function toMap(v, r) {
+  if (!meta || !v) return null;
+  return [
+    r.x + (v[0] - meta.pos_x) / (meta.scale * meta.width) * r.w,
+    r.y + (meta.pos_y - v[1]) / (meta.scale * meta.height) * r.h
+  ];
+}
+
+/* Precision canvas pill text */
+function drawPillTag(str, x, y, size, textColor = '#fff', bgColor = 'rgba(15, 18, 24, 0.85)') {
+  ctx.font = `700 ${size}px Inter, -apple-system, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const padX = 5, padY = 2;
+  const metrics = ctx.measureText(str);
+  const bw = metrics.width + padX * 2;
+  const bh = size + padY * 2 + 1;
+
+  ctx.fillStyle = bgColor;
+  ctx.beginPath();
+  ctx.roundRect(x - bw / 2, y - bh / 2, bw, bh, 4);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.fillStyle = textColor;
+  ctx.fillText(str, x, y + 0.5);
+}
+
+function drawOutlinedText(str, x, y, size, color = '#fff') {
+  ctx.font = `700 ${size}px Inter, -apple-system, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.miterLimit = 2;
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.92)';
+  ctx.lineWidth = Math.max(2.2, size * 0.30);
+  ctx.strokeText(str, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(str, x, y);
+}
+
+function healthTextColor(value) {
+  const hp = Math.max(0, Math.min(100, Number(value) || 0));
+  const low = [248, 113, 113], middle = [250, 204, 21], high = [74, 222, 128];
+  const from = hp < 50 ? low : middle;
+  const to = hp < 50 ? middle : high;
+  const amount = hp < 50 ? hp / 50 : (hp - 50) / 50;
+  const channel = index => Math.round(from[index] + (to[index] - from[index]) * amount);
+  return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
+}
+
+function hull(points) {
+  if (points.length < 3) return points;
+  points = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]),
+        lo = [], hi = [];
+  for (const p of points) {
+    while (lo.length > 1 && cross(lo.at(-2), lo.at(-1), p) <= 0) lo.pop();
+    lo.push(p);
+  }
+  for (let i = points.length - 1; i >= 0; i--) {
+    const p = points[i];
+    while (hi.length > 1 && cross(hi.at(-2), hi.at(-1), p) <= 0) hi.pop();
+    hi.push(p);
+  }
+  lo.pop(); hi.pop();
+  return lo.concat(hi);
+}
+
+/* Perfectly rendered player units */
+function drawPlayer(p, r, dt) {
+  if ((p.team === 2 && !prefs.terrorists) || (p.team === 3 && !prefs.counterTerrorists)) return;
+  const target = toMap(p.origin, r);
+  if (!target) return;
+
+  let q = positions.get(p.id) || { x: target[0], y: target[1] };
+  const k = 1 - Math.exp(-dt * 30);
+  q.x += (target[0] - q.x) * k;
+  q.y += (target[1] - q.y) * k;
+  positions.set(p.id, q);
+
+  const s = 7 * prefs.markerSize,
+        c = colors[p.team] || '#ddd',
+        rad = (-(p.angles?.[1] || 0) + 90) * Math.PI / 180;
+
+  // View sector cone
+  const fov = 45 * Math.PI / 180;
+  const coneLength = s * 3.5;
+  ctx.beginPath();
+  ctx.moveTo(q.x, q.y);
+  ctx.arc(q.x, q.y, coneLength, rad - fov / 2 - Math.PI / 2, rad + fov / 2 - Math.PI / 2);
+  ctx.closePath();
+
+  const g = ctx.createRadialGradient(q.x, q.y, s, q.x, q.y, coneLength);
+  g.addColorStop(0, c + '66');
+  g.addColorStop(1, c + '00');
+  ctx.fillStyle = g;
+  ctx.fill();
+
+  // Outer dot marker
+  ctx.beginPath();
+  ctx.arc(q.x, q.y, s, 0, Math.PI * 2);
+  ctx.fillStyle = c;
+  ctx.fill();
+
+  // White view-direction triangle
+  const tipX = q.x + Math.sin(rad) * (s * 1.55);
+  const tipY = q.y - Math.cos(rad) * (s * 1.55);
+  const baseX = q.x + Math.sin(rad) * (s * 0.85);
+  const baseY = q.y - Math.cos(rad) * (s * 0.85);
+  const halfWidth = s * 0.68;
+  const sideX = Math.cos(rad) * halfWidth;
+  const sideY = Math.sin(rad) * halfWidth;
+  ctx.beginPath();
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(baseX - sideX, baseY - sideY);
+  ctx.lineTo(baseX + sideX, baseY + sideY);
+  ctx.closePath();
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+
+  if (prefs.labels) {
+    const hp = Math.max(0, Math.min(100, Math.round(Number(p.hp) || 0)));
+    const nameY = q.y - s - Math.max(5, 5.5 * prefs.markerSize);
+    drawOutlinedText(p.name || 'Player', q.x, nameY,
+      Math.max(8, 8.5 * prefs.markerSize), '#ffffff');
+    drawOutlinedText(`${hp}%`, q.x, q.y + s + Math.max(7, 8 * prefs.markerSize),
+      Math.max(7, 7.5 * prefs.markerSize), healthTextColor(hp));
+  }
+}
+
+function clean(v) { return String(v || '').replace(/^weapon_/, '').replaceAll('_', ' ').toUpperCase(); }
+
+const weaponGlyphs = {
+  knife_ct: ']', knife_t: '[', knife: ']', deagle: 'A', elite: 'B', fiveseven: 'C', glock: 'D',
+  revolver: 'J', hkp2000: 'E', p2000: 'E', p250: 'F', usp_silencer: 'G', usps: 'G', tec9: 'H',
+  cz75a: 'I', cz75: 'I', mac10: 'K', ump45: 'L', bizon: 'M', mp7: 'N', mp5sd: 'N', mp9: 'R',
+  p90: 'O', galilar: 'Q', famas: 'R', m4a1_silencer: 'T', m4a1s: 'T', m4a1: 'S', m4a4: 'S',
+  aug: 'U', sg556: 'V', sg553: 'V', ak47: 'W', g3sg1: 'X', scar20: 'Y', awp: 'Z', ssg08: 'a',
+  xm1014: 'b', sawedoff: 'c', sawed_off: 'c', mag7: 'd', nova: 'e', negev: 'f', m249: 'g',
+  taser: 'h', flashbang: 'i', hegrenade: 'j', smokegrenade: 'k', molotov: 'l', decoy: 'm', incgrenade: 'n', c4: 'o'
+};
+
+function weaponGlyph(raw) {
+  const n = String(raw || '').replace(/^weapon_/, '').toLowerCase();
+  return weaponGlyphs[n] || '?';
+}
+
+function weaponIcon(raw) {
+  return `<span class="weapon-icon" title="${escapeHtml(clean(raw) || 'Equipment')}">${escapeHtml(weaponGlyph(raw))}</span>`;
+}
+
+const armorSvg = '<svg viewBox="0 0 16 16"><path d="M3 3l5-2 5 2v4c0 3.3-1.8 5.9-5 7.5C4.8 12.9 3 10.3 3 7z"/></svg>',
+      helmetSvg = '<svg viewBox="0 0 16 16"><path d="M2.5 9a5.5 5.5 0 0111 0v2H9l-1.5 2H3zM11 9v2"/></svg>',
+      kitSvg = '<svg viewBox="0 0 16 16"><path d="M4 2l3.4 4.1M12 2L8.6 6.1M7.4 6.1L3 14M8.6 6.1L13 14M5 9h6"/></svg>';
+
+function circleWorld(origin, radius, r) {
+  const a = toMap(origin, r),
+        b = toMap([origin[0] + radius, origin[1], origin[2] || 0], r);
+  return a && b ? { x: a[0], y: a[1], radius: Math.hypot(b[0] - a[0], b[1] - a[1]) } : null;
+}
+
+function drawProjectile(p, r) {
+  const c = grenadeColors[p.kind] || '#eee';
+  if (prefs.trajectories && p.trajectory?.length > 1) {
+    ctx.beginPath();
+    let first = true;
+    for (const point of p.trajectory) {
+      const q = toMap(point, r);
+      if (!q) continue;
+      first ? (ctx.moveTo(...q), first = false) : ctx.lineTo(...q);
+    }
+    ctx.strokeStyle = c + 'b0';
+    ctx.lineWidth = 1.4;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+
+  if (prefs.zones && (p.kind === 4 || p.kind === 5) && p.fire_points?.length > 2) {
+    const points = [];
+    for (const fire of p.fire_points) {
+      for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4,
+              edge = [fire[0] + Math.cos(a) * 60, fire[1] + Math.sin(a) * 60, fire[2]],
+              q = toMap(edge, r);
+        if (q) points.push(q);
+      }
+    }
+    const poly = hull(points);
+    if (poly.length > 2) {
+      ctx.beginPath();
+      poly.forEach((q, i) => i ? ctx.lineTo(...q) : ctx.moveTo(...q));
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(251, 146, 60, 0.22)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(251, 146, 60, 0.85)';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    }
+  } else if (prefs.zones && p.smoke) {
+    const z = circleWorld(p.origin, 144, r);
+    if (z) {
+      ctx.beginPath();
+      ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(241, 245, 249, 0.2)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(241, 245, 249, 0.7)';
+      ctx.lineWidth = 1.3;
+      ctx.stroke();
+    }
+  }
+
+  if (!prefs.grenades) return;
+  const q = toMap(p.origin, r);
+  if (!q) return;
+
+  ctx.beginPath();
+  ctx.arc(q[0], q[1], 8.5, 0, Math.PI * 2);
+  ctx.fillStyle = '#0f1218';
+  ctx.fill();
+  ctx.strokeStyle = c;
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+
+  const names = ['', 'hegrenade', 'flashbang', 'smokegrenade', 'molotov', 'molotov', 'decoy'],
+        time = p.effect_remaining > 0 ? p.effect_remaining : p.remaining > 0 ? p.remaining : 0;
+  ctx.font = '400 13px VestaWeapons';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = c;
+  ctx.fillText(weaponGlyph(names[p.kind] || ''), q[0], q[1] + 1);
+
+  if (time > 0) drawPillTag(`${time.toFixed(1)}s`, q[0], q[1] + 15, 7.5, c);
+}
+
+function drawBomb(r) {
+  if (!prefs.bomb || !state?.bomb?.active) return;
+  const b = state.bomb,
+        q = toMap(b.origin, r);
+
+  const bombColor = b.defusing ? '#58aef5' : '#efb351';
+
+  if (q) {
+    ctx.beginPath();
+    ctx.arc(q[0], q[1], 10, 0, Math.PI * 2);
+    ctx.fillStyle = '#0f1218';
+    ctx.fill();
+    ctx.strokeStyle = bombColor;
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+
+    ctx.font = '400 15px VestaWeapons';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = bombColor;
+    ctx.fillText('o', q[0], q[1] + 1);
+
+    if (b.planted) drawPillTag(`SITE ${b.site === 1 ? 'B' : 'A'}`, q[0], q[1] + 16, 8, '#f8fafc');
+  }
+
+  if (!b.planted) return;
+  const x = r.x + r.w / 2,
+        y = r.y + 36,
+        def = b.defusing ? `  DEF ${Number(b.defuse || 0).toFixed(1)}s` : '',
+        label = `SITE ${b.site === 1 ? 'B' : 'A'}  •  ${Number(b.time || 0).toFixed(1)}s${def}`;
+
+  drawPillTag(label, x, y, 11, b.defusing ? '#58aef5' : b.time < 10 ? '#f87171' : '#efb351', 'rgba(15, 18, 24, 0.92)');
+}
+
+function localEntry() {
+  const p = state?.local;
+  if (!p?.alive || !p.origin) return null;
+  return {
+    id: -1,
+    name: p.name || 'Player',
+    team: p.team,
+    hp: p.hp,
+    armor: 0,
+    money: 0,
+    origin: p.origin,
+    angles: p.angles,
+    weapon: '',
+    loadout: [],
+    local: true
+  };
+}
+
+function render(now) {
+  const { w, h } = fit(),
+        dt = Math.min(0.1, (now - lastFrame) / 1000);
+  lastFrame = now;
+
+  ctx.fillStyle = '#62656a';
+  ctx.fillRect(0, 0, w, h);
+
+  const r = mapRect(w, h),
+        image = state?.layer === 'lower' && lowerImage ? lowerImage : primaryImage;
+
+  if (image?.complete && image.naturalWidth) {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(image, r.x, r.y, r.w, r.h);
+  } else {
+    ctx.fillStyle = '#575a5f';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+  }
+
+  if (state && meta) {
+    for (const p of state.projectiles || []) drawProjectile(p, r);
+    for (const p of state.players || []) drawPlayer(p, r, dt);
+    const local = localEntry();
+    if (local) drawPlayer(local, r, dt);
+    drawBomb(r);
+  }
+
+  requestAnimationFrame(render);
+}
+
+function equipHtml(p) {
+  const counts = {};
+  for (const raw of p.loadout || []) {
+    const key = String(raw || '').toLowerCase();
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  const active = String(p.weapon || ''),
+        utilities = ['flashbang', 'hegrenade', 'smokegrenade', 'molotov', 'incgrenade', 'decoy'];
+
+  let output = active ? `<span class="equip active">${weaponIcon(active)}</span>` : '';
+
+  for (const [raw, count] of Object.entries(counts)) {
+    const kind = raw.replace(/^weapon_/, '');
+    if (!utilities.includes(kind)) continue;
+    output += `<span class="equip utility">${weaponIcon(raw)}${count > 1 ? `<sup>${count}</sup>` : ''}</span>`;
+  }
+
+  output += '<div class="card-meta">';
+  if (p.armor) output += `<span class="armor-item">${p.helmet ? helmetSvg : armorSvg}<span>${Math.max(0, p.armor)}</span></span>`;
+  if (p.kit) output += `<span class="kit-item" title="Defuse kit">${kitSvg}</span>`;
+  output += '</div>';
+
+  return output;
+}
+
+function escapeHtml(v) {
+  return String(v || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function createCard(p) {
+  const hp = Math.max(0, Math.min(100, p.hp)),
+        isDead = hp <= 0,
+        healthColor = hp > 50 ? '#4ade80' : hp > 20 ? '#facc15' : '#f87171';
+
+  return `
+    <article class="player-card ${isDead ? 'dead' : ''}">
+      <div class="card-top">
+        <div class="player-info">
+          <span class="player-name">${escapeHtml(p.name || 'Player')}</span>
+        </div>
+        <div class="player-stats">
+          <span class="player-money">$${Number(p.money || 0).toLocaleString()}</span>
+          <span class="player-hp" style="color:${healthColor}">${hp}</span>
+        </div>
+      </div>
+      <div class="hp-track">
+        <div class="hp-fill" style="width:${hp}%;background:${healthColor}"></div>
+      </div>
+      <div class="card-bottom">${equipHtml(p)}</div>
+    </article>
+  `;
+}
+
+function updateRoster() {
+  if (!state) return;
+  const players = [...(state.players || [])],
+        local = localEntry();
+  if (local) players.push(local);
+
+  const t = players.filter(p => p.team === 2),
+        ct = players.filter(p => p.team === 3);
+
+  const tCash = '$' + t.reduce((n, p) => n + Number(p.money || 0), 0).toLocaleString();
+  const ctCash = '$' + ct.reduce((n, p) => n + Number(p.money || 0), 0).toLocaleString();
+
+  // Desktop Totals
+  document.querySelector('#dt-t-cash').textContent = tCash;
+  document.querySelector('#dt-ct-cash').textContent = ctCash;
+
+  // Mobile Totals
+  document.querySelector('#mob-t-cash').textContent = tCash;
+  document.querySelector('#mob-ct-cash').textContent = ctCash;
+
+  // Render Desktop lists
+  document.querySelector('#dt-t-cards').innerHTML = prefs.economy ? t.map(createCard).join('') : '';
+  document.querySelector('#dt-ct-cards').innerHTML = prefs.economy ? ct.map(createCard).join('') : '';
+
+  document.querySelector('#dt-t-panel').style.display = prefs.terrorists ? 'flex' : 'none';
+  document.querySelector('#dt-ct-panel').style.display = prefs.counterTerrorists ? 'flex' : 'none';
+
+  // Render Mobile stream
+  const mobList = currentMobileTab === 2 ? t : ct;
+  document.querySelector('#mobile-cards-list').innerHTML = prefs.economy ? mobList.map(createCard).join('') : '';
+}
+
+async function loadMap(name) {
+  try {
+    const response = await fetch('map-meta', { cache: 'no-store' });
+    if (!response.ok) throw Error(response.status);
+    const nextMeta = await response.json();
+    if (!nextMeta) return;
+    meta = nextMeta;
+
+    const suffix = '?map=' + encodeURIComponent(name) + '&v=5';
+    primaryImage = new Image();
+    primaryImage.src = 'overview' + suffix;
+    lowerImage = null;
+    if (meta.has_lower) {
+      lowerImage = new Image();
+      lowerImage.src = 'overview-lower' + suffix;
+    }
+  } catch {}
+}
+
+async function poll() {
+  const controller = new AbortController(),
+        timer = setTimeout(() => controller.abort(), 1800);
+  try {
+    const response = await fetch('state', { cache: 'no-store', signal: controller.signal });
+    if (!response.ok) throw Error(response.status);
+    const next = await response.json();
+
+    if (next.connected) {
+      state = next;
+      lastOk = Date.now();
+      connPill.className = 'status-pill live';
+      connLabel.textContent = next.map || 'Live';
+      if (next.map && next.map !== mapName) {
+        mapName = next.map;
+        loadMap(mapName);
+      }
+      if (next.sequence !== rosterSequence) {
+        rosterSequence = next.sequence;
+        updateRoster();
+      }
+    } else {
+      connPill.className = state ? 'status-pill stale' : 'status-pill';
+      connLabel.textContent = state ? 'Reconnecting' : 'Waiting';
+    }
+  } catch {
+    if (Date.now() - lastOk > 900) {
+      connPill.className = state ? 'status-pill stale' : 'status-pill';
+      connLabel.textContent = state ? 'Reconnecting' : 'Offline';
+    }
+  } finally {
+    clearTimeout(timer);
+    setTimeout(poll, 50);
+  }
+}
+
+requestAnimationFrame(render);
+poll();
 </script>
 </body>
 </html>
 ]====]
 
-
+-- Vesta Web Radar. vesta.exe remains offline: network access exists only in
+-- this explicitly enabled Lua package and its helper process.
 
 local root = vesta.api.script_dir
 local runtime = vesta.api.data_dir
@@ -646,7 +1750,8 @@ local function encode_projectiles(frame)
             and (precise_expire - game_time)
             or (effect and math.max(0,
                 duration - (number(frame.timestamp_us) - effect.started) / 1000000) or -1)
-
+        -- HE/flash entities can survive briefly after their one-shot effect. Do not
+        -- leave a stale browser marker during that network cleanup interval.
         if not ((kind == 1 or kind == 2) and p.detonated)
             and not (active_effect and duration > 0 and effect_remaining <= 0) then
             local fires = {}
@@ -733,7 +1838,7 @@ vesta.events.on("tick", function(delta)
             if normalize_map(frame.map) ~= map_name then prepare_overview(frame) end
             if number(frame.timestamp_us) >= next_write_us and not prime_one_trajectory(frame) then
                 write_state(encode_frame(frame))
-                next_write_us = number(frame.timestamp_us) + 50000
+                next_write_us = number(frame.timestamp_us) + 50000 -- 20 Hz producer
             end
         end
     end

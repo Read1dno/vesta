@@ -9,10 +9,12 @@ namespace {
 	struct projectile_presentation
 	{
 		std::string_view icon;
+		std::string_view label;
 	};
 
 	struct countdown
 	{
+		float seconds_left{};
 		float completion{};
 	};
 
@@ -20,13 +22,13 @@ namespace {
 	{
 		switch ( kind )
 		{
-		case projectile_kind::he_grenade:    return { "j" };
-		case projectile_kind::flashbang:     return { "i" };
-		case projectile_kind::smoke_grenade: return { "k" };
-		case projectile_kind::molotov:       return { "l" };
-		case projectile_kind::molotov_fire:  return { "l" };
-		case projectile_kind::decoy:         return { "m" };
-		default:                              return { "?" };
+		case projectile_kind::he_grenade:    return { "j", "he" };
+		case projectile_kind::flashbang:     return { "i", "flash" };
+		case projectile_kind::smoke_grenade: return { "k", "smoke" };
+		case projectile_kind::molotov:       return { "l", "molotov" };
+		case projectile_kind::molotov_fire:  return { "l", "fire" };
+		case projectile_kind::decoy:         return { "m", "decoy" };
+		default:                              return { "?", "grenade" };
 		}
 	}
 
@@ -99,7 +101,8 @@ namespace {
 		}
 
 		remaining = std::max( 0.0f, remaining );
-		return countdown{ std::clamp( remaining / duration, 0.0f, 1.0f ) };
+		return countdown{ remaining,
+			std::clamp( remaining / duration, 0.0f, 1.0f ) };
 	}
 
 	[[nodiscard]] zdraw::rgba alpha_scaled( const zdraw::rgba& color, float scale ) noexcept
@@ -154,6 +157,46 @@ namespace {
 			output.add_text( std::floor( center.x - width * 0.5f ),
 				std::floor( center.y - height * 0.5f ), presentation.icon,
 				&font, color, zdraw::text_style::outlined );
+		}
+	}
+
+	void draw_projectile_text( zdraw::draw_list& output,
+		const foundation::vec2& anchor,
+		const projectile_presentation& presentation, const zdraw::rgba& color,
+		const std::optional<countdown>& timer,
+		const config::visual_profile::projectile& settings )
+	{
+		auto* label_font = app::context().overlay.fonts( ).esp_text_11;
+		auto* timer_font = app::context().overlay.fonts( ).notosans_medium_12;
+		if ( !label_font || !label_font->im_font || !timer_font || !timer_font->im_font )
+			return;
+
+		const auto show_label = settings.show_icon;
+		const auto show_timer = timer.has_value( ) && settings.show_timer_ring;
+		if ( !show_label && !show_timer )
+			return;
+
+		auto y = std::floor( anchor.y );
+		if ( show_label && show_timer )
+			y -= 7.0f;
+
+		if ( show_label )
+		{
+			const auto [ width, height ] = zdraw::measure_text( presentation.label, label_font );
+			output.add_text( std::floor( anchor.x - width * 0.5f ), y,
+				presentation.label, label_font, color, zdraw::text_style::outlined );
+			y += std::max( 8.0f, height - 3.0f );
+		}
+
+		if ( show_timer )
+		{
+			const auto text = std::format( "{:.1f}s", timer->seconds_left );
+			const auto timer_color = blend( settings.timer_low_color,
+				settings.timer_high_color, timer->completion );
+			const auto [ width, height ] = zdraw::measure_text( text, timer_font );
+			output.add_text( std::floor( anchor.x - width * 0.5f ),
+				show_label ? y : std::floor( anchor.y - height * 0.5f ),
+				text, timer_font, timer_color, zdraw::text_style::outlined );
 		}
 	}
 
@@ -335,7 +378,13 @@ namespace {
 			const auto presentation = describe( projectile.subtype );
 			const auto color = color_for( projectile.subtype, settings );
 			const auto timer = countdown_for( projectile, game_time, decoy_start_time );
-			if ( settings.show_icon || ( timer && settings.show_timer_ring ) )
+			if ( settings.display_mode
+				== config::visual_profile::projectile::text_only )
+			{
+				draw_projectile_text( draw_list, screen, presentation,
+					color, timer, settings );
+			}
+			else if ( settings.show_icon || ( timer && settings.show_timer_ring ) )
 				draw_projectile_indicator( draw_list, screen, projectile.subtype,
 					presentation, color, timer, settings );
 		}

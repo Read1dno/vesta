@@ -140,8 +140,20 @@ namespace features::visuals {
 			const auto screen = game::camera().project( active_bomb.position );
 			if ( game::camera().projection_valid( screen ) )
 			{
-				auto* icon_base = app::context().overlay.fonts( ).weapons_15;
-				if ( icon_base && icon_base->im_font )
+				if ( cfg.display_mode == config::visual_profile::bomb::text_only )
+				{
+					auto* font = app::context().overlay.fonts( ).esp_text_11;
+					if ( font && font->im_font )
+					{
+						constexpr std::string_view label{ "C4" };
+						const auto [ width, height ] = zdraw::measure_text( label, font );
+						draw_list.add_text( std::floorf( screen.x - width * 0.5f ),
+							std::floorf( screen.y - height * 0.5f ), label, font,
+							cfg.active_bomb_color, zdraw::text_style::outlined );
+					}
+				}
+				else if ( auto* icon_base = app::context().overlay.fonts( ).weapons_15;
+					icon_base && icon_base->im_font )
 				{
 					auto icon_font = *icon_base;
 					icon_font.font_size = 18.0f;
@@ -232,6 +244,47 @@ namespace features::visuals {
 		const auto screen = game::camera().project( data.position );
 		if ( !game::camera().projection_valid( screen ) )
 		{
+			return;
+		}
+
+		if ( cfg.display_mode == config::visual_profile::bomb::text_only )
+		{
+			auto* font = app::context().overlay.fonts( ).esp_text_11;
+			if ( !font || !font->im_font )
+				return;
+
+			const auto marker_color = data.being_defused
+				? cfg.bomb_color_ct : cfg.bomb_color_t;
+			const auto site_name = data.bomb_site == 1 ? "B" : "A";
+			const auto label = std::format( "bomb[{}]", site_name );
+			const auto [ label_width, label_height ] = zdraw::measure_text( label, font );
+			auto y = std::floorf( screen.y - ( cfg.show_timer ? 7.0f : label_height * 0.5f ) );
+			draw_list.add_text( std::floorf( screen.x - label_width * 0.5f ), y,
+				label, font, marker_color, zdraw::text_style::outlined );
+
+			if ( cfg.show_timer )
+			{
+				y += std::max( 9.0f, label_height - 2.0f );
+				const auto remaining = std::max( 0.0f, data.blow_time - current_time );
+				const auto timer_text = std::format( "{:.1f}s", remaining );
+				const auto [ timer_width, timer_height ] = zdraw::measure_text( timer_text, font );
+				draw_list.add_text( std::floorf( screen.x - timer_width * 0.5f ), y,
+					timer_text, font, cfg.timer_text_color, zdraw::text_style::outlined );
+
+				if ( data.being_defused )
+				{
+					const auto defuse_remaining = std::max( 0.0f,
+						data.defuse_countdown - current_time );
+					const auto defuse_success = data.defuse_countdown < data.blow_time;
+					const auto defuse_text = std::format( "defuse {:.1f}s", defuse_remaining );
+					const auto [ defuse_width, defuse_height ] = zdraw::measure_text( defuse_text, font );
+					const auto defuse_color = defuse_success ? cfg.bomb_color_ct
+						: zdraw::rgba{ 255, 92, 62, 255 };
+					draw_list.add_text( std::floorf( screen.x - defuse_width * 0.5f ),
+						y + timer_height, defuse_text, font, defuse_color,
+						zdraw::text_style::outlined );
+				}
+			}
 			return;
 		}
 

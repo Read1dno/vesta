@@ -31,6 +31,9 @@ namespace config {
 				float radar_hold{ 2.0f };
 				float sound_hold{ 1.6f };
 				float sound_distance{ 1100.0f };
+				float pulse_min_opacity{ 0.20f };
+				float pulse_max_opacity{ 1.00f };
+				float pulse_period{ 1.8f };
 			} m_legit_sync{};
 
 			static constexpr float layout_reference_width{ 172.2f };
@@ -245,7 +248,10 @@ namespace config {
 
 		struct projectile
 		{
+			static constexpr int indicator{ 0 };
+			static constexpr int text_only{ 1 };
 			bool enabled{ true };
+			int display_mode{ indicator };
 			bool show_icon{ true };
 			bool show_timer_ring{ true };
 			bool show_inferno_bounds{ true };
@@ -264,7 +270,10 @@ namespace config {
 
 		struct bomb
 		{
+			static constexpr int indicator{ 0 };
+			static constexpr int text_only{ 1 };
 			bool enabled{ true };
+			int display_mode{ indicator };
 			bool show_active_bomb{ true };
 			zdraw::rgba active_bomb_color{ 255, 200, 50, 255 };
 			bool show_planted_bomb{ true };

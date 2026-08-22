@@ -3682,7 +3682,7 @@ void menu_t::draw_visuals( )
 							keybind_row( "Key", p.activation_key );
 						toggle_row( "Spectator Sync", p.spectator_sync );
 					} );
-				toggle_popup_row( "Legit Sync", p.m_legit_sync.enabled, 6, [ & ]
+				toggle_popup_row( "Legit Sync", p.m_legit_sync.enabled, 9, [ & ]
 					{
 						toggle_row( "Direct Visibility", p.m_legit_sync.direct_visible );
 						toggle_row( "Radar Spotted", p.m_legit_sync.radar );
@@ -3690,6 +3690,15 @@ void menu_t::draw_visuals( )
 						slider_row( "Radar Hold", p.m_legit_sync.radar_hold, 0.1f, 10.0f, "s", 0.1f );
 						slider_row( "Sound Hold", p.m_legit_sync.sound_hold, 0.1f, 10.0f, "s", 0.1f );
 						slider_row( "Hearing Distance", p.m_legit_sync.sound_distance, 100.0f, 2500.0f, "u", 10.0f );
+						auto minimum_opacity = p.m_legit_sync.pulse_min_opacity * 100.0f;
+						auto maximum_opacity = p.m_legit_sync.pulse_max_opacity * 100.0f;
+						slider_row( "Pulse Minimum", minimum_opacity, 0.0f, 100.0f, "%", 1.0f );
+						slider_row( "Pulse Maximum", maximum_opacity,
+							minimum_opacity, 100.0f, "%", 1.0f );
+						p.m_legit_sync.pulse_min_opacity = minimum_opacity / 100.0f;
+						p.m_legit_sync.pulse_max_opacity = maximum_opacity / 100.0f;
+						slider_row( "Pulse Period", p.m_legit_sync.pulse_period,
+							0.4f, 5.0f, "s", 0.1f );
 					} );
 			} );
 
@@ -3836,11 +3845,15 @@ void menu_t::draw_visuals( )
 	else if ( this->m_visual_group == 2 )
 	{
 		auto& p = config::visual_settings.m_projectile;
-		card( "projectile_elements", "VISUAL ELEMENTS", 4, [ & ]
+		card( "projectile_elements", "VISUAL ELEMENTS", 5, [ & ]
 			{
 				toggle_row( "Enable Projectiles", p.enabled );
-				toggle_row( "Show Icon", p.show_icon );
-				toggle_row( "Effect Timer Ring", p.show_timer_ring );
+				static constexpr const char* display_modes[ ]{ "Indicator", "Text Only" };
+				select_row( "Display Mode", p.display_mode, display_modes );
+				toggle_row( p.display_mode == config::visual_profile::projectile::text_only
+					? "Show Text" : "Show Icon", p.show_icon );
+				toggle_row( p.display_mode == config::visual_profile::projectile::text_only
+					? "Effect Timer" : "Effect Timer Ring", p.show_timer_ring );
 				toggle_row( "Inferno Bounds", p.show_inferno_bounds );
 			} );
 		card( "projectile_colors", "COLORS", 5, [ & ]
@@ -3866,16 +3879,19 @@ void menu_t::draw_visuals( )
 	else if ( this->m_visual_group == 3 )
 	{
 		auto& p = config::visual_settings.m_bomb;
-		card( "bomb_states", "STATES", 5, [ & ]
+		card( "bomb_states", "STATES", 6, [ & ]
 			{
 				toggle_row( "Enable Bomb ESP", p.enabled );
+				static constexpr const char* display_modes[ ]{ "Indicator", "Text Only" };
+				select_row( "Display Mode", p.display_mode, display_modes );
 				toggle_color_row( "Show Carrier", p.show_active_bomb, p.active_bomb_color );
 				toggle_popup_row( "Show Planted", p.show_planted_bomb, 2, [ & ]
 					{
 						color_row( "Planted Color", p.bomb_color_t );
 						color_row( "Defusing Color", p.bomb_color_ct );
 					} );
-				toggle_row( "World Timer Ring", p.show_timer );
+				toggle_row( p.display_mode == config::visual_profile::bomb::text_only
+					? "World Timer" : "World Timer Ring", p.show_timer );
 				toggle_popup_row( "Bomb Info Panel", p.show_info_panel, 2, [ & ]
 					{
 						color_row( "Timer Color", p.timer_text_color );

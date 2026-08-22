@@ -200,8 +200,9 @@ namespace features::visuals {
 				continue;
 			}
 
-			zdraw::draw_list player_draw{
-				draw_list.m_im_draw_list, player.invulnerable ? 0.45f : 1.0f };
+			const auto opacity = player.legit_opacity
+				* ( player.invulnerable ? 0.45f : 1.0f );
+			zdraw::draw_list player_draw{ draw_list.m_im_draw_list, opacity };
 			this->paint_threat_highlights(
 				player_draw, pose.bones, player, current_time );
 		}
@@ -227,8 +228,11 @@ namespace features::visuals {
 			{
 				continue;
 			}
-			zdraw::draw_list player_draw{
-				draw_list.m_im_draw_list, player.invulnerable ? 0.45f : 1.0f };
+			const auto opacity = player.legit_opacity
+				* ( player.invulnerable ? 0.45f : 1.0f );
+			zdraw::draw_list player_draw{ draw_list.m_im_draw_list, opacity };
+			zdraw::draw_list legit_bright_draw{
+				draw_list.m_im_draw_list, player.legit_opacity };
 
 			if ( cfg.m_box.enabled )
 			{
@@ -272,7 +276,7 @@ namespace features::visuals {
 
 			if ( cfg.m_info_flags.enabled || player.invulnerable )
 			{
-				this->paint_status_labels( player_draw, draw_list,
+				this->paint_status_labels( player_draw, legit_bright_draw,
 					bounds, player, cfg, bomb_info, current_time );
 			}
 		}
@@ -391,6 +395,9 @@ namespace features::visuals {
 				player_arrow.r = player_arrow.g = player_arrow.b = muted;
 			}
 
+			player_arrow.a = static_cast<std::uint8_t>( std::clamp(
+				255.0f * player.legit_opacity
+					* ( player.invulnerable ? 0.45f : 1.0f ), 0.0f, 255.0f ) );
 			const auto fill = zdraw::draw_list::to_im_color( player_arrow );
 
 			canvas->AddConcavePolyFilled( perimeter.data( ),
@@ -398,7 +405,8 @@ namespace features::visuals {
 
 			if ( cfg.bloom && bloom_alpha > 0 )
 			{
-				const auto immunity_scale = player.invulnerable ? 0.45f : 1.0f;
+				const auto immunity_scale = ( player.invulnerable ? 0.45f : 1.0f )
+					* player.legit_opacity;
 				const zdraw::rgba glow{ cfg.bloom_color.r, cfg.bloom_color.g,
 					cfg.bloom_color.b, static_cast<std::uint8_t>( std::clamp(
 						bloom_alpha * immunity_scale, 0.0f, 255.0f ) ) };
