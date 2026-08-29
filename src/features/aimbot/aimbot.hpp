@@ -177,6 +177,8 @@ namespace features::aimbot {
 			int m_aim_last_input_sequence{ -1 };
 			foundation::vec3 m_aim_last_input_view{};
 			std::chrono::steady_clock::time_point m_aim_last_input_time{};
+			foundation::vec3 m_aim_virtual_angles{};
+			bool m_aim_virtual_angles_valid{};
 			float m_aim_degrees_per_pixel{};
 			float m_aim_degrees_candidate{};
 			int m_aim_degrees_confirmations{};
@@ -194,6 +196,7 @@ namespace features::aimbot {
 			float m_aim_tracking_lag{};
 
 			foundation::vec3 m_rcs_raw{};
+			foundation::vec3 m_rcs_target{};
 			foundation::vec3 m_rcs_velocity{};
 			float m_rcs_gain{ 1.0f };
 			float m_rcs_response_scale{ 1.0f };
@@ -209,6 +212,7 @@ namespace features::aimbot {
 			int m_rcs_last_clip{ -1 };
 			float m_rcs_last_shot_time{ -1.0f };
 			int m_rcs_burst_shots{};
+			int m_rcs_input_step{ 24 };
 			bool m_rcs_active{ false };
 			std::uint64_t m_combat_sequence{};
 

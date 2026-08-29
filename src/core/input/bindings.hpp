@@ -63,6 +63,8 @@ namespace game {
 		std::uintptr_t m_input_service{};
 		std::uintptr_t m_binding_table{};
 		std::uintptr_t m_key_name_table{};
+		std::ptrdiff_t m_record_to_name_bias{};
+		bool m_binding_layout_valid{};
 		std::chrono::steady_clock::time_point m_next_refresh{};
 	};
 

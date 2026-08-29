@@ -3431,6 +3431,13 @@ void menu_t::draw_combat( bool triggerbot )
 		zdraw::rgba& color )
 	{
 		const auto dynamic = fov.selection != config::combat_profile::fov_settings::fixed;
+		const auto target_mode = fov.selection
+			== config::combat_profile::fov_settings::target_distance;
+		auto& near_distance = target_mode ? fov.target_near_distance_m : fov.near_distance_m;
+		auto& near_fov = target_mode ? fov.target_near_fov : fov.near_fov;
+		auto& far_distance = target_mode ? fov.target_far_distance_m : fov.far_distance_m;
+		auto& far_fov = target_mode ? fov.target_far_fov : fov.far_fov;
+		auto& curve = target_mode ? fov.target_distance_curve : fov.distance_curve;
 		settings_popup_row( "FOV", dynamic ? 4 : 3, [ & ]
 			{
 				select_row( "Mode", fov.selection, fov_modes );
@@ -3440,14 +3447,14 @@ void menu_t::draw_combat( bool triggerbot )
 				}
 				else
 				{
-					slider_row( "Max Radius", fov.near_fov, 2.0f, 45.0f, "°", 0.5f );
+					slider_row( "Max Radius", near_fov, 2.0f, 45.0f, "°", 0.5f );
 					settings_popup_row( "Advanced", 5, [ & ]
 						{
-							slider_row( "Full Size At", fov.near_distance_m, 0.5f, 10.0f, " m", 0.5f );
-							slider_row( "Max Radius", fov.near_fov, 2.0f, 45.0f, "°", 0.5f );
-							slider_row( "Min Size At", fov.far_distance_m, 10.0f, 100.0f, " m", 0.5f );
-							slider_row( "Min Radius", fov.far_fov, 0.25f, 15.0f, "°", 0.25f );
-							slider_row( "Falloff", fov.distance_curve, 0.25f, 4.0f, "", 0.05f );
+							slider_row( "Full Size At", near_distance, 0.5f, 10.0f, " m", 0.5f );
+							slider_row( "Max Radius", near_fov, 2.0f, 45.0f, "°", 0.5f );
+							slider_row( "Min Size At", far_distance, 10.0f, 100.0f, " m", 0.5f );
+							slider_row( "Min Radius", far_fov, 0.25f, 15.0f, "°", 0.25f );
+							slider_row( "Falloff", curve, 0.25f, 4.0f, "", 0.05f );
 							} );
 				}
 				toggle_color_row( "Visualization", draw_area, color );
@@ -3494,12 +3501,13 @@ void menu_t::draw_combat( bool triggerbot )
 	};
 	const auto rcs_row = [ & ]( config::combat_profile::rcs_settings& rcs )
 	{
-		toggle_popup_row( "RCS", rcs.enabled, 6, [ & ]
+		toggle_popup_row( "RCS", rcs.enabled, 7, [ & ]
 			{
 				slider_row( "Start Bullet", rcs.start_bullet, 1, 10 );
 				slider_row( "Pitch Strength", rcs.pitch, 0.0f, 200.0f, "%", 1.0f );
 				slider_row( "Yaw Strength", rcs.yaw, 0.0f, 200.0f, "%", 1.0f );
 				slider_row( "Correction Time", rcs.response_ms, 1.0f, 150.0f, " ms", 1.0f );
+				slider_row( "Smoothness", rcs.smoothness, 0.0f, 100.0f, "%", 1.0f );
 				slider_row( "Strength Variation", rcs.randomness, 0.0f, 30.0f, "%", 1.0f );
 				slider_row( "Path Drift", rcs.drift, 0.0f, 30.0f, "%", 1.0f );
 			} );

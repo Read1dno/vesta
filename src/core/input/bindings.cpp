@@ -10,9 +10,8 @@ namespace game {
 
 		constexpr std::size_t k_binding_slot_count{ 11 };
 
-		constexpr std::size_t k_input_name_bias{ 1 };
-		constexpr std::uintptr_t k_current_binding_offset{ 0x33050 };
-		constexpr std::uintptr_t k_current_key_name_table_rva{ 0x3a210 };
+		constexpr std::ptrdiff_t k_min_name_bias{ -8 };
+		constexpr std::ptrdiff_t k_max_name_bias{ 8 };
 
 		constexpr std::array<std::array<std::string_view, 2>, 9> k_command_tokens{ {
 			{ "+forward", {} },
@@ -25,6 +24,19 @@ namespace game {
 			{ "+attack", {} },
 			{ "+attack2", {} },
 		} };
+
+		constexpr std::array<std::pair<std::string_view, std::string_view>, 9>
+			k_layout_anchors{ {
+				{ "+forward", "W" },
+				{ "+back", "S" },
+				{ "+moveleft", "A" },
+				{ "+moveright", "D" },
+				{ "+speed", "SHIFT" },
+				{ "+duck", "CTRL" },
+				{ "+jump", "SPACE" },
+				{ "+attack", "MOUSE1" },
+				{ "+attack2", "MOUSE2" },
+			} };
 
 		[[nodiscard]] bool contains_command(
 			std::string_view command, std::string_view token )
@@ -61,6 +73,18 @@ namespace game {
 					return true;
 			}
 			return false;
+		}
+
+		[[nodiscard]] bool same_text( std::string_view left,
+			std::string_view right )
+		{
+			if ( left.size( ) != right.size( ) )
+				return false;
+			return std::ranges::equal( left, right, [ ]( const char a, const char b )
+			{
+				return std::tolower( static_cast<unsigned char>( a ) )
+					== std::tolower( static_cast<unsigned char>( b ) );
+			} );
 		}
 
 		[[nodiscard]] input_binding source_key_to_binding( std::string_view name )
@@ -182,22 +206,30 @@ namespace game {
 		{
 			std::array<std::uint8_t, 96> code{};
 			if ( !getter || !process.copy( getter, code.data( ), code.size( ) ) )
-				return k_current_binding_offset;
+				return 0;
 
-			for ( auto index = std::size_t{}; index + 8 <= code.size( ); ++index )
+			for ( auto index = std::size_t{}; index + 7 <= code.size( ); ++index )
 			{
-				if ( ( code[index] & 0xf0u ) != 0x40u || code[index + 1] != 0x8bu
-					|| ( code[index + 2] & 0xc7u ) != 0x84u )
+				if ( ( code[index] & 0xf0u ) != 0x40u
+					|| code[index + 1] != 0x8bu )
 				{
 					continue;
 				}
+				const auto modrm = code[index + 2];
+				if ( ( modrm >> 6u ) != 2u )
+					continue;
+				auto displacement_index = index + 3;
+				if ( ( modrm & 7u ) == 4u )
+					++displacement_index;
+				if ( displacement_index + sizeof( std::int32_t ) > code.size( ) )
+					continue;
 				std::int32_t displacement{};
-				std::memcpy( &displacement, code.data( ) + index + 4,
+				std::memcpy( &displacement, code.data( ) + displacement_index,
 					sizeof( displacement ) );
 				if ( displacement >= 0x10000 && displacement <= 0x100000 )
 					return static_cast<std::uintptr_t>( displacement );
 			}
-			return k_current_binding_offset;
+			return 0;
 		}
 
 		[[nodiscard]] std::uintptr_t locate_key_name_table(
@@ -206,17 +238,36 @@ namespace game {
 		{
 			const auto validate = [ &process ]( const std::uintptr_t table )
 			{
-				const auto space = process.load<std::uintptr_t>(
-					table + 66 * sizeof( std::uintptr_t ) );
-				return space && process.load_text( space, 16 ) == "SPACE";
+				if ( !table )
+					return false;
+				std::array<std::uintptr_t, k_input_code_count> names{};
+				if ( !process.copy( table, names.data( ), sizeof( names ) ) )
+					return false;
+				constexpr std::array required{
+					std::string_view{ "SPACE" }, std::string_view{ "MOUSE1" },
+					std::string_view{ "MOUSE2" }, std::string_view{ "W" } };
+				for ( const auto expected : required )
+				{
+					const auto found = std::ranges::any_of( names,
+						[ &process, expected ]( const std::uintptr_t address )
+						{
+							return address && same_text(
+								process.load_text( address, 32 ), expected );
+						} );
+					if ( !found )
+						return false;
+				}
+				return true;
 			};
 
 			const auto vtable = process.locate_vtable( input_module, "CInputSystem" );
-			const auto function = vtable ? process.load<std::uintptr_t>(
-				vtable + 40 * sizeof( std::uintptr_t ) ) : 0;
-			std::array<std::uint8_t, 64> code{};
-			if ( function && process.copy( function, code.data( ), code.size( ) ) )
+			for ( auto slot = std::size_t{}; vtable && slot < 96; ++slot )
 			{
+				const auto function = process.load<std::uintptr_t>(
+					vtable + slot * sizeof( std::uintptr_t ) );
+				std::array<std::uint8_t, 128> code{};
+				if ( !function || !process.copy( function, code.data( ), code.size( ) ) )
+					continue;
 				for ( auto index = std::size_t{}; index + 7 <= code.size( ); ++index )
 				{
 					if ( code[index] != 0x48u || code[index + 1] != 0x8du
@@ -232,8 +283,67 @@ namespace game {
 				}
 			}
 
-			const auto fallback = input_module + k_current_key_name_table_rva;
-			return validate( fallback ) ? fallback : 0;
+			return 0;
+		}
+
+		[[nodiscard]] std::optional<std::ptrdiff_t> resolve_record_to_name_bias(
+			const platform::windows::process_session& process,
+			const std::vector<std::byte>& records,
+			const std::array<std::uintptr_t, k_input_code_count>& key_names )
+		{
+			std::array<int, static_cast<std::size_t>(
+				k_max_name_bias - k_min_name_bias + 1 )> scores{};
+			for ( auto code = std::size_t{}; code < k_input_code_count; ++code )
+			{
+				for ( auto slot = std::size_t{}; slot < k_binding_slot_count; ++slot )
+				{
+					std::uintptr_t command_address{};
+					std::memcpy( &command_address,
+						records.data( ) + code * k_binding_record_size
+							+ slot * sizeof( std::uintptr_t ), sizeof( command_address ) );
+					if ( command_address < 0x10000 )
+						continue;
+
+					const auto command = process.load_text( command_address, 192 );
+					for ( const auto& [ token, expected_name ] : k_layout_anchors )
+					{
+						if ( !contains_command( command, token ) )
+							continue;
+						for ( auto bias = k_min_name_bias;
+							bias <= k_max_name_bias; ++bias )
+						{
+							const auto name_index = static_cast<std::ptrdiff_t>( code ) + bias;
+							if ( name_index < 0 || name_index >=
+								static_cast<std::ptrdiff_t>( key_names.size( ) ) )
+								continue;
+							const auto address = key_names[static_cast<std::size_t>( name_index )];
+							if ( address && same_text(
+								process.load_text( address, 32 ), expected_name ) )
+								++scores[static_cast<std::size_t>( bias - k_min_name_bias )];
+						}
+					}
+				}
+			}
+
+			auto best_score = 0;
+			auto runner_up_score = 0;
+			auto best_bias = std::ptrdiff_t{};
+			for ( auto bias = k_min_name_bias; bias <= k_max_name_bias; ++bias )
+			{
+				const auto score = scores[static_cast<std::size_t>( bias - k_min_name_bias )];
+				if ( score > best_score )
+				{
+					runner_up_score = best_score;
+					best_score = score;
+					best_bias = bias;
+				}
+				else if ( score > runner_up_score )
+				{
+					runner_up_score = score;
+				}
+			}
+			return best_score >= 4 && best_score > runner_up_score
+				? std::optional{ best_bias } : std::nullopt;
 		}
 
 		[[nodiscard]] bool same_binding(
@@ -284,14 +394,14 @@ namespace game {
 		{
 			this->m_input_service = process.locate_vtable_object(
 				app::context().modules.engine, "CInputService" );
-			if ( this->m_input_service )
-			{
-				const auto vtable = process.load<std::uintptr_t>( this->m_input_service );
-				const auto getter = vtable ? process.load<std::uintptr_t>(
-					vtable + 32 * sizeof( std::uintptr_t ) ) : 0;
-				this->m_binding_table = this->m_input_service
-					+ binding_member_offset( process, getter );
-			}
+		}
+		if ( this->m_input_service && !this->m_binding_table )
+		{
+			const auto vtable = process.load<std::uintptr_t>( this->m_input_service );
+			const auto getter = vtable ? process.load<std::uintptr_t>(
+				vtable + 32 * sizeof( std::uintptr_t ) ) : 0;
+			const auto offset = binding_member_offset( process, getter );
+			this->m_binding_table = offset ? this->m_input_service + offset : 0;
 		}
 		if ( !this->m_key_name_table )
 		{
@@ -299,7 +409,11 @@ namespace game {
 				process, app::context().modules.input_system );
 		}
 		if ( !this->m_binding_table || !this->m_key_name_table )
+		{
+			this->m_bindings = {};
+			this->m_binding_layout_valid = false;
 			return;
+		}
 
 		std::vector<std::byte> records( k_input_code_count * k_binding_record_size );
 		std::array<std::uintptr_t, k_input_code_count> key_names{};
@@ -307,27 +421,33 @@ namespace game {
 			|| !process.copy( this->m_key_name_table, key_names.data( ),
 				sizeof( key_names ) ) )
 		{
+			this->m_bindings = {};
+			this->m_binding_layout_valid = false;
 			return;
 		}
-		const auto key_name_is = [ &process, &key_names ](
-			const std::size_t code, const std::string_view expected )
+		if ( !this->m_binding_layout_valid )
 		{
-			return code < key_names.size( ) && key_names[ code ]
-				&& process.load_text( key_names[ code ], 32 ) == expected;
-		};
-
-		if ( !key_name_is( 65, "ENTER" ) || !key_name_is( 66, "SPACE" )
-			|| !key_name_is( 317, "MOUSE1" ) || !key_name_is( 318, "MOUSE2" ) )
-		{
-			this->m_bindings = {};
-			return;
+			const auto bias = resolve_record_to_name_bias( process, records, key_names );
+			if ( !bias )
+			{
+				this->m_bindings = {};
+				return;
+			}
+			this->m_record_to_name_bias = *bias;
+			this->m_binding_layout_valid = true;
 		}
 
 		decltype( m_bindings ) refreshed{};
-		for ( auto code = std::size_t{};
-			code + k_input_name_bias < k_input_code_count; ++code )
+		for ( auto code = std::size_t{}; code < k_input_code_count; ++code )
 		{
-			const auto name_address = key_names[ code + k_input_name_bias ];
+			const auto name_index = static_cast<std::ptrdiff_t>( code )
+				+ this->m_record_to_name_bias;
+			if ( name_index < 0 || name_index >=
+				static_cast<std::ptrdiff_t>( key_names.size( ) ) )
+			{
+				continue;
+			}
+			const auto name_address = key_names[static_cast<std::size_t>( name_index )];
 			for ( auto slot = std::size_t{}; slot < k_binding_slot_count; ++slot )
 			{
 				std::uintptr_t command_address{};

@@ -2769,16 +2769,33 @@ namespace chams {
 				this->m_context->VSSetConstantBuffers( 0, 3, vs_cbs );
 			};
 
-		const auto draw_players = [ & ]( bool update_player_material, int layer )
+		const auto draw_players = [ & ]( bool update_player_material, int layer,
+			const config::visual_profile::chams::material* override_material = nullptr,
+			const float override_shell_expand = 0.0f )
 			{
 				for ( const auto& d : drawables )
 				{
-					if ( update_player_material )
+					const auto opacity = d.current
+						? std::clamp( d.current->legit_opacity, 0.0f, 1.0f ) : 1.0f;
+					const auto scale_alpha = [ opacity ]( auto& material )
 					{
+						material.color.a = static_cast<std::uint8_t>( std::lround(
+							static_cast<float>( material.color.a ) * opacity ) );
+						material.tint.a = static_cast<std::uint8_t>( std::lround(
+							static_cast<float>( material.tint.a ) * opacity ) );
+					};
+					if ( override_material )
+					{
+						auto material = *override_material;
+						scale_alpha( material );
+						this->update_material( material, override_shell_expand );
+					}
+					else if ( update_player_material )
+					{
+						auto visible = cfg.visible;
+						auto invisible = cfg.invisible;
 						if ( d.current && d.current->invulnerable )
 						{
-							auto visible = cfg.visible;
-							auto invisible = cfg.invisible;
 							visible.color = { 176, 176, 184,
 								static_cast<std::uint8_t>( std::lround(
 									static_cast<float>( cfg.visible.color.a ) * 0.45f ) ) };
@@ -2787,18 +2804,14 @@ namespace chams {
 									static_cast<float>( cfg.invisible.color.a ) * 0.45f ) ) };
 							visible.tint = { 176, 176, 184, visible.color.a };
 							invisible.tint = { 112, 116, 128, invisible.color.a };
-							this->update_material_pair( visible, invisible, layer );
 						}
 						else if ( smoke_occluded( d.current ) )
 						{
-							this->update_material_pair(
-								cfg.invisible, cfg.invisible, layer );
+							visible = invisible;
 						}
-						else
-						{
-							this->update_material_pair(
-								cfg.visible, cfg.invisible, layer );
-						}
+						scale_alpha( visible );
+						scale_alpha( invisible );
+						this->update_material_pair( visible, invisible, layer );
 					}
 					this->m_context->VSSetConstantBuffers( 1, 1, &d.bone_buffer );
 					const UINT stride = sizeof( skinned_vertex );
@@ -2981,7 +2994,7 @@ namespace chams {
 			this->m_context->OMSetDepthStencilState( this->m_depth_state, 0 );
 			this->m_context->RSSetState( this->m_rs_world_scissor );
 			this->m_context->RSSetScissorRects( 1, &bloom_scissor );
-			draw_players( false, 0 );
+			draw_players( false, 0, &glow, glow_shell_expand );
 
 			this->m_context->OMSetRenderTargets(
 				1, &this->m_bloom_source_rtv, this->m_bloom_dsv );
@@ -2992,7 +3005,7 @@ namespace chams {
 			this->m_context->OMSetBlendState( this->m_blend_disabled, blend_factor, 0xFFFFFFFF );
 			this->m_context->RSSetState( this->m_rs_world_scissor );
 			this->m_context->RSSetScissorRects( 1, &bloom_scissor );
-			draw_players( false, 0 );
+			draw_players( false, 0, &glow, glow_shell_expand );
 
 			const auto write_shell_layer = [ & ]( const float fraction,
 				const std::uint8_t alpha )
@@ -3006,7 +3019,7 @@ namespace chams {
 				this->m_context->OMSetDepthStencilState( this->m_depth_state, 0 );
 				this->m_context->RSSetState( this->m_rs_world_scissor );
 				this->m_context->RSSetScissorRects( 1, &bloom_scissor );
-				draw_players( false, 0 );
+				draw_players( false, 0, &glow, glow_shell_expand * fraction );
 				this->m_context->OMSetRenderTargets(
 					1, &this->m_bloom_source_rtv, this->m_bloom_dsv );
 				bind_player_pipeline( this->m_bloom_mask_shader );
@@ -3017,7 +3030,7 @@ namespace chams {
 					this->m_depth_state_read_only, 0 );
 				this->m_context->OMSetBlendState(
 					this->m_blend_disabled, blend_factor, 0xFFFFFFFF );
-				draw_players( false, 0 );
+				draw_players( false, 0, &glow, glow_shell_expand * fraction );
 			};
 			write_shell_layer( 0.66f, 112 );
 			write_shell_layer( 0.33f, 196 );
@@ -3031,7 +3044,7 @@ namespace chams {
 			this->m_context->OMSetDepthStencilState( this->m_depth_state, 0 );
 			this->m_context->RSSetState( this->m_rs_world_scissor );
 			this->m_context->RSSetScissorRects( 1, &bloom_scissor );
-			draw_players( false, 0 );
+			draw_players( false, 0, &glow, 0.0f );
 			this->m_context->OMSetRenderTargets(
 				1, &this->m_bloom_inner_rtv, this->m_bloom_dsv );
 			bind_player_pipeline( this->m_bloom_mask_shader );
@@ -3040,7 +3053,7 @@ namespace chams {
 			this->m_context->OMSetDepthStencilState( this->m_depth_state_read_only, 0 );
 			this->m_context->OMSetBlendState(
 				this->m_blend_disabled, blend_factor, 0xFFFFFFFF );
-			draw_players( false, 0 );
+			draw_players( false, 0, &glow, 0.0f );
 
 			const auto set_bloom_constants = [ & ]( const float x, const float y,
 				const float strength )

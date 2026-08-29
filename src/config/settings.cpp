@@ -558,7 +558,8 @@ static void to_json(json& j, const combat_profile::rcs_settings& value)
 {
 	j = json{{"enabled", value.enabled}, {"start_bullet", value.start_bullet},
 		{"pitch", value.pitch}, {"yaw", value.yaw},
-		{"response_ms", value.response_ms}, {"randomness", value.randomness},
+		{"response_ms", value.response_ms}, {"smoothness", value.smoothness},
+		{"randomness", value.randomness},
 		{"drift", value.drift}};
 }
 
@@ -569,12 +570,14 @@ static void from_json(const json& j, combat_profile::rcs_settings& value)
 	if (j.contains("pitch")) j.at("pitch").get_to(value.pitch);
 	if (j.contains("yaw")) j.at("yaw").get_to(value.yaw);
 	if (j.contains("response_ms")) j.at("response_ms").get_to(value.response_ms);
+	if (j.contains("smoothness")) j.at("smoothness").get_to(value.smoothness);
 	if (j.contains("randomness")) j.at("randomness").get_to(value.randomness);
 	if (j.contains("drift")) j.at("drift").get_to(value.drift);
 	value.start_bullet = std::clamp(value.start_bullet, 1, 10);
 	value.pitch = std::clamp(value.pitch, 0.0f, 200.0f);
 	value.yaw = std::clamp(value.yaw, 0.0f, 200.0f);
 	value.response_ms = std::clamp(value.response_ms, 1.0f, 150.0f);
+	value.smoothness = std::clamp(value.smoothness, 0.0f, 100.0f);
 	value.randomness = std::clamp(value.randomness, 0.0f, 30.0f);
 	value.drift = std::clamp(value.drift, 0.0f, 30.0f);
 }
@@ -585,12 +588,18 @@ static void to_json(json& j, const combat_profile::fov_settings& value)
 		{"draw_target_point", value.selection == combat_profile::fov_settings::target_distance},
 		{"near_distance_m", value.near_distance_m}, {"near_fov", value.near_fov},
 		{"far_distance_m", value.far_distance_m}, {"far_fov", value.far_fov},
-		{"distance_curve", value.distance_curve}};
+		{"distance_curve", value.distance_curve},
+		{"target_near_distance_m", value.target_near_distance_m},
+		{"target_near_fov", value.target_near_fov},
+		{"target_far_distance_m", value.target_far_distance_m},
+		{"target_far_fov", value.target_far_fov},
+		{"target_distance_curve", value.target_distance_curve}};
 }
 
 static void from_json(const json& j, combat_profile::fov_settings& value)
 {
 	const auto has_distance_curve = j.contains("distance_curve");
+	const auto has_target_profile = j.contains("target_near_fov");
 	if (j.contains("selection")) j.at("selection").get_to(value.selection);
 	if (j.contains("visualization")) j.at("visualization").get_to(value.visualization);
 	bool legacy_target = value.visualization == combat_profile::fov_settings::target;
@@ -601,15 +610,44 @@ static void from_json(const json& j, combat_profile::fov_settings& value)
 	if (j.contains("far_distance_m")) j.at("far_distance_m").get_to(value.far_distance_m);
 	if (j.contains("far_fov")) j.at("far_fov").get_to(value.far_fov);
 	if (j.contains("distance_curve")) j.at("distance_curve").get_to(value.distance_curve);
+	if (j.contains("target_near_distance_m")) j.at("target_near_distance_m").get_to(value.target_near_distance_m);
+	if (j.contains("target_near_fov")) j.at("target_near_fov").get_to(value.target_near_fov);
+	if (j.contains("target_far_distance_m")) j.at("target_far_distance_m").get_to(value.target_far_distance_m);
+	if (j.contains("target_far_fov")) j.at("target_far_fov").get_to(value.target_far_fov);
+	if (j.contains("target_distance_curve")) j.at("target_distance_curve").get_to(value.target_distance_curve);
+	if (!has_target_profile && value.selection == combat_profile::fov_settings::target_distance)
+	{
+		value.target_near_distance_m = value.near_distance_m;
+		value.target_near_fov = value.near_fov;
+		value.target_far_distance_m = value.far_distance_m;
+		value.target_far_fov = value.far_fov;
+		value.target_distance_curve = value.distance_curve;
+		value.near_distance_m = 2.5f;
+		value.near_fov = 2.0f;
+		value.far_distance_m = 10.0f;
+		value.far_fov = 2.0f;
+		value.distance_curve = 1.0f;
+	}
 
 	if (!has_distance_curve && value.selection != combat_profile::fov_settings::fixed
 		&& value.near_fov >= 40.0f)
 	{
-		value.near_distance_m = 1.5f;
-		value.near_fov = 18.0f;
-		value.far_distance_m = 45.0f;
-		value.far_fov = 2.5f;
-		value.distance_curve = 1.0f;
+		if (value.selection == combat_profile::fov_settings::target_distance)
+		{
+			value.target_near_distance_m = 2.5f;
+			value.target_near_fov = 20.0f;
+			value.target_far_distance_m = 10.0f;
+			value.target_far_fov = 2.0f;
+			value.target_distance_curve = 1.0f;
+		}
+		else
+		{
+			value.near_distance_m = 2.5f;
+			value.near_fov = 2.0f;
+			value.far_distance_m = 10.0f;
+			value.far_fov = 2.0f;
+			value.distance_curve = 1.0f;
+		}
 	}
 	value.selection = std::clamp(value.selection,
 		static_cast<int>(combat_profile::fov_settings::fixed),
@@ -623,6 +661,12 @@ static void from_json(const json& j, combat_profile::fov_settings& value)
 	value.near_fov = std::clamp(value.near_fov, 0.25f, 180.0f);
 	value.far_fov = std::clamp(value.far_fov, 0.25f, value.near_fov);
 	value.distance_curve = std::clamp(value.distance_curve, 0.25f, 4.0f);
+	value.target_near_distance_m = std::clamp(value.target_near_distance_m, 0.5f, 100.0f);
+	value.target_far_distance_m = std::clamp(value.target_far_distance_m,
+		value.target_near_distance_m + 0.5f, 150.0f);
+	value.target_near_fov = std::clamp(value.target_near_fov, 0.25f, 180.0f);
+	value.target_far_fov = std::clamp(value.target_far_fov, 0.25f, value.target_near_fov);
+	value.target_distance_curve = std::clamp(value.target_distance_curve, 0.25f, 4.0f);
 }
 
 static void to_json(json& j, const visual_profile::player::armor_bar& a)

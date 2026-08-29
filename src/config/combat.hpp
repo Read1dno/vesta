@@ -40,16 +40,16 @@ namespace config {
 		struct humanizer_settings
 		{
 			float gravity{ 9.0f };
-			float wind{ 3.0f };
-			float max_step{ 15.0f };
-			float damping{ 0.82f };
-			int reaction_min_ms{ 60 };
-			int reaction_max_ms{ 145 };
-			float curve{ 0.30f };
-			float overshoot_chance{ 17.5f };
-			float overshoot_amount{ 0.14f };
-			float jitter{ 0.30f };
-			float deadzone{ 0.075f };
+			float wind{ 0.8f };
+			float max_step{ 8.0f };
+			float damping{ 0.85f };
+			int reaction_min_ms{ 25 };
+			int reaction_max_ms{ 60 };
+			float curve{ 0.40f };
+			float overshoot_chance{ 5.0f };
+			float overshoot_amount{ 0.04f };
+			float jitter{ 0.10f };
+			float deadzone{ 0.25f };
 		};
 
 		struct multipoint_settings
@@ -65,33 +65,39 @@ namespace config {
 		{
 			bool enabled{ true };
 			float max_horizon_ms{ 120.0f };
-			bool acceleration{ true };
+			bool acceleration{ false };
 		};
 
 		struct rcs_settings
 		{
-			bool enabled{ true };
+			bool enabled{ false };
 			int start_bullet{ 2 };
 			float pitch{ 100.0f };
 			float yaw{ 100.0f };
-			float response_ms{ 24.0f };
-			float randomness{ 2.0f };
-			float drift{ 1.5f };
+			float response_ms{ 35.0f };
+			float smoothness{ 75.0f };
+			float randomness{ 30.0f };
+			float drift{ 30.0f };
 		};
 
 		struct fov_settings
 		{
 			enum mode : int { fixed = 0, distance = 1, target_distance = 2 };
 			enum indicator : int { center = 0, target = 1 };
-			int selection{ fixed };
+			int selection{ target_distance };
 
 			int visualization{ center };
 
-			float near_distance_m{ 1.5f };
-			float near_fov{ 18.0f };
-			float far_distance_m{ 45.0f };
-			float far_fov{ 2.5f };
+			float near_distance_m{ 2.5f };
+			float near_fov{ 2.0f };
+			float far_distance_m{ 10.0f };
+			float far_fov{ 2.0f };
 			float distance_curve{ 1.0f };
+			float target_near_distance_m{ 2.5f };
+			float target_near_fov{ 20.0f };
+			float target_far_distance_m{ 10.0f };
+			float target_far_fov{ 2.0f };
+			float target_distance_curve{ 1.0f };
 		};
 
 		enum aim_part : int
@@ -116,21 +122,21 @@ namespace config {
 		struct aimbot
 		{
 			bool enabled{ false };
-			int key{ VK_XBUTTON2 };
+			int key{ 0x43 };
 			int activation_mode{ activation::hold };
-			int fov{ 5 };
+			int fov{ 2 };
 			int smoothing{ 5 };
-			int humanize{ 50 };
+			int humanize{ 35 };
 			bool autowall{ true };
-			float min_damage{ 90.0f };
-			bool lethal_only{};
-			int hitbox_parts{ aim_part::head };
+			float min_damage{ 65.0f };
+			bool lethal_only{ true };
+			int hitbox_parts{ aim_part::all };
 			bool multipoint{ true };
 			bool visible_only{ true };
-			bool draw_fov{ false };
-			zdraw::rgba fov_color{ 225, 225, 225, 125 };
-			bool predictive{ true };
-			bool recoil_sync{ true };
+			bool draw_fov{ true };
+			zdraw::rgba fov_color{ 217, 217, 217, 125 };
+			bool predictive{ false };
+			bool recoil_sync{ false };
 			legit_checks checks{};
 			humanizer_settings humanizer{};
 			multipoint_settings multipoint_config{};
@@ -175,25 +181,25 @@ namespace config {
 		struct global_settings
 		{
 			bool aimbot_enabled{ false };
-			int aimbot_key{ VK_XBUTTON2 };
+			int aimbot_key{ 0x43 };
 			int aimbot_activation_mode{ activation::hold };
-			int aimbot_fov{ 5 };
+			int aimbot_fov{ 2 };
 			int aimbot_smoothing{ 5 };
-			int aimbot_humanize{ 50 };
+			int aimbot_humanize{ 35 };
 			bool aimbot_autowall{ true };
-			float aimbot_min_damage{ 90.0f };
-			bool aimbot_min_damage_override_enabled{};
-			float aimbot_min_damage_override{ 1.0f };
+			float aimbot_min_damage{ 65.0f };
+			bool aimbot_min_damage_override_enabled{ true };
+			float aimbot_min_damage_override{ 10.0f };
 			int aimbot_min_damage_override_mode{ activation::hold };
-			int aimbot_min_damage_override_key{};
-			bool aimbot_lethal_only{};
-			int aimbot_hitbox_parts{ aim_part::head };
+			int aimbot_min_damage_override_key{ 0x05 };
+			bool aimbot_lethal_only{ true };
+			int aimbot_hitbox_parts{ aim_part::all };
 			bool aimbot_multipoint{ true };
 			bool aimbot_visible_only{ true };
-			bool aimbot_draw_fov{ false };
-			zdraw::rgba aimbot_fov_color{ 225, 225, 225, 125 };
-			bool aimbot_predictive{ true };
-			bool aimbot_recoil_sync{ true };
+			bool aimbot_draw_fov{ true };
+			zdraw::rgba aimbot_fov_color{ 217, 217, 217, 125 };
+			bool aimbot_predictive{ false };
+			bool aimbot_recoil_sync{ false };
 			legit_checks aimbot_checks{};
 			humanizer_settings aimbot_humanizer{};
 			multipoint_settings aimbot_multipoint_config{};
@@ -241,17 +247,17 @@ namespace config {
 		struct group_overrides
 		{
 			bool use_global{ true };
-			int aimbot_fov{ 5 };
+			int aimbot_fov{ 2 };
 			int aimbot_smoothing{ 5 };
-			int aimbot_humanize{ 50 };
+			int aimbot_humanize{ 35 };
 			bool aimbot_autowall{ true };
-			float aimbot_min_damage{ 90.0f };
-			bool aimbot_lethal_only{};
-			int aimbot_hitbox_parts{ aim_part::head };
+			float aimbot_min_damage{ 65.0f };
+			bool aimbot_lethal_only{ true };
+			int aimbot_hitbox_parts{ aim_part::all };
 			bool aimbot_multipoint{ true };
 			bool aimbot_visible_only{ true };
-			bool aimbot_predictive{ true };
-			bool aimbot_recoil_sync{ true };
+			bool aimbot_predictive{ false };
+			bool aimbot_recoil_sync{ false };
 			legit_checks aimbot_checks{};
 			humanizer_settings aimbot_humanizer{};
 			multipoint_settings aimbot_multipoint_config{};

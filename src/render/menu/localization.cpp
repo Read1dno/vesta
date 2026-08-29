@@ -108,6 +108,7 @@ namespace render::localization {
 				{ "Gain Randomness", "Разброс силы" },
 				{ "Drift", "Дрейф" },
 				{ "Correction Time", "Время коррекции" },
+				{ "Smoothness", "Плавность" },
 				{ "Strength Variation", "Вариация силы" },
 				{ "Path Drift", "Дрейф траектории" },
 				{ "Wall Policy", "Прострелы" },

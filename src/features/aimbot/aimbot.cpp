@@ -1122,19 +1122,26 @@ namespace features::aimbot {
 		[[nodiscard]] float distance_fov(
 			const config::combat_profile::aimbot& cfg, float distance_units )
 		{
-			const auto near_distance = std::max( cfg.fov_config.near_distance_m, 0.25f );
+			const auto target_mode = cfg.fov_config.selection
+				== config::combat_profile::fov_settings::target_distance;
+			const auto near_distance = std::max( target_mode
+				? cfg.fov_config.target_near_distance_m : cfg.fov_config.near_distance_m, 0.25f );
 			const auto far_distance = std::max(
-				cfg.fov_config.far_distance_m, near_distance + 0.25f );
+				target_mode ? cfg.fov_config.target_far_distance_m
+					: cfg.fov_config.far_distance_m, near_distance + 0.25f );
 			const auto distance_m = std::clamp(
 				distance_units / 52.4934f, near_distance, far_distance );
 
 			auto t = std::log( distance_m / near_distance )
 				/ std::log( far_distance / near_distance );
-			t = std::pow( std::clamp( t, 0.0f, 1.0f ),
-				std::clamp( cfg.fov_config.distance_curve, 0.25f, 4.0f ) );
-			const auto near_fov = std::max( cfg.fov_config.near_fov, 0.25f );
+			t = std::pow( std::clamp( t, 0.0f, 1.0f ), std::clamp( target_mode
+				? cfg.fov_config.target_distance_curve : cfg.fov_config.distance_curve,
+				0.25f, 4.0f ) );
+			const auto near_fov = std::max( target_mode
+				? cfg.fov_config.target_near_fov : cfg.fov_config.near_fov, 0.25f );
 			const auto far_fov = std::clamp(
-				cfg.fov_config.far_fov, 0.25f, near_fov );
+				target_mode ? cfg.fov_config.target_far_fov : cfg.fov_config.far_fov,
+				0.25f, near_fov );
 			return std::exp( std::lerp( std::log( near_fov ),
 				std::log( far_fov ), t ) );
 		}
@@ -1200,6 +1207,8 @@ namespace features::aimbot {
 		this->m_aim_last_input_sequence = -1;
 		this->m_aim_last_input_view = {};
 		this->m_aim_last_input_time = {};
+		this->m_aim_virtual_angles = {};
+		this->m_aim_virtual_angles_valid = false;
 		this->m_aim_degrees_per_pixel = {};
 		this->m_aim_degrees_candidate = {};
 		this->m_aim_degrees_confirmations = {};
@@ -1211,12 +1220,14 @@ namespace features::aimbot {
 		this->m_aim_simulation_time = 0.0f;
 		this->m_aim_velocity_samples = 0;
 		this->m_rcs_raw = {};
+		this->m_rcs_target = {};
 		this->m_rcs_velocity = {};
 		this->m_rcs_applied = {};
 		this->m_rcs_mouse_error = {};
 		this->m_rcs_pending_mouse = {};
 		this->m_rcs_last_input_sequence = -1;
 		this->m_rcs_last_input_time = {};
+		this->m_rcs_input_step = 24;
 		this->m_rcs_active = false;
 
 		features::misc::auto_stop( ).cancel_request(
@@ -2333,6 +2344,7 @@ namespace features::aimbot {
 			this->m_trigger_target_valid = false;
 			this->m_aim_error = {};
 			this->m_aim_last_input_sequence = -1;
+			this->m_aim_virtual_angles_valid = false;
 			this->m_aim_pawn = 0;
 			this->m_aim_tracking_lag = 0.0f;
 			this->m_aim_velocity_valid = false;
@@ -2471,6 +2483,7 @@ namespace features::aimbot {
 
 					this->m_aim_error = {};
 					this->m_aim_last_input_sequence = -1;
+					this->m_aim_virtual_angles_valid = false;
 					this->m_aim_pawn = 0;
 					this->m_aim_tracking_lag = 0.0f;
 					this->m_aim_velocity_valid = false;
@@ -2863,12 +2876,14 @@ namespace features::aimbot {
 		const auto clear_correction = [ this ]( bool clear_burst )
 		{
 			this->m_rcs_raw = {};
+			this->m_rcs_target = {};
 			this->m_rcs_velocity = {};
 			this->m_rcs_applied = {};
 			this->m_rcs_mouse_error = {};
 			this->m_rcs_pending_mouse = {};
 			this->m_rcs_last_input_sequence = -1;
 			this->m_rcs_last_input_time = {};
+			this->m_rcs_input_step = 24;
 			this->m_rcs_active = false;
 			if ( clear_burst )
 			{
@@ -2925,9 +2940,9 @@ namespace features::aimbot {
 			this->m_rcs_burst_shots, std::max( reported_shots, 0 ) );
 
 		const auto physical_attack = ( ::GetAsyncKeyState( VK_LBUTTON ) & 0x8000 ) != 0;
-		const auto just_fired = weapon_ctx.valid
-			&& weapon_ctx.current_time - weapon_ctx.last_shot_time < 0.12f;
-		if ( !physical_attack && !just_fired && reported_shots <= 0 )
+		const auto attack_owned_by_trigger = this->m_trigger_held
+			&& !this->m_seed_held_secondary && !this->m_seed_held_proxy;
+		if ( !physical_attack && !attack_owned_by_trigger )
 		{
 			clear_correction( false );
 			this->m_rcs_burst_shots = 0;
@@ -2977,27 +2992,50 @@ namespace features::aimbot {
 		desired.y += punch.length_2d( ) * drift * 0.8f
 			* std::cos( this->m_rcs_phase * 1.27f );
 
-		const auto smooth_time = std::clamp(
-			cfg.rcs.response_ms * this->m_rcs_response_scale / 3.0f,
-			1.0f, 50.0f ) * 0.001f;
-		const auto smooth_axis = [ dt, smooth_time ](
+		const auto smoothness = std::clamp( cfg.rcs.smoothness, 0.0f, 100.0f ) * 0.01f;
+		const auto target_follow_time = std::lerp( 0.0f, 0.020f, smoothness );
+		if ( target_follow_time <= 0.0001f )
+		{
+			this->m_rcs_target = desired;
+		}
+		else
+		{
+			const auto target_blend = 1.0f - std::exp(
+				-dt / std::max( target_follow_time, 0.001f ) );
+			this->m_rcs_target += ( desired - this->m_rcs_target ) * target_blend;
+		}
+
+		const auto follow_time = std::clamp(
+			cfg.rcs.response_ms * this->m_rcs_response_scale
+				* std::lerp( 1.0f, 1.35f, smoothness ),
+			1.0f, 300.0f ) * 0.001f;
+		const auto velocity_time = std::lerp( 0.0f, 0.018f, smoothness );
+		const auto max_speed = std::lerp( 360.0f, 80.0f, smoothness );
+		const auto smooth_axis = [ dt, follow_time, velocity_time, max_speed ](
 			float current, float target, float& velocity )
 		{
-			const auto omega = 2.0f / std::max( smooth_time, 0.001f );
-			const auto x = omega * dt;
-			const auto decay = 1.0f /
-				( 1.0f + x + 0.48f * x * x + 0.235f * x * x * x );
-			const auto change = current - target;
-			const auto temp = ( velocity + omega * change ) * dt;
-			velocity = ( velocity - omega * temp ) * decay;
-			return target + ( change + temp ) * decay;
+			const auto error = target - current;
+			const auto desired_velocity = std::clamp(
+				error / std::max( follow_time, 0.001f ), -max_speed, max_speed );
+			const auto velocity_blend = velocity_time <= 0.0001f ? 1.0f
+				: 1.0f - std::exp( -dt / velocity_time );
+			velocity += ( desired_velocity - velocity ) * velocity_blend;
+			auto next = current + velocity * dt;
+			if ( ( target - current ) * ( target - next ) <= 0.0f )
+			{
+				next = target;
+				velocity = 0.0f;
+			}
+			return next;
 		};
 		const auto previous = this->m_rcs_applied;
 		this->m_rcs_applied.x = smooth_axis(
-			this->m_rcs_applied.x, desired.x, this->m_rcs_velocity.x );
+			this->m_rcs_applied.x, this->m_rcs_target.x, this->m_rcs_velocity.x );
 		this->m_rcs_applied.y = smooth_axis(
-			this->m_rcs_applied.y, desired.y, this->m_rcs_velocity.y );
+			this->m_rcs_applied.y, this->m_rcs_target.y, this->m_rcs_velocity.y );
 		this->m_rcs_applied.z = 0.0f;
+		this->m_rcs_input_step = std::max( 1, static_cast<int>( std::lround(
+			std::lerp( 24.0f, 5.0f, smoothness ) ) ) );
 		const auto delta = this->m_rcs_applied - previous;
 		this->m_rcs_mouse_error.x += delta.y / degrees_per_pixel;
 		this->m_rcs_mouse_error.y -= delta.x / degrees_per_pixel;
@@ -3015,21 +3053,21 @@ namespace features::aimbot {
 
 	void aimbot_t::flush_recoil_input( )
 	{
-		const auto dx = static_cast<int>( this->m_rcs_pending_mouse.x );
-		const auto dy = static_cast<int>( this->m_rcs_pending_mouse.y );
+		const auto limit = std::max( this->m_rcs_input_step, 1 );
+		const auto dx = std::clamp(
+			static_cast<int>( this->m_rcs_pending_mouse.x ), -limit, limit );
+		const auto dy = std::clamp(
+			static_cast<int>( this->m_rcs_pending_mouse.y ), -limit, limit );
 		if ( !dx && !dy ) return;
-		int sequence{ -1 };
-		const auto has_sequence = read_cmd_sequence( sequence );
 		const auto now = std::chrono::steady_clock::now( );
-		if ( has_sequence && sequence == this->m_rcs_last_input_sequence ) return;
-		if ( !has_sequence && now - this->m_rcs_last_input_time
-			< std::chrono::milliseconds( 12 ) ) return;
+		if ( this->m_rcs_last_input_time.time_since_epoch( ).count( ) != 0
+			&& now - this->m_rcs_last_input_time < std::chrono::milliseconds( 2 ) ) return;
 		if ( ( dx || dy ) && app::context().input.pointer(
 			dx, dy, platform::windows::pointer_action::relative_move ) )
 		{
 			this->m_rcs_pending_mouse.x -= static_cast<float>( dx );
 			this->m_rcs_pending_mouse.y -= static_cast<float>( dy );
-			this->m_rcs_last_input_sequence = has_sequence ? sequence : -1;
+			this->m_rcs_last_input_sequence = -1;
 			this->m_rcs_last_input_time = now;
 		}
 	}
@@ -3041,6 +3079,8 @@ namespace features::aimbot {
 		{
 			this->m_aim_error = {};
 			this->m_aim_last_input_sequence = -1;
+			this->m_aim_virtual_angles_valid = false;
+			this->m_aim_last_call = {};
 			this->m_aim_pawn = 0;
 			this->m_aim_tracking_lag = 0.0f;
 			this->m_aim_velocity_valid = false;
@@ -3117,22 +3157,8 @@ namespace features::aimbot {
 			}
 		}
 
-		if ( input_sequence >= 0 )
-		{
-			if ( input_sequence == this->m_aim_last_input_sequence ) return;
-		}
-		else
-		{
-			const auto unchanged_view = std::abs(
-				view_angles.x - this->m_aim_last_input_view.x ) < 0.0001f
-				&& std::abs( foundation::wrap_yaw(
-					view_angles.y - this->m_aim_last_input_view.y ) ) < 0.0001f;
-			if ( unchanged_view && now - this->m_aim_last_input_time
-				< std::chrono::milliseconds( 12 ) ) return;
-		}
-		this->m_aim_last_input_sequence = input_sequence;
-		this->m_aim_last_input_view = view_angles;
-		this->m_aim_last_input_time = now;
+		const auto sequence_changed = input_sequence >= 0
+			&& input_sequence != this->m_aim_last_input_sequence;
 
 		auto freshest = game::skeletons().get( tgt.player->bone_cache );
 		if ( !freshest.is_valid( ) ) freshest = tgt.bones;
@@ -3167,16 +3193,24 @@ namespace features::aimbot {
 		}
 		this->m_aim_last_call = now;
 
-		auto control_angles = view_angles;
-		if ( command_angles_valid ) control_angles = raw_angles;
+		auto sampled_control_angles = view_angles;
+		if ( command_angles_valid ) sampled_control_angles = raw_angles;
 		if ( this->m_rcs_active )
 		{
-			control_angles += this->m_rcs_applied;
-
-			control_angles.x += this->m_rcs_pending_mouse.y * deg_per_pixel;
-			control_angles.y -= this->m_rcs_pending_mouse.x * deg_per_pixel;
-			control_angles.y = foundation::wrap_yaw( control_angles.y );
+			sampled_control_angles += this->m_rcs_applied;
+			sampled_control_angles.x += this->m_rcs_pending_mouse.y * deg_per_pixel;
+			sampled_control_angles.y -= this->m_rcs_pending_mouse.x * deg_per_pixel;
+			sampled_control_angles.y = foundation::wrap_yaw( sampled_control_angles.y );
 		}
+		if ( !this->m_aim_virtual_angles_valid || sequence_changed
+			|| now - this->m_aim_last_input_time > std::chrono::milliseconds( 50 ) )
+		{
+			this->m_aim_virtual_angles = sampled_control_angles;
+			this->m_aim_virtual_angles_valid = true;
+		}
+		auto control_angles = this->m_aim_virtual_angles;
+		this->m_aim_last_input_sequence = input_sequence;
+		this->m_aim_last_input_view = view_angles;
 
 		const auto target_angle = [ & ]( const foundation::vec3& point )
 			{
@@ -3221,7 +3255,7 @@ namespace features::aimbot {
 						cfg.humanizer.overshoot_amount, 0.0f, 1.0f ) : 1.0f;
 				this->m_aim_ramp = 0.0f;
 				this->m_aim_wander_phase = this->m_rng.uniform( 0.0f, 6.28f );
-				this->m_aim_wander_freq = this->m_rng.uniform( 3.0f, 7.0f );
+				this->m_aim_wander_freq = this->m_rng.uniform( 0.35f, 0.85f );
 			}
 		}
 		this->m_aim_last_seen = now;
@@ -3230,13 +3264,23 @@ namespace features::aimbot {
 
 		auto factor = cfg.smoothing > 1 ? static_cast<float>( cfg.smoothing ) : 1.0f;
 		const auto overshoot_response = h > 0.0f ? this->m_aim_overshoot : 1.0f;
-		const auto response_alpha = std::clamp(
-			overshoot_response / factor, 0.001f, 1.0f );
+		if ( h > 0.0f )
+			this->m_aim_ramp = std::min( 1.0f, this->m_aim_ramp + dt / 0.055f );
+		const auto response_ramp = h > 0.0f
+			? 0.75f + 0.25f * this->m_aim_ramp : 1.0f;
+		const auto command_response = std::clamp(
+			response_ramp / factor, 0.001f, 1.0f );
+		const auto command_fraction = std::clamp(
+			dt / game::rules::simulation_step, 0.01f, 4.0f );
+		const auto response_alpha = command_response >= 1.0f
+			? 1.0f : 1.0f - std::pow( 1.0f - command_response, command_fraction );
+		const auto prediction_response = std::clamp(
+			response_alpha * overshoot_response, 0.001f, 1.0f );
 
 		if ( cfg.prediction.enabled )
 		{
 			this->m_aim_tracking_lag = std::clamp(
-				( 1.0f - response_alpha ) * ( this->m_aim_tracking_lag + dt ), 0.0f, 0.12f );
+				( 1.0f - prediction_response ) * ( this->m_aim_tracking_lag + dt ), 0.0f, 0.12f );
 
 			auto target_velocity = tgt.player->velocity;
 			auto local_velocity = app::context().process.load<foundation::vec3>(
@@ -3342,21 +3386,29 @@ namespace features::aimbot {
 				cfg.humanizer.deadzone, 0.0f, 2.0f ) ) return;
 
 			this->m_aim_wander_phase += this->m_aim_wander_freq * dt;
+			const auto settle = std::clamp( ( dist - 0.20f ) / 0.90f, 0.0f, 1.0f );
 			const auto wander_amp = h * std::clamp(
-				cfg.humanizer.wind, 0.0f, 20.0f ) * 0.03f
-				* std::min( dist + 0.3f, 2.0f );
-			delta_x += wander_amp * std::sin( this->m_aim_wander_phase );
-			delta_y += wander_amp * 0.7f * std::cos( this->m_aim_wander_phase * 1.3f );
+				cfg.humanizer.wind, 0.0f, 20.0f ) * 0.004f
+				* std::min( dist, 2.0f ) * settle * settle;
+			const auto micro_amp = h * std::clamp(
+				cfg.humanizer.jitter, 0.0f, 3.0f ) * 0.0025f
+				* settle * settle;
+			delta_x += wander_amp * std::sin( this->m_aim_wander_phase )
+				+ micro_amp * std::sin( this->m_aim_wander_phase * 1.73f + 0.7f );
+			delta_y += wander_amp * 0.7f * std::cos(
+				this->m_aim_wander_phase * 1.3f )
+				+ micro_amp * std::cos( this->m_aim_wander_phase * 1.47f );
 		}
 
-		delta_x /= factor;
-		delta_y /= factor;
+		delta_x *= response_alpha;
+		delta_y *= response_alpha;
 		const auto max_step = std::clamp( cfg.humanizer.max_step, 1.0f, 90.0f );
+		const auto sampled_max_step = max_step * command_fraction;
 		const auto step_length = std::sqrt( delta_x * delta_x + delta_y * delta_y );
-		if ( h > 0.0f && step_length > max_step )
+		if ( h > 0.0f && step_length > sampled_max_step )
 		{
-			delta_x *= max_step / step_length;
-			delta_y *= max_step / step_length;
+			delta_x *= sampled_max_step / step_length;
+			delta_y *= sampled_max_step / step_length;
 		}
 
 		if ( h > 0.0f )
@@ -3391,14 +3443,6 @@ namespace features::aimbot {
 
 		auto move_x = -delta_y / deg_per_pixel;
 		auto move_y = delta_x / deg_per_pixel;
-
-		if ( h > 0.0f )
-		{
-
-			const auto jitter = std::clamp( cfg.humanizer.jitter, 0.0f, 3.0f );
-			move_x += this->m_rng.uniform( -jitter, jitter ) * h;
-			move_y += this->m_rng.uniform( -jitter, jitter ) * h;
-		}
 
 		const auto accumulated_x = ( snap ? 0.0f : this->m_aim_error.x ) + move_x;
 		const auto accumulated_y = ( snap ? 0.0f : this->m_aim_error.y ) + move_y;
@@ -3449,13 +3493,19 @@ namespace features::aimbot {
 						return;
 				}
 			}
-			const auto rcs_dx = static_cast<int>( this->m_rcs_pending_mouse.x );
-			const auto rcs_dy = static_cast<int>( this->m_rcs_pending_mouse.y );
+			const auto rcs_limit = std::max( this->m_rcs_input_step, 1 );
+			const auto rcs_dx = std::clamp(
+				static_cast<int>( this->m_rcs_pending_mouse.x ), -rcs_limit, rcs_limit );
+			const auto rcs_dy = std::clamp(
+				static_cast<int>( this->m_rcs_pending_mouse.y ), -rcs_limit, rcs_limit );
 			if ( app::context().input.pointer(
 				dx + rcs_dx, dy + rcs_dy,
 				platform::windows::pointer_action::relative_move ) )
 			{
 				this->m_aim_error = remainder;
+				this->m_aim_virtual_angles.x += static_cast<float>( dy ) * deg_per_pixel;
+				this->m_aim_virtual_angles.y = foundation::wrap_yaw(
+					this->m_aim_virtual_angles.y - static_cast<float>( dx ) * deg_per_pixel );
 				this->m_aim_last_input_sequence = input_sequence;
 				this->m_aim_last_input_view = view_angles;
 				this->m_aim_last_input_time = now;
