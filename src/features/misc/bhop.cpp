@@ -41,6 +41,7 @@ namespace features::misc {
 					&& game::local_player().alive( );
 				const auto restore = game_active && player_ready
 					&& !app::context().menu.is_open( )
+					&& !game::input_bindings().text_entry_active( )
 					&& app::context().input.key_gate_held( );
 				app::context().input.set_key_gate( jump_key, false );
 				if ( restore && jump_key ) app::context().input.key( jump_key, true );
@@ -75,16 +76,19 @@ namespace features::misc {
 		const auto pawn = game::local_player().pawn( );
 		const auto player_ready = pawn && game::local_player().alive( );
 		const auto menu_open = app::context().menu.is_open( );
+		const auto text_entry_active = game::input_bindings().text_entry_active( );
 		const auto jump_key = this->m_jump_key;
 		const auto activation_is_jump = activation_key != 0
 			&& activation_key == jump_key;
 		const auto activation_held = activation_key != 0
 			&& ( ::GetAsyncKeyState( activation_key ) & 0x8000 ) != 0;
-		const auto gate_requested = game_active && !menu_open && player_ready
+		const auto gate_requested = game_active && !menu_open
+			&& !text_entry_active && player_ready
 			&& bunny_cfg.enabled && jump_key != 0
 			&& ( activation_is_jump || activation_held );
 		const auto restore_physical_jump = this->m_gate_requested
-			&& !gate_requested && game_active && !menu_open && player_ready
+			&& !gate_requested && game_active && !menu_open
+			&& !text_entry_active && player_ready
 			&& app::context().input.key_gate_held( );
 		app::context().input.set_key_gate( jump_key, gate_requested );
 		if ( restore_physical_jump && jump_key )
@@ -95,7 +99,8 @@ namespace features::misc {
 			&& app::context().input.key_gate_ready( )
 			&& ( activation_is_jump
 				? app::context().input.key_gate_held( ) : activation_held );
-		const auto edge_active = game_active && !menu_open && player_ready
+		const auto edge_active = game_active && !menu_open
+			&& !text_entry_active && player_ready
 			&& edge_cfg.enabled && edge_cfg.activation_key > 0 && jump_key != 0
 			&& ( ::GetAsyncKeyState( edge_cfg.activation_key ) & 0x8000 );
 

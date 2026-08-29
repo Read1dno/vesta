@@ -633,6 +633,7 @@ namespace features::misc {
 				+ SCHEMA( "CCSWeaponBaseVData", "m_WeaponType"_id ) )
 			: std::uint32_t{};
 		const auto usable = !app::context().menu.is_open( )
+			&& !game::input_bindings().text_entry_active( )
 			&& game_has_input_focus( ) && controller && pawn
 			&& game::local_player().alive( ) && weapon
 			&& weapon_type == game::rules::equipment_class::throwable

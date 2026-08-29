@@ -202,6 +202,7 @@ namespace features::misc {
 		const auto usable = pawn && game::local_player().alive( )
 			&& game::rules::is_firearm( game::local_player().weapon_type( ) )
 			&& !app::context().menu.is_open( )
+			&& !game::input_bindings().text_entry_active( )
 			&& app::context().overlay.combat_input_ready( );
 		if ( !usable )
 		{

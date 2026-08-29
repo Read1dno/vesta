@@ -53,6 +53,7 @@ namespace game {
 		[[nodiscard]] input_binding resolve( input_action action,
 			std::uint16_t preferred_virtual_key = 0 );
 		[[nodiscard]] std::vector<input_binding> candidates( input_action action );
+		[[nodiscard]] bool text_entry_active( );
 
 	private:
 		void refresh_locked( std::chrono::steady_clock::time_point now );
@@ -66,6 +67,14 @@ namespace game {
 		std::ptrdiff_t m_record_to_name_bias{};
 		bool m_binding_layout_valid{};
 		std::chrono::steady_clock::time_point m_next_refresh{};
+		std::uintptr_t m_hud_global{};
+		std::uintptr_t m_hud_chat{};
+		std::uintptr_t m_hud_chat_vtable{};
+		std::ptrdiff_t m_chat_active_offset{ -1 };
+		std::uint32_t m_chat_process_id{};
+		bool m_chat_active{};
+		std::chrono::steady_clock::time_point m_next_chat_lookup{};
+		std::chrono::steady_clock::time_point m_next_chat_sample{};
 	};
 
 	inline live_input_bindings& input_bindings( )
