@@ -174,6 +174,17 @@ namespace features::visuals {
 			return;
 		}
 
+		// Periodic cleanup of stale pose cache entries
+		static float last_purge = 0.f;
+		if ( current_time - last_purge > 1.0f )
+		{
+			last_purge = current_time;
+			std::erase_if( this->m_last_poses, [ & ]( const auto& kv )
+			{
+				return current_time - kv.second.last_seen_time > 2.0f;
+			} );
+		}
+
 		active_bomb_info bomb_info{};
 		if ( cfg.m_info_flags.enabled &&
 			cfg.m_info_flags.has( config::visual_profile::player::info_flags::flag::bomb_damage ) )
@@ -185,6 +196,7 @@ namespace features::visuals {
 			bomb_info.baked_site = sampled.baked_site;
 		}
 
+		// ----- first pass: threat highlights (with cache) -----
 		for ( const auto& pose : frame->players )
 		{
 			if ( pose.source_index >= frame->world->size( ) ) continue;
@@ -193,20 +205,36 @@ namespace features::visuals {
 			{
 				continue;
 			}
-			if ( !player.legit_visible ) continue;
 
-			if ( !pose.bones.is_valid( ) )
+			auto& cache = this->m_last_poses[ player.controller ];
+			const bool bones_ok = pose.bones.is_valid( );
+			const bool visible_ok = player.legit_visible;
+
+			if ( bones_ok )
 			{
-				continue;
+				cache.bones = pose.bones;
+				cache.bounds = game::projection_bounds( ).get( pose.bones );
+				cache.last_seen_time = current_time;
+				cache.valid = cache.bounds.is_valid( );
 			}
+
+			const bool use_cache = !bones_ok
+				&& cache.valid
+				&& ( current_time - cache.last_seen_time ) <= k_pose_grace_seconds;
+
+			if ( !bones_ok && !use_cache ) continue;
+			if ( !visible_ok && !use_cache ) continue;
+
+			const auto& bones = use_cache ? cache.bones : pose.bones;
 
 			const auto opacity = player.legit_opacity
 				* ( player.invulnerable ? 0.45f : 1.0f );
 			zdraw::draw_list player_draw{ draw_list.m_im_draw_list, opacity };
 			this->paint_threat_highlights(
-				player_draw, pose.bones, player, current_time );
+				player_draw, bones, player, current_time );
 		}
 
+		// ----- second pass: main ESP (with cache) -----
 		for ( const auto& pose : frame->players )
 		{
 			if ( pose.source_index >= frame->world->size( ) ) continue;
@@ -215,19 +243,35 @@ namespace features::visuals {
 			{
 				continue;
 			}
-			if ( !player.legit_visible ) continue;
 
-			const auto& bones = pose.bones;
-			if ( !bones.is_valid( ) )
+			auto& cache = this->m_last_poses[ player.controller ];
+			const bool bones_ok = pose.bones.is_valid( );
+			const bool visible_ok = player.legit_visible;
+
+			if ( bones_ok )
 			{
-				continue;
+				cache.bones = pose.bones;
+				cache.bounds = game::projection_bounds( ).get( pose.bones );
+				cache.last_seen_time = current_time;
+				cache.valid = cache.bounds.is_valid( );
 			}
 
-			const auto bounds = game::projection_bounds().get( bones );
+			const bool use_cache = !bones_ok
+				&& cache.valid
+				&& ( current_time - cache.last_seen_time ) <= k_pose_grace_seconds;
+
+			if ( !bones_ok && !use_cache ) continue;
+			if ( !visible_ok && !use_cache ) continue;
+
+			const auto& bones = use_cache ? cache.bones : pose.bones;
+			const auto bounds = use_cache ? cache.bounds
+				: game::projection_bounds( ).get( bones );
+
 			if ( !bounds.is_valid( ) )
 			{
 				continue;
 			}
+
 			const auto opacity = player.legit_opacity
 				* ( player.invulnerable ? 0.45f : 1.0f );
 			zdraw::draw_list player_draw{ draw_list.m_im_draw_list, opacity };
