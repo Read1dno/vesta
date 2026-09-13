@@ -84,6 +84,8 @@ private:
 	ULONGLONG m_next_visibility_refresh_tick{};
 	ULONGLONG m_next_z_order_repair_tick{};
 	bool m_visible{};
+	ULONGLONG m_last_visible_tick{};                          // grace period
+	static constexpr ULONGLONG k_visibility_grace_ms = 250;   // 250 ms grace
 	HWINEVENTHOOK m_foreground_hook{};
 	HWINEVENTHOOK m_location_hook{};
 	HWINEVENTHOOK m_lifetime_hook{};

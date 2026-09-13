@@ -136,6 +136,7 @@ bool window_tracker::initialize( const std::uint32_t process_id )
 	m_process_id = process_id;
 	m_dxgi_proxy = find_dxgi_proxy_window( m_process_id );
 	m_target = find_target( );
+	m_last_visible_tick = ::GetTickCount64( );          // grace period
 	if ( !m_target )
 	{
 		m_failure_stage = 1;
@@ -242,10 +243,24 @@ bool window_tracker::poll( update& result )
 
 	if ( m_visibility_pending.exchange( false, std::memory_order_acq_rel ) )
 	{
+		const bool candidate = !force_hidden && calculate_visibility( );
 
-		const bool visible = !force_hidden && calculate_visibility( );
-		result.visibility_changed = visible != m_visible;
-		m_visible = visible;
+		if ( candidate )
+		{
+			m_last_visible_tick = now;
+			result.visibility_changed = !m_visible;
+			m_visible = true;
+		}
+		else
+		{
+			// Only hide after the grace period has expired
+			if ( now - m_last_visible_tick > k_visibility_grace_ms )
+			{
+				result.visibility_changed = m_visible;
+				m_visible = false;
+			}
+			// else keep previous m_visible (grace active)
+		}
 	}
 
 	const bool z_order_audit =
