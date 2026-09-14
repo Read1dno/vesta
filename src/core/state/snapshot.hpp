@@ -57,6 +57,10 @@ public:
 	{
 		return m_local_spectated.load( std::memory_order_acquire );
 	}
+	[[nodiscard]] bool local_spectating_other( ) const noexcept
+	{
+		return m_local_spectating_other.load( std::memory_order_acquire );
+	}
 	[[nodiscard]] std::vector<player_snapshot> seed_players( std::uintptr_t local_pawn,
 		std::uintptr_t local_controller, int local_team, bool free_for_all ) const;
 	void seed_players_into( std::vector<player_snapshot>& destination,
@@ -82,6 +86,7 @@ private:
 	std::atomic<std::shared_ptr<const std::vector<spectator_snapshot>>> m_spectators{
 		std::make_shared<std::vector<spectator_snapshot>>( ) };
 	std::atomic_bool m_local_spectated{};
+	std::atomic_bool m_local_spectating_other{};
 	std::atomic<std::uint32_t> m_script_demand{};
 	std::unordered_map<std::uintptr_t, float> m_last_emit_sound{};
 	std::unordered_map<std::uintptr_t, std::chrono::steady_clock::time_point> m_last_radar_seen{};

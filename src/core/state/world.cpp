@@ -1547,6 +1547,19 @@ void world_sampler::collect_spectators( const std::vector<entity_directory::cach
 
 	std::vector<spectator_snapshot> fresh{};
 	fresh.reserve( 16 );
+	const auto local_controller = game::local_player().controller( );
+	bool local_spectating_other = false;
+
+	if ( game::local_player().alive( ) )
+	{
+		this->m_local_spectating_other.store( false, std::memory_order_release );
+		this->m_local_spectated.store( false, std::memory_order_release );
+		this->m_spectators.store(
+			std::make_shared<const std::vector<spectator_snapshot>>( ),
+			std::memory_order_release );
+		return;
+	}
+	
 	const auto local_pawn = game::local_player().pawn( );
 	if ( local_pawn )
 	{
@@ -1568,6 +1581,51 @@ void world_sampler::collect_spectators( const std::vector<entity_directory::cach
 			const remote_span controller( entry.ptr, controller_first, controller_last );
 
 			if ( controller.get<bool>( entry.ptr, alive_offset ) ) continue;
+
+			if ( local_controller && entry.ptr == local_controller )
+			{
+				const auto observer_pawn_handle = controller.get<std::uint32_t>(
+					entry.ptr, observer_pawn_offset );
+				if ( observer_pawn_handle && observer_pawn_handle != 0xffffffffu )
+				{
+					const auto observer_pawn =
+						game::entity_index().lookup( observer_pawn_handle );
+					if ( observer_pawn )
+					{
+						const auto observer_services =
+							app::context().process.load<std::uintptr_t>(
+								observer_pawn + observer_services_offset );
+						if ( observer_services )
+						{
+							const auto observer_first =
+								std::min( observer_mode_offset, observer_target_offset );
+							const auto observer_last = std::max(
+								observer_mode_offset + sizeof( std::int32_t ),
+								observer_target_offset + sizeof( std::uint32_t ) );
+							const remote_span observer(
+								observer_services, observer_first, observer_last );
+							const auto mode = observer.get<std::int32_t>(
+								observer_services, observer_mode_offset );
+							const auto target_handle = observer.get<std::uint32_t>(
+								observer_services, observer_target_offset );
+							const bool watching =
+								mode == 1 || mode == 2 || mode == 3 || mode == 4;
+							if ( watching && target_handle
+								&& target_handle != 0xffffffffu )
+							{
+								const auto target_pawn =
+									game::entity_index().lookup( target_handle );
+								if ( target_pawn && target_pawn != local_pawn )
+								{
+									local_spectating_other = true;
+								}
+							}
+						}
+					}
+				}
+				continue;
+			}
+
 			const auto observer_pawn_handle = controller.get<std::uint32_t>(
 				entry.ptr, observer_pawn_offset );
 			if ( !observer_pawn_handle || observer_pawn_handle == 0xffffffffu )
@@ -1592,7 +1650,7 @@ void world_sampler::collect_spectators( const std::vector<entity_directory::cach
 				observer_target_offset + sizeof( std::uint32_t ) );
 			const remote_span observer( observer_services, observer_first, observer_last );
 			const auto mode = observer.get<std::int32_t>( observer_services, observer_mode_offset );
-			if ( mode == 0 )
+			if ( mode < 1 || mode > 4 )
 			{
 				continue;
 			}
@@ -1614,6 +1672,8 @@ void world_sampler::collect_spectators( const std::vector<entity_directory::cach
 	}
 
 	auto snapshot = std::make_shared<const std::vector<spectator_snapshot>>( std::move( fresh ) );
+	this->m_local_spectating_other.store(
+		local_spectating_other, std::memory_order_release );
 	this->m_local_spectated.store( !snapshot->empty( ), std::memory_order_release );
 	this->m_spectators.store( std::move( snapshot ), std::memory_order_release );
 }

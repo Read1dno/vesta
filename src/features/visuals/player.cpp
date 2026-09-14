@@ -166,7 +166,7 @@ namespace features::visuals {
 			return;
 		}
 		if ( cfg.spectator_sync
-			&& game::world( ).local_spectated( ) ) return;
+			&& game::world( ).local_spectating_other( ) ) return;
 
 		const auto current_time = game::local_player().game_time( );
 		if ( current_time <= 0.0f )

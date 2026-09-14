@@ -1852,7 +1852,7 @@ void overlay_t::run()
 
 		const auto spectator_suppressed =
 			config::visual_settings.m_player.spectator_sync
-			&& game::world().local_spectated();
+			&& game::world().local_spectating_other();
 		if (game::local_player().valid() && !spectator_suppressed)
 		{
 

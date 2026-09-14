@@ -60,6 +60,17 @@ namespace features::visuals {
 			};
 
 			std::unordered_map<std::uintptr_t, animation_data> m_animations{};
+
+			struct last_pose_cache
+			{
+				game::skeleton_reader::data     bones{};
+				game::bounds_projector::data    bounds{};
+				std::chrono::steady_clock::time_point last_seen{};
+				bool valid = false;
+			};
+
+			std::unordered_map<std::uintptr_t, last_pose_cache> m_last_poses{};
+			static constexpr float k_pose_grace_seconds = 1.0f;   // full second
 		};
 
 		class item_t
