@@ -90,7 +90,7 @@ namespace game {
 				bones, reused } );
 		}
 
-		std::erase_if( this->m_last_valid,
+		std::_Erase_remove_if( this->m_last_valid,
 			[ & ]( const auto& entry )
 			{
 				return now - entry.second.timestamp > k_pose_fallback_lifetime;
