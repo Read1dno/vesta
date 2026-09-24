@@ -202,6 +202,8 @@ inline std::unordered_map<ImGuiID, float> g_card_height_animations{};
 
 inline std::unordered_map<ImGuiID, float> g_hover_animations{};
 
+inline std::unordered_map<ImGuiID, float> g_row_hover_time{};
+
 inline std::unordered_map<ImGuiID, float> g_active_animations{};
 
 inline std::unordered_map<ImGuiID, std::array<char, 10>> g_color_hex{};
@@ -462,24 +464,29 @@ std::size_t utf8_decode(const char *begin, const char *end, unsigned int &out);
 void draw_section_title(ImDrawList *draw, ImVec2 position, float line_end_x, std::string_view title,
                         bool uppercase = false);
 
-void begin_row(const char *label, float control_width);
+void begin_row(const char *label, float control_width, const char *description = nullptr);
 
 void clipped_row_text(const std::string_view text, const ImVec4 color = k_text_muted);
 
 void end_row();
 
+void draw_row_tooltip(const char *description, const ImVec2 label_min, const float label_max_x);
+
+
 void toggle_control(bool &value);
 
-void toggle_row(const char *label, bool &value);
+void toggle_row(const char *label, bool &value,
+                const char *description = nullptr);
 
-void toggle_color_row(const char *label, bool &value, zdraw::rgba &color);
+void toggle_color_row(const char *label, bool &value, zdraw::rgba &color,
+                      const char *description = nullptr);
 
 template <typename value_t>
 void slider_row_impl(const char *label, value_t &value, value_t minimum, value_t maximum, const char *suffix,
-                     value_t step)
+                     value_t step, const char *description = nullptr)
 {
     constexpr auto control_width = 130.0f;
-    begin_row(label, control_width);
+    begin_row(label, control_width, description);
     const auto id = ImGui::GetID("##slider");
     const auto range = static_cast<double>(maximum) - static_cast<double>(minimum);
     const auto quantum = std::max(static_cast<double>(step), std::numeric_limits<double>::epsilon());
@@ -646,21 +653,23 @@ void slider_row_impl(const char *label, value_t &value, value_t minimum, value_t
     end_row();
 }
 
-void slider_row(const char *label, int &value, int minimum, int maximum, const char *suffix = "");
+void slider_row(const char *label, int &value, int minimum, int maximum, const char *suffix = "",
+                const char *description = nullptr);
 
-void slider_row(const char *label, float &value, float minimum, float maximum, const char *suffix,
-                float step);
+void slider_row(const char *label, float &value, float minimum, float maximum, const char *suffix, float step,
+                const char *description = nullptr);
 
-void slider_percent_row(const char *label, float &value);
+void slider_percent_row(const char *label, float &value, const char *description = nullptr);
 
 void draw_checkmark(ImDrawList *draw, ImVec2 center, ImU32 color, float amount, float thickness = 1.7f);
 
 void draw_dropdown_chevron(ImDrawList *draw, ImVec2 center, ImU32 color, float open_amount);
 
-void select_row(const char *label, int &value, std::span<const char *const> options);
+void select_row(const char *label, int &value, std::span<const char *const> options,
+                const char *description = nullptr);
 
 void multiselect_row(const char *label, int &mask, std::span<const std::pair<const char *, int>> options,
-                     int all_mask);
+                     int all_mask, const char *description = nullptr);
 
 void aim_parts_row(int &mask);
 
@@ -675,11 +684,12 @@ enum class row_action_icon
 
 void draw_action_icon(ImDrawList *draw, row_action_icon icon, ImVec2 center, ImU32 color);
 
-bool button_row(const char *label, const char *text, row_action_icon icon = row_action_icon::none);
+bool button_row(const char *label, const char *text, row_action_icon icon = row_action_icon::none,
+                const char *description = nullptr);
 
 int filter_filename_char(ImGuiInputTextCallbackData *data);
 
-void text_input_row(const char *label, char *buffer, std::size_t size);
+void text_input_row(const char *label, char *buffer, std::size_t size, const char *description = nullptr);
 
 std::string key_name(int key);
 
@@ -687,19 +697,21 @@ std::string key_name(int key);
 
 [[nodiscard]] int pressed_bind_key();
 
-void keybind_row(const char *label, int &value);
+void keybind_row(const char *label, int &value, const char *description = nullptr);
 
 void color_picker_popup(zdraw::rgba &color, ImVec2 item_min, ImVec2 item_max, ImGuiID picker_id);
 
-void color_row(const char *label, zdraw::rgba &color);
+void color_row(const char *label, zdraw::rgba &color, const char *description = nullptr);
 
 void humanizer_preview(int amount, int smoothing, const config::combat_profile::humanizer_settings &settings);
 
 void settings_popup(ImVec2 anchor_min, ImVec2 anchor_max, int rows, callback_ref callback);
 
-void settings_popup_row(const char *label, int rows, callback_ref callback);
+void settings_popup_row(const char *label, int rows, callback_ref callback,
+                        const char *description = nullptr);
 
-void toggle_popup_row(const char *label, bool &value, int rows, callback_ref callback);
+void toggle_popup_row(const char *label, bool &value, int rows, callback_ref callback,
+                      const char *description = nullptr);
 
 inline constexpr int k_bar_settings_rows = 7;
 

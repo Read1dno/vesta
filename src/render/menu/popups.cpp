@@ -352,10 +352,10 @@ void settings_popup(ImVec2 anchor_min, ImVec2 anchor_max, int rows, callback_ref
     ImGui::PopStyleColor();
 }
 
-void settings_popup_row(const char *label, int rows, callback_ref callback)
+void settings_popup_row(const char *label, int rows, callback_ref callback, const char *description)
 {
     constexpr auto options_width = 28.0f;
-    begin_row(label, options_width);
+    begin_row(label, options_width, description);
     ImGui::InvisibleButton("##settings_options", {options_width, 24.0f});
     const auto options_min = ImGui::GetItemRectMin();
     const auto options_max = ImGui::GetItemRectMax();
@@ -372,12 +372,12 @@ void settings_popup_row(const char *label, int rows, callback_ref callback)
     end_row();
 }
 
-void toggle_popup_row(const char *label, bool &value, int rows, callback_ref callback)
+void toggle_popup_row(const char *label, bool &value, int rows, callback_ref callback, const char *description)
 {
     constexpr auto options_width = 28.0f;
     constexpr auto spacing = 8.0f;
     constexpr auto switch_width = 46.0f;
-    begin_row(label, options_width + spacing + switch_width);
+    begin_row(label, options_width + spacing + switch_width, description);
 
     ImGui::InvisibleButton("##settings_options", {options_width, 24.0f});
     const auto options_min = ImGui::GetItemRectMin();

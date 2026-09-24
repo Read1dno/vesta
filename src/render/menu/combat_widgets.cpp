@@ -34,7 +34,7 @@ void trigger_timing_row(int &delay, int &randomize, float &outlier_chance, int &
         slider_row("Outlier Chance", outlier_chance, 0.0f, 25.0f, "%", 0.5f);
         slider_row("Outlier Delay", outlier_delay, 0, 500, " ms");
         slider_row("Delay After", delay_after, 0, 1000, " ms");
-    });
+    }, "Adds a configurable delay and randomization before and after each trigger shot.");
 }
 
 void prediction_row(config::combat_profile::prediction_settings &prediction)
@@ -42,12 +42,13 @@ void prediction_row(config::combat_profile::prediction_settings &prediction)
     toggle_popup_row("Prediction", prediction.enabled, 2, [&] {
         slider_row("Max Horizon", prediction.max_horizon_ms, 0.0f, 120.0f, " ms", 1.0f);
         toggle_row("Acceleration", prediction.acceleration);
-    });
+    }, "Fires ahead of moving targets by simulating where they will be when the bullet lands.");
 }
 
 void master_row(bool &enabled, int &mode)
 {
-    toggle_popup_row("Master Switch", enabled, 1, [&] { select_row("Mode", mode, activation_modes); });
+    toggle_popup_row("Master Switch", enabled, 1, [&] { select_row("Mode", mode, activation_modes); },
+                     "Turns the combat feature on and controls whether it is always on, held or toggled.");
 }
 
 void damage_override_row(bool &enabled, float &value, int &mode, int &key)
@@ -58,7 +59,7 @@ void damage_override_row(bool &enabled, float &value, int &mode, int &key)
         if (mode != config::combat_profile::activation::always)
             keybind_row("Key", key);
         slider_row("Override Damage", value, 1.0f, 100.0f, "", 1.0f);
-    });
+    }, "Only fires when a shot can deal at least the configured damage to the target.");
 }
 
 void fov_row(int &fixed_fov, config::combat_profile::fov_settings &fov, bool &draw_area, zdraw::rgba &color)
@@ -88,7 +89,7 @@ void fov_row(int &fixed_fov, config::combat_profile::fov_settings &fov, bool &dr
             });
         }
         toggle_color_row("Visualization", draw_area, color);
-    });
+    }, "Limits how far from the crosshair targets can be picked; open for radius modes.");
 }
 
 void humanizer_row(int &amount, int &smoothing, config::combat_profile::humanizer_settings &humanizer)
@@ -112,7 +113,7 @@ void humanizer_row(int &amount, int &smoothing, config::combat_profile::humanize
             slider_row("Jitter", humanizer.jitter, 0.0f, 3.0f, "", 0.05f);
             slider_row("Deadzone", humanizer.deadzone, 0.0f, 2.0f, "°", 0.05f);
         });
-    });
+    }, "Blends in human aim traits like reaction delay, overshoot and jitter on top of the aim path.");
 }
 
 void multipoint_row(bool &enabled, config::combat_profile::multipoint_settings &settings)
@@ -123,7 +124,7 @@ void multipoint_row(bool &enabled, config::combat_profile::multipoint_settings &
         slider_row("Head Scale", settings.head_scale, 0.05f, 0.95f, "", 0.05f);
         slider_row("Body Scale", settings.body_scale, 0.05f, 0.95f, "", 0.05f);
         slider_row("Limbs Scale", settings.limb_scale, 0.05f, 0.95f, "", 0.05f);
-    });
+    }, "Adds extra aim points on each hitbox and can scale them per body part.");
 }
 
 void rcs_row(config::combat_profile::rcs_settings &rcs)
@@ -136,7 +137,7 @@ void rcs_row(config::combat_profile::rcs_settings &rcs)
         slider_row("Smoothness", rcs.smoothness, 0.0f, 100.0f, "%", 1.0f);
         slider_row("Strength Variation", rcs.randomness, 0.0f, 30.0f, "%", 1.0f);
         slider_row("Path Drift", rcs.drift, 0.0f, 30.0f, "%", 1.0f);
-    });
+    }, "Compensates weapon recoil automatically with per-axis strength and human-like variation.");
 }
 
 } // namespace render::menu::combat

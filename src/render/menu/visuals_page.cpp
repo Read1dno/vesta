@@ -52,7 +52,7 @@ void menu_t::draw_visuals()
                 if (p.activation_mode != config::visual_profile::player::always_on)
                     keybind_row("Key", p.activation_key);
                 toggle_row("Spectator Sync", p.spectator_sync);
-            });
+            }, "Draws boxes, health, weapons and more for every visible enemy on your screen.");
             toggle_popup_row("Legit Sync", p.m_legit_sync.enabled, 9, [&] {
                 toggle_row("Direct Visibility", p.m_legit_sync.direct_visible);
                 toggle_row("Radar Spotted", p.m_legit_sync.radar);
@@ -67,7 +67,7 @@ void menu_t::draw_visuals()
                 p.m_legit_sync.pulse_min_opacity = minimum_opacity / 100.0f;
                 p.m_legit_sync.pulse_max_opacity = maximum_opacity / 100.0f;
                 slider_row("Pulse Period", p.m_legit_sync.pulse_period, 0.4f, 5.0f, "s", 0.1f);
-            });
+            }, "Makes enemies appear spotted on radar, visible and audible like legit information.");
         });
 
         card("box", "BOUNDING BOX",
@@ -79,23 +79,27 @@ void menu_t::draw_visuals()
                  p.m_box.style = static_cast<config::visual_profile::player::box::style_type>(style);
                  if (style == 1)
                      slider_row("Corner Length", p.m_box.corner_length, 4.0f, 30.0f, "", 0.5f);
-                 toggle_popup_row("Background Fill", p.m_box.fill, 4, [&] {
-                     color_row("Box Visible Color", p.m_box.visible_color);
-                     color_row("Box Occluded Color", p.m_box.occluded_color);
-                     color_row("Fill Visible Color", p.m_box.fill_visible_color);
-                     color_row("Fill Occluded Color", p.m_box.fill_occluded_color);
-                 });
-             });
+                toggle_popup_row("Background Fill", p.m_box.fill, 4, [&] {
+                    color_row("Box Visible Color", p.m_box.visible_color);
+                    color_row("Box Occluded Color", p.m_box.occluded_color);
+                    color_row("Fill Visible Color", p.m_box.fill_visible_color);
+                    color_row("Fill Occluded Color", p.m_box.fill_occluded_color);
+                }, "Tints the inside of the player box with separate colors for visible and occluded states.");
+            });
         card("details", "DETAILS", 8, [&] {
             toggle_color_row("Show Name", p.m_name.enabled, p.m_name.color);
             toggle_popup_row("Show Weapon", p.m_weapon.enabled, k_weapon_settings_rows,
-                             [&] { player_weapon_settings_rows(p.m_weapon); });
+                             [&] { player_weapon_settings_rows(p.m_weapon); },
+                             "Draws the enemy's current weapon next to their box.");
             toggle_popup_row("Health Bar", p.m_health_bar.enabled, k_bar_settings_rows,
-                             [&] { player_bar_settings_rows(p.m_health_bar, p.m_layout.health); });
+                             [&] { player_bar_settings_rows(p.m_health_bar, p.m_layout.health); },
+                             "Shows a health bar beside the player with a configurable layout.");
             toggle_popup_row("Armor Bar", p.m_armor_bar.enabled, k_bar_settings_rows,
-                             [&] { player_bar_settings_rows(p.m_armor_bar, p.m_layout.armor); });
+                             [&] { player_bar_settings_rows(p.m_armor_bar, p.m_layout.armor); },
+                             "Shows an armor bar beside the player with a configurable layout.");
             toggle_popup_row("Info Flags", p.m_info_flags.enabled, k_info_flag_settings_rows,
-                             [&] { player_info_flag_settings_rows(p.m_info_flags); });
+                             [&] { player_info_flag_settings_rows(p.m_info_flags); },
+                             "Displays text flags like money, flash, kit and scoped state.");
             auto &chams_cfg = config::visual_settings.m_chams;
             // Antialiasing lives in the Chams row's popup: as a plain row it pushed
             // the "Chams Occluded" row out of the card.
@@ -105,19 +109,19 @@ void menu_t::draw_visuals()
                     color_row("Glow Color", chams_cfg.glow_effect.color);
                     slider_row("Glow Radius", chams_cfg.glow_effect.radius, 0.5f, 16.0f, "u", 0.5f);
                     slider_row("Glow Strength", chams_cfg.glow_effect.strength, 0.0f, 1.0f, "", 0.01f);
-                });
+                }, "Makes the enemy model emit light through walls with a configurable color and radius.");
                 toggle_popup_row("Death Shatter", chams_cfg.kill_effect.enabled, 4, [&] {
                     color_row("Particle Color", chams_cfg.kill_effect.color);
                     slider_row("Particle Duration", chams_cfg.kill_effect.duration, 0.2f, 3.0f, "s", 0.05f);
                     slider_row("Particle Size", chams_cfg.kill_effect.size, 1.0f, 8.0f, "px", 0.5f);
                     slider_row("Particle Count", chams_cfg.kill_effect.count, 4, 32);
-                });
+                }, "Bursts the enemy model into particles when they die.");
                 toggle_popup_row("On Hit Chams", chams_cfg.on_shot.enabled, 2, [&] {
                     slider_row("Ghost Duration", chams_cfg.on_shot.duration, 0.1f, 3.0f, "s", 0.05f);
                     settings_popup_row("Ghost Appearance",
                                        chams_material_row_count(chams_cfg.on_shot.appearance),
                                        [&] { chams_material_rows(chams_cfg.on_shot.appearance); });
-                });
+                }, "Shows a fading ghost of the enemy model at the spot of each hit.");
                 settings_popup_row("Occlusion", 2, [&] {
                     toggle_row("Dynamic Doors", chams_cfg.occlude_dynamic_doors);
                     toggle_row("Smoke Occlusion", chams_cfg.occlude_smoke);
@@ -125,10 +129,12 @@ void menu_t::draw_visuals()
             });
             toggle_popup_row("Chams Visible", chams_cfg.visible.enabled,
                              chams_material_row_count(chams_cfg.visible),
-                             [&] { chams_material_rows(chams_cfg.visible); });
+                             [&] { chams_material_rows(chams_cfg.visible); },
+                             "Material applied to enemies you can currently see.");
             toggle_popup_row("Chams Occluded", chams_cfg.invisible.enabled,
                              chams_material_row_count(chams_cfg.invisible),
-                             [&] { chams_material_rows(chams_cfg.invisible); });
+                             [&] { chams_material_rows(chams_cfg.invisible); },
+                             "Material applied to enemies hidden behind walls or smoke.");
         });
         card("skeleton", "SKELETON & HITBOXES", 6, [&] {
             toggle_color_row("Show Skeleton", p.m_skeleton.enabled, p.m_skeleton.visible_color);
@@ -145,12 +151,12 @@ void menu_t::draw_visuals()
                     slider_row("Minimum Glow", p.m_offscreen_arrows.bloom_min_alpha, 0.0f, 1.0f, "", 0.01f);
                     slider_row("Maximum Glow", p.m_offscreen_arrows.bloom_max_alpha, 0.0f, 1.0f, "", 0.01f);
                 });
-            });
+            }, "Points toward enemies that are outside your view so you never lose their position.");
             toggle_popup_row("Threat Hitboxes", p.m_threat_module.enabled, 3, [&] {
                 color_row("Head Hitbox Color", p.m_threat_module.head_color);
                 color_row("Body Hitbox Color", p.m_threat_module.body_color);
                 slider_row("Fill Alpha", p.m_threat_module.fill_alpha, 0.0f, 255.0f, "", 1.0f);
-            });
+            }, "Highlights the enemy's head and body hitboxes through walls.");
             // Sound ESP is a plain on/off row here; every knob lives behind the
             // three-dots popup so it does not turn this tab into a scroll region.
             auto &s = config::visual_settings.m_sound;
@@ -159,19 +165,19 @@ void menu_t::draw_visuals()
                 toggle_row("Local Sync", s.local_sync);
                 slider_row("Duration", s.duration, 0.5f, 4.0f, " s", 0.05f);
                 slider_row("Ring Radius", s.radius, 10.0f, 80.0f, "", 0.5f);
-            });
+            }, "Draws a fading ring where footsteps and other sounds happen.");
         });
     }
     else if (this->m_visual_group == 1)
     {
         auto &p = config::visual_settings.m_item;
         card("item_settings", "SETTINGS", 4, [&] {
-            toggle_row("Enable Item ESP", p.enabled);
+            toggle_row("Enable Item ESP", p.enabled, "Highlights dropped weapons and gear on the ground.");
             slider_row("Max Distance", p.max_distance, 5.0f, 150.0f, "", 1.0f);
             toggle_color_row("Show Icon", p.m_icon.enabled, p.m_icon.color);
             // Distinct from the player row's "Show Name": one is a nickname, the
             // other a weapon name, and they do not translate to the same word.
-            toggle_row("Show Item Name", p.m_name.enabled);
+            toggle_row("Show Item Name", p.m_name.enabled, "Labels each dropped item with its weapon name.");
         });
         card("item_filters", "FILTERS", 6, [&] {
             toggle_row("Rifles", p.m_filters.rifles);
@@ -186,16 +192,19 @@ void menu_t::draw_visuals()
     {
         auto &p = config::visual_settings.m_projectile;
         card("projectile_elements", "VISUAL ELEMENTS", 5, [&] {
-            toggle_row("Enable Projectiles", p.enabled);
+            toggle_row("Enable Projectiles", p.enabled,
+                       "Shows live grenades and their timers for both teams.");
             static constexpr const char *display_modes[]{"Indicator", "Text Only"};
-            select_row("Display Mode", p.display_mode, display_modes);
+            select_row("Display Mode", p.display_mode, display_modes,
+                       "Chooses between a colored icon and a text label for projectiles.");
             toggle_row(p.display_mode == config::visual_profile::projectile::text_only ? "Show Text"
                                                                                        : "Show Icon",
                        p.show_icon);
             toggle_row(p.display_mode == config::visual_profile::projectile::text_only ? "Effect Timer"
                                                                                        : "Effect Timer Ring",
                        p.show_timer_ring);
-            toggle_row("Inferno Bounds", p.show_inferno_bounds);
+            toggle_row("Inferno Bounds", p.show_inferno_bounds,
+                       "Outlines the area burning from a Molotov or Incendiary.");
         });
         card("projectile_colors", "COLORS", 5, [&] {
             color_row("HE Grenade", p.color_he);
@@ -225,14 +234,14 @@ void menu_t::draw_visuals()
             toggle_popup_row("Show Planted", p.show_planted_bomb, 2, [&] {
                 color_row("Planted Color", p.bomb_color_t);
                 color_row("Defusing Color", p.bomb_color_ct);
-            });
+            }, "Marks the planted bomb on the world with its defuse timer.");
             toggle_row(p.display_mode == config::visual_profile::bomb::text_only ? "World Timer"
                                                                                  : "World Timer Ring",
                        p.show_timer);
             toggle_popup_row("Bomb Info Panel", p.show_info_panel, 2, [&] {
                 color_row("Timer Color", p.timer_text_color);
                 color_row("Panel Background", p.panel_background);
-            });
+            }, "Shows a compact panel with the bomb timer and defuse progress.");
         });
         card("bomb_safe_zone", "SAFE ZONE (BAKED)", 1, [&] {
             toggle_popup_row("Safe Zone Contour", p.show_safe_zone, 4, [&] {
@@ -240,7 +249,7 @@ void menu_t::draw_visuals()
                 slider_row("Gradient Bands", p.safe_zone_bands, 1, 8);
                 slider_row("Band Step", p.safe_zone_band_step, 4.0f, 40.0f, "HP", 1.0f);
                 slider_row("Render Radius", p.safe_zone_draw_radius, 200.0f, 2500.0f, "u", 10.0f);
-            });
+            }, "Outlines how far the bomb blast can still deal damage.");
         });
     }
     else if (this->m_visual_group == 4)
@@ -257,7 +266,7 @@ void menu_t::draw_visuals()
                                static_cast<int>(config::visual_profile::radar::toggle));
                 if (p.activation_mode != config::visual_profile::radar::always_on)
                     keybind_row("Key", p.activation_key);
-            });
+            }, "Draws enemy positions, health and weapons on the in-game radar.");
             toggle_color_row("Player Names", p.show_names, p.name_color);
             toggle_color_row("Player Health", p.show_health, p.health_color);
             toggle_color_row("Player Armor", p.show_armor, p.armor_color);
@@ -271,7 +280,7 @@ void menu_t::draw_visuals()
             toggle_popup_row("Text Outline", p.text_outline, 2, [&] {
                 color_row("Outline Color", p.text_outline_color);
                 slider_row("Outline Thickness", p.text_outline_thickness, 0.5f, 3.0f, " px", 0.5f);
-            });
+            }, "Adds an outline to radar text for readability.");
         });
         card_in_column("radar_grenades", "RADAR GRENADES", 3, 1, [&] {
             toggle_popup_row("Grenade Markers", p.show_projectiles, 6, [&] {
@@ -281,16 +290,16 @@ void menu_t::draw_visuals()
                 color_row("Molotov Color", p.molotov_color);
                 color_row("Decoy Color", p.decoy_color);
                 slider_row("Information Scale", p.information_scale, 0.5f, 1.5f, "", 0.05f);
-            });
+            }, "Shows grenade icons on the radar with per-type colors.");
             toggle_popup_row("Grenade Trajectories", p.show_trajectories, 2, [&] {
                 slider_row("Line Thickness", p.trajectory_thickness, 0.5f, 6.0f, " px", 0.25f);
                 slider_row("End Point Size", p.trajectory_endpoint_size, 1.0f, 10.0f, " px", 0.5f);
-            });
+            }, "Draws predicted grenade flight paths on the radar.");
             toggle_popup_row("Grenade Zones", p.show_grenade_zones, 3, [&] {
                 slider_row("Fill Opacity", p.zone_fill_alpha, 0.0f, 100.0f, "%", 1.0f);
                 slider_row("Outline Opacity", p.zone_outline_alpha, 0.0f, 100.0f, "%", 1.0f);
                 slider_row("Outline Thickness", p.zone_outline_thickness, 0.5f, 5.0f, " px", 0.25f);
-            });
+            }, "Shows grenade effect zones like smoke and molotov areas on the radar.");
         });
     }
     else if (this->m_visual_group == 5)
@@ -318,7 +327,7 @@ void menu_t::draw_visuals()
                     slider_row("Fade Near", tracers.fade_near, 5.0f, 200.0f, "u", 1.0f);
                     slider_row("Fade Far", tracers.fade_far, 50.0f, 500.0f, "u", 1.0f);
                 });
-            });
+            }, "Draws the bullet flight path between your shots and their impact points.");
 
             auto &marker = general.m_hitmarker;
             toggle_popup_row("World Hitmarker", marker.enabled, 3, [&] {
@@ -329,7 +338,7 @@ void menu_t::draw_visuals()
                     slider_row("Marker Thickness", marker.thickness, 1.0f, 4.0f, "", 0.25f);
                 });
                 slider_row("Marker Duration", marker.duration, 0.15f, 1.5f, "s", 0.05f);
-            });
+            }, "Draws a marker at the impact point of each confirmed hit.");
 
             static constexpr std::array<const char *, 5> hitsound_styles{"Soft", "Glass", "Pluck", "Crisp",
                                                                          "Flesh"};
@@ -345,7 +354,7 @@ void menu_t::draw_visuals()
                     slider_row("Damage Duration", sound.damage_duration, 0.15f, 2.0f, "s", 0.05f);
                     slider_row("Damage Rise", sound.damage_rise, 0.0f, 100.0f, "px", 1.0f);
                 });
-            });
+            }, "Plays a hit confirmation sound and can show floating damage numbers.");
         });
 
         auto &no_flash = config::visual_settings.m_no_flash;
@@ -354,13 +363,14 @@ void menu_t::draw_visuals()
                 slider_row("Render Distance", no_flash.max_distance, 200.0f, 3000.0f, "", 10.0f);
                 color_row("Dimming Overlay Color", no_flash.background_color);
                 color_row("Wireframe Color", no_flash.wireframe_color);
-            });
+            }, "Draws a wireframe world while flashed so you keep your orientation.");
         });
 
         auto &no_smoke = config::visual_settings.m_no_smoke;
         card("no_smoke", "NO SMOKE (WIREFRAME)", 1, [&] {
             toggle_popup_row("Enable Visual No Smoke", no_smoke.enabled, 1,
-                             [&] { color_row("Smoke Wireframe Color", no_smoke.wireframe_color); });
+                             [&] { color_row("Smoke Wireframe Color", no_smoke.wireframe_color); },
+                             "Draws smoke volumes as wireframes so you can see through them.");
         });
     }
     else
@@ -374,20 +384,20 @@ void menu_t::draw_visuals()
                 toggle_row("T-Style", p.t_style);
                 slider_row("Length", p.length, 1.0f, 50.0f, "", 0.5f);
                 slider_row("Gap", p.gap, 0.0f, 50.0f, "", 0.5f);
-            });
+            }, "Draws the crosshair line segments with adjustable length and gap.");
             slider_row("Thickness", p.thickness, 1.0f, 10.0f, "", 0.25f);
         });
         card("crosshair_colors", "COLORS", 3, [&] {
             toggle_popup_row("Draw Outline", p.outline, 2, [&] {
                 color_row("Outline Color", p.outline_color);
                 slider_row("Outline Thickness", p.outline_thickness, 0.5f, 3.0f, "", 0.5f);
-            });
+            }, "Adds an outline around the crosshair for visibility on any background.");
             color_row("Primary Color", p.color);
             toggle_popup_row("Penetration Indicator", p.penetration_enabled, 3, [&] {
                 color_row("Can Penetrate", p.penetration_color_yes);
                 color_row("Cannot Penetrate", p.penetration_color_no);
                 slider_row("Min Damage", p.penetration_min_damage, 1.0f, 200.0f, "", 1.0f);
-            });
+            }, "Colors the crosshair to show whether the wall between you and the target can be penetrated.");
         });
     }
 

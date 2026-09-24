@@ -45,7 +45,7 @@ void menu_t::draw_misc()
         card_in_column("interface", "INTERFACE", 3, 0, [&] {
             static constexpr const char *languages[]{"English", "Русский", "简体中文", "繁體中文"};
             const int previous = p.language;
-            select_row("Language", p.language, languages);
+            select_row("Language", p.language, languages, "Switches the whole interface language; applies immediately and is saved to the config.");
             if (p.language != previous)
             {
                 p.language = std::clamp(p.language, 0, static_cast<int>(render::localization::id::count) - 1);
@@ -58,9 +58,10 @@ void menu_t::draw_misc()
                     return std::abs(left - p.menu_scale) < std::abs(right - p.menu_scale);
                 });
             int dpi_index = static_cast<int>(std::distance(dpi_scales.begin(), closest_scale));
-            select_row("DPI Scale", dpi_index, dpi_labels);
+            select_row("DPI Scale", dpi_index, dpi_labels, "Scales the entire menu up or down without changing in-game rendering.");
             p.menu_scale = dpi_scales[std::clamp(dpi_index, 0, static_cast<int>(dpi_scales.size()) - 1)];
-            settings_popup_row("Interface Colors", 3, [&] {
+            settings_popup_row("Interface Colors", 3,
+                               [&] {
                 settings_popup_row("Typography", 2, [&] {
                     color_row("Primary Text", p.palette.text);
                     color_row("Muted Text", p.palette.muted_text);
@@ -76,13 +77,14 @@ void menu_t::draw_misc()
                     color_row("Hover", p.palette.hover);
                     color_row("Borders", p.palette.border);
                 });
-            });
+            }, "Customizes every menu color: text, panels, popups, accent and borders.");
         });
         card_in_column("automation", "AUTOMATION", 1, 1,
                        [&] { toggle_row("Auto Accept Match", p.auto_accept); });
         card_in_column("engine", "ENGINE", 1, 1, [&] {
             toggle_popup_row("FPS Limiter", p.limit_fps, 1,
-                             [&] { slider_row("Maximum FPS", p.fps_limit, 30, 1000); });
+                             [&] { slider_row("Maximum FPS", p.fps_limit, 30, 1000); },
+                             "Caps the overlay frame rate to reduce CPU and GPU usage.");
         });
     }
     else if (this->m_misc_group == 1)
@@ -112,7 +114,7 @@ void menu_t::draw_misc()
                     color_row("Stand Marker Active", n.stand_marker_active);
                     color_row("Aim Marker", n.aim_marker);
                 });
-            });
+            }, "Guides you through grenade lineups with on-screen stand and aim markers.");
             toggle_popup_row("Lineup Aim Assist", n.aim_assist, 3, [&] {
                 keybind_row("Aim Key", n.aim_key);
                 toggle_row("Auto Release", n.auto_release);
@@ -121,7 +123,7 @@ void menu_t::draw_misc()
                     slider_row("Lock Threshold", n.aim_threshold, 0.05f, 3.0f, "deg", 0.05f);
                     slider_row("Settle Time", n.lock_time_ms, 0, 250, "ms");
                 });
-            });
+            }, "Aligns your view to the lineup and can release the grenade automatically.");
         });
 
         card_in_column("grenade_assist", "GRENADE ASSIST", 1, 1, [&] {
@@ -131,7 +133,7 @@ void menu_t::draw_misc()
                     slider_row("Target FOV", assist.fov, 1, 180);
                     slider_row("Smoothing", assist.smoothing, 1, 50);
                 });
-            });
+            }, "Steers your aim toward enemies while throwing grenades.");
         });
 
         card_in_column("trajectory", "TRAJECTORY", 1, 1, [&] {
@@ -153,20 +155,22 @@ void menu_t::draw_misc()
                     color_row("Point Color", p.m_grenades.endpoint_color);
                     slider_row("Point Size", p.m_grenades.endpoint_size, 2.0f, 24.0f, "px", 0.5f);
                 });
-            });
+            }, "Draws the predicted grenade flight path, bounces and landing point.");
         });
     }
     else if (this->m_misc_group == 2)
     {
         card("movement", "MOVEMENT", 3, [&] {
             toggle_popup_row("Enable Bunny Hop", p.m_bunny_hop.enabled, 1,
-                             [&] { keybind_row("Activation Key", p.m_bunny_hop.activation_key); });
+                             [&] { keybind_row("Activation Key", p.m_bunny_hop.activation_key); },
+                             "Automatically jumps the moment you touch the ground while holding the key.");
             toggle_popup_row("Enable Edge Jump", p.m_edge_jump.enabled, 1,
-                             [&] { keybind_row("Activation Key", p.m_edge_jump.activation_key); });
+                             [&] { keybind_row("Activation Key", p.m_edge_jump.activation_key); },
+                             "Jumps at the exact edge of a platform for maximum jump distance.");
             toggle_popup_row("Enable Auto Stop", p.m_auto_stop.enabled, 2, [&] {
                 slider_row("Stop Speed", p.m_auto_stop.stop_speed, 0.0f, 150.0f, " u/s", 1.0f);
                 slider_row("Shoot Speed", p.m_auto_stop.required_shoot_speed, 0.0f, 60.0f, "%", 1.0f);
-            });
+            }, "Halts your movement automatically before shots to make them fully accurate.");
         });
     }
     else if (this->m_misc_group == 3)
@@ -178,7 +182,7 @@ void menu_t::draw_misc()
                 toggle_row("Show Loss", p.m_watermark.show_loss);
                 toggle_row("Show CPU Load", p.m_watermark.show_cpu);
                 toggle_row("Show FPS", p.m_watermark.show_fps);
-            });
+            }, "Shows a small performance plaque with ping, loss, CPU load and FPS.");
             toggle_row("Show Spectators", p.m_spectator_list.enabled);
             toggle_popup_row("Show Event Log", p.m_event_log.enabled, 3, [&] {
                 slider_row("Duration", p.m_event_log.duration, 0.5f, 20.0f, " s", 0.5f);
@@ -195,12 +199,12 @@ void menu_t::draw_misc()
                 p.m_event_log.show_misses = (event_mask & 8) != 0;
                 p.m_event_log.show_blocked = (event_mask & 16) != 0;
                 p.m_event_log.show_info = (event_mask & 32) != 0;
-            });
+            }, "Logs shots, hits, kills and other events in a compact list.");
             toggle_popup_row("Show Active Binds", p.m_keybind_list.enabled, 3, [&] {
                 toggle_row("Always On Binds", p.m_keybind_list.show_always);
                 toggle_row("Hold Binds", p.m_keybind_list.show_hold);
                 toggle_row("Toggle Binds", p.m_keybind_list.show_toggle);
-            });
+            }, "Lists every active keybind on screen so you always know what is enabled.");
             toggle_row("Show Bomb Info", config::visual_settings.m_bomb.show_info_panel);
         });
     }

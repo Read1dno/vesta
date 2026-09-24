@@ -73,19 +73,19 @@ void toggle_control(bool &value)
                     1.0f);
 }
 
-void toggle_row(const char *label, bool &value)
+void toggle_row(const char *label, bool &value, const char *description)
 {
-    begin_row(label, 46.0f);
+    begin_row(label, 46.0f, description);
     toggle_control(value);
     end_row();
 }
 
-void toggle_color_row(const char *label, bool &value, zdraw::rgba &color)
+void toggle_color_row(const char *label, bool &value, zdraw::rgba &color, const char *description)
 {
     constexpr auto options_width = 28.0f;
     constexpr auto spacing = 8.0f;
     constexpr auto switch_width = 46.0f;
-    begin_row(label, options_width + spacing + switch_width);
+    begin_row(label, options_width + spacing + switch_width, description);
 
     const auto picker_id = ImGui::GetID("##picker");
     ImGui::InvisibleButton("##color_options", {options_width, 24.0f});
@@ -108,20 +108,21 @@ void toggle_color_row(const char *label, bool &value, zdraw::rgba &color)
     end_row();
 }
 
-void slider_row(const char *label, int &value, int minimum, int maximum, const char *suffix)
+void slider_row(const char *label, int &value, int minimum, int maximum, const char *suffix, const char *description)
 {
-    slider_row_impl(label, value, minimum, maximum, suffix, 1);
+    slider_row_impl(label, value, minimum, maximum, suffix, 1, description);
 }
 
-void slider_row(const char *label, float &value, float minimum, float maximum, const char *suffix, float step)
+void slider_row(const char *label, float &value, float minimum, float maximum, const char *suffix, float step,
+    const char *description)
 {
-    slider_row_impl(label, value, minimum, maximum, suffix, step);
+    slider_row_impl(label, value, minimum, maximum, suffix, step, description);
 }
 
-void slider_percent_row(const char *label, float &value)
+void slider_percent_row(const char *label, float &value, const char *description)
 {
     auto percent = std::clamp(value, 0.0f, 1.0f) * 100.0f;
-    slider_row_impl(label, percent, 0.0f, 100.0f, "%", 1.0f);
+    slider_row_impl(label, percent, 0.0f, 100.0f, "%", 1.0f, description);
     value = percent * 0.01f;
 }
 
@@ -155,7 +156,7 @@ void draw_dropdown_chevron(ImDrawList *draw, ImVec2 center, ImU32 color, float o
     draw->AddLine(middle, right, color, 1.55f);
 }
 
-void select_row(const char *label, int &value, std::span<const char *const> options)
+void select_row(const char *label, int &value, std::span<const char *const> options, const char *description)
 {
     if (options.empty())
         return;
@@ -170,7 +171,7 @@ void select_row(const char *label, int &value, std::span<const char *const> opti
         popup_width = std::max(popup_width, ImGui::CalcTextSize(render::localization::tr(option)).x + 48.0f);
     }
 
-    begin_row(label, control_width);
+    begin_row(label, control_width, description);
     const auto index = std::clamp(value, 0, static_cast<int>(options.size()) - 1);
     const auto button_id = ImGui::GetID("##select_button");
     ImGui::InvisibleButton("##select_button", {control_width, control_height});
@@ -280,7 +281,7 @@ void select_row(const char *label, int &value, std::span<const char *const> opti
 }
 
 void multiselect_row(const char *label, int &mask, std::span<const std::pair<const char *, int>> options,
-                     int all_mask)
+                     int all_mask, const char *description)
 {
     if (options.empty())
         return;
@@ -288,7 +289,7 @@ void multiselect_row(const char *label, int &mask, std::span<const std::pair<con
     constexpr auto control_width = 140.0f;
     constexpr auto control_height = 30.0f;
     constexpr auto option_height = 34.0f;
-    begin_row(label, control_width);
+    begin_row(label, control_width, description);
 
     std::string summary{};
     if ((mask & all_mask) == all_mask)
@@ -447,11 +448,11 @@ void draw_action_icon(ImDrawList *draw, row_action_icon icon, ImVec2 center, ImU
     }
 }
 
-bool button_row(const char *label, const char *text, row_action_icon icon)
+bool button_row(const char *label, const char *text, row_action_icon icon, const char *description)
 {
     constexpr auto control_width = 140.0f;
     constexpr auto control_height = 30.0f;
-    begin_row(label, control_width);
+    begin_row(label, control_width, description);
 
     const auto id = ImGui::GetID("##button_row");
     ImGui::InvisibleButton("##button_row", {control_width, control_height});
@@ -508,10 +509,10 @@ int filter_filename_char(ImGuiInputTextCallbackData *data)
     return 0;
 }
 
-void text_input_row(const char *label, char *buffer, std::size_t size)
+void text_input_row(const char *label, char *buffer, std::size_t size, const char *description)
 {
     constexpr auto control_width = 190.0f;
-    begin_row(label, control_width);
+    begin_row(label, control_width, description);
     ImGui::PushStyleColor(ImGuiCol_FrameBg, k_bg_panel);
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, k_bg_hover);
     ImGui::PushStyleColor(ImGuiCol_FrameBgActive, k_bg_hover);
@@ -528,9 +529,9 @@ void text_input_row(const char *label, char *buffer, std::size_t size)
     end_row();
 }
 
-void keybind_row(const char *label, int &value)
+void keybind_row(const char *label, int &value, const char *description)
 {
-    begin_row(label, 130.0f);
+    begin_row(label, 130.0f, description);
     const auto listening = g_listening_key == &value;
     const auto pulse =
         listening ? 0.8f + std::sin(static_cast<float>(ImGui::GetTime()) * 6.28318f) * 0.2f : 1.0f;
@@ -575,9 +576,9 @@ void keybind_row(const char *label, int &value)
     end_row();
 }
 
-void color_row(const char *label, zdraw::rgba &color)
+void color_row(const char *label, zdraw::rgba &color, const char *description)
 {
-    begin_row(label, 36.0f);
+    begin_row(label, 36.0f, description);
     const auto picker_id = ImGui::GetID("##picker");
     ImGui::InvisibleButton("##preview", {36.0f, 22.0f});
     pointer_cursor_if_hovered();

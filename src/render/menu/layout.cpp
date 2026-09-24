@@ -369,7 +369,7 @@ void draw_section_title(ImDrawList *draw, ImVec2 position, float line_end_x, std
     }
 }
 
-void begin_row(const char *label, float control_width)
+void begin_row(const char *label, float control_width, const char *description)
 {
     ImGui::PushID(label);
     const auto y = ImGui::GetCursorPosY();
@@ -383,7 +383,104 @@ void begin_row(const char *label, float control_width)
         ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), text_min,
                                   {label_max_x, text_min.y + ImGui::GetTextLineHeight()}, label_max_x,
                                   translated, nullptr, nullptr);
+    if (description != nullptr)
+    {
+        // Hovering the label text for three seconds opens a description popup.
+        const auto mouse = ImGui::GetIO().MousePos;
+        const ImRect label_rect{text_min, {label_max_x, text_min.y + ImGui::GetTextLineHeight()}};
+        const auto hover_id = ImGui::GetID("##row_description");
+        if (label_max_x > text_min.x && label_rect.Contains(mouse) &&
+            ImGui::IsWindowContentHoverable(ImGui::GetCurrentWindow(), ImGuiHoveredFlags_None))
+        {
+            auto &elapsed = g_row_hover_time[hover_id];
+            elapsed += ImGui::GetIO().DeltaTime;
+            if (elapsed >= 3.0f)
+                draw_row_tooltip(render::localization::tr(description), text_min, label_max_x);
+        }
+        else
+        {
+            g_row_hover_time.erase(hover_id);
+        }
+    }
     ImGui::SetCursorPos({ImGui::GetWindowContentRegionMax().x - control_width, y + 9.0f});
+}
+
+void draw_row_tooltip(const char *text, const ImVec2 label_min, const float label_max_x)
+{
+    if (text == nullptr || *text == '\0')
+        return;
+
+    static constexpr float k_tooltip_width = 320.0f;
+    static constexpr float k_padding = 12.0f;
+    const float wrap_width = k_tooltip_width - k_padding * 2.0f;
+
+    auto *font = ImGui::GetFont();
+    const float font_size = ImGui::GetFontSize();
+    // Measure the wrapped text so the window auto-fits its content.
+    float line_width = 0.0f;
+    float total_height = 0.0f;
+    const char *word_begin = text;
+    for (const char *scan = text;; ++scan)
+    {
+        const bool flush = (*scan == ' ') || (*scan == '\n') || (*scan == '\0');
+        if (!flush)
+            continue;
+        const auto word = ImGui::CalcTextSize(word_begin, scan);
+        const auto space = ImGui::CalcTextSize(" ").x;
+        if (line_width > 0.0f && line_width + word.x > wrap_width)
+        {
+            total_height += word.y;
+            line_width = word.x;
+        }
+        else
+        {
+            line_width = (line_width > 0.0f ? line_width + space : 0.0f) + word.x;
+        }
+        if (*scan == '\n')
+        {
+            total_height += word.y;
+            line_width = 0.0f;
+        }
+        word_begin = scan + 1;
+        if (*scan == '\0')
+            break;
+    }
+
+    const ImVec2 size{k_tooltip_width, total_height + k_padding * 2.0f};
+    const auto bounds_min = settings_bounds_min();
+    const auto bounds_max = settings_bounds_max();
+
+    ImVec2 position{label_min.x, label_min.y + k_row_height - 4.0f};
+    position.x = std::clamp(position.x, bounds_min.x + 4.0f,
+                            std::max(bounds_min.x + 4.0f, bounds_max.x - size.x - 4.0f));
+    position.y = std::clamp(position.y, bounds_min.y + 4.0f,
+                            std::max(bounds_min.y + 4.0f, bounds_max.y - size.y - 4.0f));
+
+    ImGui::SetNextWindowPos(position);
+    ImGui::SetNextWindowSize(size);
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_Border, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0.0f, 0.0f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    if (ImGui::Begin("##row_description", nullptr,
+                     ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs |
+                         ImGuiWindowFlags_NoNav))
+    {
+        auto *draw = ImGui::GetWindowDrawList();
+        const auto minimum = ImGui::GetWindowPos();
+        const auto maximum = minimum + size;
+        soft_shadow(draw, minimum, maximum, 10.0f, {0.0f, 6.0f}, 18.0f,
+                    {0.0f, 0.0f, 0.0f, 0.35f}, 1.0f);
+        draw_popup_surface(draw, minimum, maximum, 10.0f);
+        const auto text_pos = ImVec2{minimum.x + k_padding, minimum.y + k_padding};
+        draw->AddText(font, font_size, text_pos, packed(k_text_main), text, nullptr, wrap_width);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
 }
 
 void clipped_row_text(const std::string_view text, const ImVec4 color)
