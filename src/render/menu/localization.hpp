@@ -9,13 +9,15 @@ enum class id : int
 {
     en = 0,
     ru = 1,
+    zh_cn = 2,
+    zh_tw = 3,
     count
 };
 
 void set(id value);
 [[nodiscard]] id current();
 
-// Short label for the language switch itself ("EN" / "RU").
+// Short label for the language switch itself ("EN" / "RU" / "CN" / "TW").
 [[nodiscard]] const char *code(id value);
 
 [[nodiscard]] const char *tr(const char *english);

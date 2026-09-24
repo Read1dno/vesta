@@ -43,7 +43,7 @@ void menu_t::draw_misc()
     if (this->m_misc_group == 0)
     {
         card_in_column("interface", "INTERFACE", 3, 0, [&] {
-            static constexpr const char *languages[]{"English", "Русский"};
+            static constexpr const char *languages[]{"English", "Русский", "简体中文", "繁體中文"};
             const int previous = p.language;
             select_row("Language", p.language, languages);
             if (p.language != previous)
