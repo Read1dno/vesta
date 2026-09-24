@@ -134,8 +134,8 @@ Open a section only when you need its settings.
 <summary><strong>Interface and automation</strong></summary>
 
 - Movable watermark, spectator list, keybind list, event log, and bomb panel.
-- English and Russian interface, DPI scaling, custom palette, and portable
-  layouts.
+- English, Russian, Simplified Chinese, and Traditional Chinese interface,
+  DPI scaling, custom palette, and portable layouts.
 - Popup-based advanced settings and configurable lifecycle hotkeys.
 - Auto Accept performs a single external confirmation click per match prompt.
 

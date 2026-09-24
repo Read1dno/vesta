@@ -1976,6 +1976,32 @@ bool overlay_t::initialize_graphics()
 		this->m_fonts.menu_regular_12 = zdraw::add_font_from_file("C:/Windows/Fonts/segoeui.ttf", 16.0f * menu_dpi_scale);
 		this->m_fonts.menu_semibold_13 = zdraw::add_font_from_file("C:/Windows/Fonts/seguisb.ttf", 16.0f * menu_dpi_scale);
 		this->m_fonts.menu_brand_30 = zdraw::add_font_from_file("C:/Windows/Fonts/segoeuib.ttf", 38.0f * menu_dpi_scale);
+
+		// CJK fallback for the Chinese interface languages. Segoe UI and the
+		// embedded Noto Sans carry no CJK glyphs, so merge a system Chinese
+		// font into every text font that can render localized strings. YaHei
+		// is preferred (covers most simplified and traditional ideographs),
+		// JhengHei and SimSun serve as fallbacks. Glyphs outside the baked
+		// common range are loaded on demand by the 1.92 dynamic font atlas.
+		static constexpr const char *cjk_font_candidates[]{
+			"C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/msjh.ttc", "C:/Windows/Fonts/simsun.ttc" };
+		for (const auto *cjk_path : cjk_font_candidates)
+		{
+			if (std::filesystem::exists(cjk_path))
+			{
+				const auto *cjk_ranges = atlas->GetGlyphRangesChineseSimplifiedCommon();
+				zdraw::merge_font_from_file(this->m_fonts.menu_regular_12, cjk_path,
+					16.0f * menu_dpi_scale, zdraw::font_raster_profile::smooth, cjk_ranges);
+				zdraw::merge_font_from_file(this->m_fonts.menu_semibold_13, cjk_path,
+					16.0f * menu_dpi_scale, zdraw::font_raster_profile::smooth, cjk_ranges);
+				zdraw::merge_font_from_file(this->m_fonts.notosans_medium_12, cjk_path,
+					12.0f, zdraw::font_raster_profile::smooth, cjk_ranges);
+				zdraw::merge_font_from_file(this->m_fonts.esp_text_11, cjk_path,
+					11.0f, zdraw::font_raster_profile::esp_text, cjk_ranges);
+				break;
+			}
+		}
+
 		const auto font_ready = []( const zdraw::font* font )
 		{
 			return font && font->im_font;
