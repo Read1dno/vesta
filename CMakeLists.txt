@@ -147,9 +147,9 @@ if(VESTA_WINDOWED_PROFILE AND (NOT VESTA_PERF_LOG OR VESTA_INSTALLED_UIACCESS))
 endif()
 
 
-# The curated root legit.cfg is the product default.  Embed it at configure time
+# The tracked configs/legit.cfg is the product default. Embed it at configure time
 # so a clean installation does not depend on the source tree being present.
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/legit.cfg" VESTA_DEFAULT_PROFILE_HEX HEX)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/configs/legit.cfg" VESTA_DEFAULT_PROFILE_HEX HEX)
 string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," VESTA_DEFAULT_PROFILE_BYTES
     "${VESTA_DEFAULT_PROFILE_HEX}")
 configure_file(
