@@ -71,4 +71,4 @@ namespace motion {
 			std::abs( m_velocity ) < 0.001f;
 	}
 
-}
+} // namespace motion

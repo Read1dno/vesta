@@ -59,4 +59,4 @@ private:
 	std::unordered_map<std::uintptr_t, cached_pose> m_last_valid{};
 };
 
-}
+} // namespace game

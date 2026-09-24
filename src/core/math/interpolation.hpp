@@ -53,4 +53,4 @@ namespace motion {
 		float m_damping{ 20.0f };
 	};
 
-}
+} // namespace motion

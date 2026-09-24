@@ -183,7 +183,8 @@ void input_router::pump_imgui(
 		}
 		else if ( pressed && !down )
 		{
-
+			// Preserve a complete click that occurred between two render frames.
+			// ImGui's trickle queue delivers the down/up pair in order.
 			io.AddMouseButtonEvent( button, true );
 			io.AddMouseButtonEvent( button, false );
 		}
@@ -348,7 +349,8 @@ void input_router::thread_main( const std::stop_token stop )
 			const auto ready = m_keyboard_hook && m_mouse_hook;
 			if ( !ready )
 			{
-
+				// Never leave one global hook active while the renderer has fallen
+				// back to polled input: a lone mouse hook could still consume clicks.
 				if ( m_mouse_hook ) ::UnhookWindowsHookEx( m_mouse_hook );
 				if ( m_keyboard_hook ) ::UnhookWindowsHookEx( m_keyboard_hook );
 				m_mouse_hook = nullptr;

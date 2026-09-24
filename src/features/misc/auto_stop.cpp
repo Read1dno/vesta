@@ -16,7 +16,8 @@ namespace features::misc {
 		const std::chrono::steady_clock::time_point shot_time,
 		const float required_shoot_speed )
 	{
-		if ( !config::general_settings.m_auto_stop.enabled )
+	const auto runtime_settings = config::get_runtime_snapshot();
+		if ( !runtime_settings->general.m_auto_stop.enabled )
 		{
 			cancel_request( source );
 			return;
@@ -30,7 +31,8 @@ namespace features::misc {
 			std::isfinite( required_shoot_speed ) ? required_shoot_speed : 5.0f,
 			0.0f, 150.0f );
 		request.active = true;
-
+		// Refreshing the same combat decision must not restart braking. Revision only
+		// changes on a new ownership edge, cancellation or a completed shot.
 		if ( !was_active )
 		{
 			++request.revision;
@@ -60,7 +62,8 @@ namespace features::misc {
 
 	bool auto_stop_t::ready_to_fire( const auto_stop_source source ) const
 	{
-		if ( !config::general_settings.m_auto_stop.enabled ) return true;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		if ( !runtime_settings->general.m_auto_stop.enabled ) return true;
 
 		float required_speed{};
 		{
@@ -76,7 +79,8 @@ namespace features::misc {
 		if ( !app::context().process.copy(
 			pawn + SCHEMA( "C_BaseEntity", "m_fFlags"_id ),
 			&flags, sizeof( flags ) ) ) return false;
-
+		// Auto Stop cannot affect airborne movement. Legit checks decide separately
+		// whether the shot itself is allowed; never deadlock an otherwise valid shot.
 		if ( ( flags & 1u ) == 0u ) return true;
 		foundation::vec3 velocity{};
 		if ( !app::context().process.copy(
@@ -84,7 +88,7 @@ namespace features::misc {
 			&velocity, sizeof( velocity ) ) ) return false;
 
 		const auto completion_speed = std::min( required_speed, std::max(
-			config::general_settings.m_auto_stop.stop_speed, 0.5f ) );
+			runtime_settings->general.m_auto_stop.stop_speed, 0.5f ) );
 		return finite_velocity( velocity )
 			&& velocity.length_2d( ) <= completion_speed;
 	}
@@ -165,7 +169,8 @@ namespace features::misc {
 		if ( !m_active && m_synthetic_keys.empty( ) ) return;
 
 		std::vector<platform::windows::input_gateway::key_transition> releases{};
-
+		// Release exactly what Auto Stop pressed. Physical movement was never gated or
+		// synthesized, so an idle user deterministically ends with every direction up.
 		for ( const auto key : m_synthetic_keys ) releases.push_back( { key, false } );
 		if ( !releases.empty( ) && !app::context().input.keys( releases ) ) return;
 		m_synthetic_keys.clear( );
@@ -187,9 +192,11 @@ namespace features::misc {
 
 	void auto_stop_t::tick( )
 	{
-		if ( !config::general_settings.m_auto_stop.enabled )
+	const auto runtime_settings = config::get_runtime_snapshot();
+		if ( !runtime_settings->general.m_auto_stop.enabled )
 		{
-
+			// Do the synchronized cleanup once on the enabled->disabled edge. The
+			// 1 kHz movement worker otherwise acquired two mutexes on every idle tick.
 			if ( m_enabled_last_tick )
 			{
 				m_enabled_last_tick = false;
@@ -237,7 +244,7 @@ namespace features::misc {
 				{
 					const auto completion_speed = std::min(
 						request.required_shoot_speed, std::max(
-							config::general_settings.m_auto_stop.stop_speed, 0.5f ) );
+							runtime_settings->general.m_auto_stop.stop_speed, 0.5f ) );
 					const auto stop_seconds = estimate_stop_seconds(
 						velocity, completion_speed );
 					const auto remaining = std::chrono::duration<float>(
@@ -247,7 +254,7 @@ namespace features::misc {
 				}
 				const auto completion_speed = std::min(
 					request.required_shoot_speed, std::max(
-						config::general_settings.m_auto_stop.stop_speed, 0.5f ) );
+						runtime_settings->general.m_auto_stop.stop_speed, 0.5f ) );
 				stop_speed = std::min( stop_speed, completion_speed );
 				should_brake = should_brake || request.braking;
 			}
@@ -257,4 +264,4 @@ namespace features::misc {
 		else release( );
 	}
 
-}
+} // namespace features::misc

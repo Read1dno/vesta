@@ -3,6 +3,8 @@
 #include <features/visuals/hitsound.hpp>
 #include <features/visuals/event_log.hpp>
 #include <render/chams/renderer.hpp>
+#include <core/memory/compatibility.hpp>
+#include <simulation/shot_model.hpp>
 
 namespace {
 
@@ -167,7 +169,7 @@ namespace {
 			return result;
 		};
 
-		(void)pre_shot_ctx;
+		(void)pre_shot_ctx; // pre-shot backtrack machinery no longer needed
 		const auto fire_target = static_cast<double>( fire_time ) * 64.0;
 		const auto ft_tick = static_cast<int>( std::llround( fire_target ) );
 
@@ -176,7 +178,7 @@ namespace {
 		{
 			for ( const auto& value : std::span{ candidates }.first( candidate_count ) )
 			{
-
+				// Newest command entry at this tick; duplicates share angle+seed.
 				if ( value.player_tick == cand_tick && is_command_entry( value.bits ) &&
 					( !chosen || value.index > chosen->index ) )
 				{
@@ -209,46 +211,6 @@ namespace {
 		return nearest && nearest_error <= 1.0
 			? make_result( *nearest, static_cast<float>( nearest_error ), 0.0f, false )
 			: shot_history{};
-	}
-
-	[[nodiscard]] foundation::vec3 read_full_aim_punch( std::uintptr_t pawn )
-	{
-		if ( !plausible_pointer( pawn ) )
-		{
-			return {};
-		}
-
-		const auto services = app::context().process.load<std::uintptr_t>(
-			pawn + SCHEMA( "C_CSPlayerPawn", "m_pAimPunchServices"_id ) );
-		if ( !plausible_pointer( services ) )
-		{
-			return {};
-		}
-
-		foundation::vec3 punch{};
-		for ( const auto track_offset : { std::uintptr_t{ 0x68 }, std::uintptr_t{ 0xb0 } } )
-		{
-			const auto samples = app::context().process.load<remote_vector>(
-				services + track_offset + 0x20 );
-			if ( samples.size <= 0 || samples.size > 4096 ||
-				samples.capacity < samples.size || samples.capacity > 8192 ||
-				!plausible_pointer( samples.data ) )
-			{
-				continue;
-			}
-
-			const auto sample = app::context().process.load<foundation::vec3>(
-				samples.data + static_cast<std::uintptr_t>( samples.size - 1 ) *
-					sizeof( foundation::vec3 ) );
-			if ( finite_vector( sample ) && std::abs( sample.x ) < 45.0f &&
-				std::abs( sample.y ) < 45.0f && std::abs( sample.z ) < 45.0f )
-			{
-				punch += sample;
-			}
-		}
-
-		punch *= 2.0f;
-		return finite_vector( punch ) ? punch : foundation::vec3{};
 	}
 
 	[[nodiscard]] bool finite_vector( const foundation::vec3& value )
@@ -305,7 +267,8 @@ namespace {
 			const auto end = bone.position + bone.rotation.apply( hitbox.maxs );
 			if ( hitbox.radius > 0.0f )
 			{
-
+				// Impact records are decal/contact points, so allow a small skin-width
+				// around the exact capsule surface to absorb snapshot timing differences.
 				const auto radius = hitbox.radius + 5.0f;
 				if ( point_segment_distance_sqr( impact, start, end ) <= radius * radius )
 				{
@@ -314,7 +277,8 @@ namespace {
 			}
 			else
 			{
-
+				// Non-capsule hitboxes are conservatively represented by their rotated
+				// bounding sphere. This path is rare for player models.
 				const auto center = bone.position + bone.rotation.apply( ( hitbox.mins + hitbox.maxs ) * 0.5f );
 				const auto radius = ( hitbox.maxs - hitbox.mins ).length( ) * 0.5f + 5.0f;
 				if ( impact.distance_sqr( center ) <= radius * radius )
@@ -329,12 +293,14 @@ namespace {
 			return false;
 		}
 
+		// Geometry may be unavailable for one snapshot during model transitions.
+		// Fall back to a player-sized capsule instead of dropping an obvious impact.
 		const auto delta = impact - player.collision_center;
 		return delta.x * delta.x + delta.y * delta.y <= 36.0f * 36.0f
 			&& std::abs( delta.z ) <= 54.0f;
 	}
 
-}
+} // namespace
 
 namespace features::visuals {
 
@@ -391,25 +357,29 @@ namespace features::visuals {
 		const auto historical_ctx = simulation::ballistics().shot_ctx(
 			fire_time, weapon, post_shot_time );
 
+		// Validate fallback context by checking on_ground consistency.
+		// Don't use cached context from a different shot state (e.g., standing vs jumping).
 		auto ctx = historical_ctx.valid
 			? historical_ctx
 			: ( this->m_has_cached_weapon_ctx &&
 				this->m_cached_weapon_ctx.weapon == current_ctx.weapon &&
-				this->m_cached_weapon_ctx.on_ground == current_ctx.on_ground
+				this->m_cached_weapon_ctx.on_ground == current_ctx.on_ground // check consistency
 				? this->m_cached_weapon_ctx
 				: current_ctx );
 
+		// If using current_ctx (real-time), recalculate inaccuracy using pre-shot velocity.
+		// This handles cases where shot_ctx() found no valid historical sample.
 		if ( ctx.weapon == current_ctx.weapon && !historical_ctx.valid )
 		{
-
+			// Recalculate inaccuracy using pre-shot velocity that was just captured in tick()
 			auto dbg = ctx.debug;
 			ctx.inaccuracy = simulation::ballistics().get_inaccuracy_preshot(
 				ctx.weapon, ctx.weapon_vdata, ctx.weapon_type,
-				ctx.velocity,
-				ctx.on_ground,
-				ctx.debug.accuracy_penalty,
+				ctx.velocity,  // Use pre-shot velocity from context
+				ctx.on_ground,  // Use pre-shot on_ground from context
+				ctx.debug.accuracy_penalty,  // From pre-shot context
 				ctx.recoil_index,
-				ctx.is_walking,
+				ctx.is_walking,  // Use pre-shot walking state
 				dbg );
 			ctx.debug = dbg;
 		}
@@ -428,24 +398,19 @@ namespace features::visuals {
 		const auto start = history.has_shoot_position
 			? history.shoot_position
 			: sampled_start;
-		auto pre_shot_punch = app::context().process.load<foundation::vec3>( weapon + 0x1b1c );
-		const auto exact_recoil = finite_vector( pre_shot_punch ) &&
-			std::abs( pre_shot_punch.x ) < 89.0f &&
-			std::abs( pre_shot_punch.y ) < 89.0f &&
-			std::abs( pre_shot_punch.z ) < 89.0f;
-		if ( !exact_recoil )
-		{
-
-			const auto fallback_ctx = this->m_has_cached_weapon_ctx
-				? this->m_cached_weapon_ctx
-				: current_ctx;
-			pre_shot_punch = fallback_ctx.recoil_index <= 1.0f
-				? foundation::vec3{}
-				: read_full_aim_punch( pawn );
-		}
-
-		const auto seed_angles = history.angles;
-		const auto shot_angles = seed_angles + pre_shot_punch;
+        const auto punch_offset=game::compatibility::shot_punch_offset();
+        foundation::vec3 pre_shot_punch{},confirm_punch{};
+        float confirm_time{};
+        auto& reader=app::context().process;
+        if(!punch_offset || !std::isfinite(post_shot_time)
+            || std::abs(post_shot_time-fire_time)>0.0001f
+            || !reader.copy(weapon+punch_offset,&pre_shot_punch,sizeof(pre_shot_punch))
+            || !reader.copy(weapon+SCHEMA("C_CSWeaponBase","m_fLastShotTime"_id),&confirm_time,sizeof(confirm_time))
+            || !reader.copy(weapon+punch_offset,&confirm_punch,sizeof(confirm_punch))
+            || confirm_time!=post_shot_time
+            || !simulation::shot_model::same_direction(pre_shot_punch,confirm_punch)
+            || !finite_vector(pre_shot_punch)) return;
+        const auto shot_angles=simulation::shot_model::angles(history.angles,pre_shot_punch);
 
 		foundation::vec3 forward{};
 		foundation::vec3 right{};
@@ -461,8 +426,9 @@ namespace features::visuals {
 			? history.player_tick
 			: history.render_tick;
 
+		// FX_FireBullets increments the SHA result once before seeding Valve RNG.
 		const auto seed = simulation::ballistics().derive_command_seed(
-			seed_angles, seed_tick ) + 1u;
+			shot_angles, seed_tick ) + 1u;
 		const auto weapon_vdata = game::local_player().weapon_vdata( );
 		const auto raw_range = weapon_vdata
 			? app::context().process.load<float>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flRange"_id ) )
@@ -479,7 +445,7 @@ namespace features::visuals {
 			{
 				const auto spread = simulation::ballistics().sample_spread_offset(
 					static_cast<int>( seed ), ctx.inaccuracy, ctx.spread, ctx.recoil_index,
-					ctx.item_def_idx, ctx.fire_mode, ctx.num_bullets, bullet );
+					ctx.item_def_idx, ctx.fire_mode, ctx.num_bullets, bullet, ctx.pattern_seed );
 
 				direction = ( forward + right * spread.x + up * spread.y ).normalized( );
 			}
@@ -553,7 +519,8 @@ namespace features::visuals {
 	void bullet_impacts_t::poll_server_hits( )
 	{
 		const auto pawn = game::local_player().pawn( );
-
+		// A single failed local-player read must not erase the counter baseline: the
+		// next successful sample could already contain the hit we are waiting for.
 		if ( !pawn ) return;
 		if ( pawn != this->m_hit_counter_pawn )
 		{
@@ -697,13 +664,13 @@ namespace features::visuals {
 					: features::visuals::event_kind::hit,
 				killed ? features::visuals::event_category::kill
 					: features::visuals::event_category::hit );
-		if ( config::general_settings.m_hitmarker.enabled )
+		if ( this->m_config_snapshot->general.m_hitmarker.enabled )
 		{
 			this->m_hitmarkers.push_back( { position, now } );
 			if ( this->m_hitmarkers.size( ) > 32 )
 				this->m_hitmarkers.erase( this->m_hitmarkers.begin( ) );
 		}
-		const auto& feedback = config::general_settings.m_hitsound;
+		const auto& feedback = this->m_config_snapshot->general.m_hitsound;
 		if ( feedback.enabled )
 			features::visuals::hitsounds().play( feedback.style, feedback.volume );
 		if ( feedback.show_damage )
@@ -974,19 +941,17 @@ namespace features::visuals {
 		}
 	}
 
-	void bullet_impacts_t::render_hitmarkers( zdraw::draw_list& draw_list )
+	void bullet_impacts_t::render_hitmarkers( zdraw::draw_list& draw_list, const render_snapshot& frame )
 	{
-		const auto& cfg = config::general_settings.m_hitmarker;
+		const auto& cfg = frame.config->general.m_hitmarker;
 		if ( !cfg.enabled )
 		{
-			this->m_hitmarkers.clear( );
+
 			return;
 		}
 
 		const auto now = std::chrono::steady_clock::now( );
 		const auto duration = std::clamp( cfg.duration, 0.05f, 2.0f );
-		std::erase_if( this->m_hitmarkers, [ & ]( const hitmarker_t& marker )
-			{ return std::chrono::duration<float>( now - marker.timestamp ).count( ) >= duration; } );
 
 		const auto smoothstep = [ ]( float value )
 		{
@@ -999,7 +964,7 @@ namespace features::visuals {
 			foundation::vec2{ 0.70710678f, 0.70710678f },
 			foundation::vec2{ -0.70710678f, 0.70710678f } };
 
-		for ( const auto& marker : this->m_hitmarkers )
+		for ( const auto& marker : frame.markers )
 		{
 			const auto screen = game::camera().project( marker.position );
 			if ( !game::camera().projection_valid( screen ) ) continue;
@@ -1030,12 +995,12 @@ namespace features::visuals {
 		}
 	}
 
-	void bullet_impacts_t::render_damage_numbers( zdraw::draw_list& draw_list )
+	void bullet_impacts_t::render_damage_numbers( zdraw::draw_list& draw_list, const render_snapshot& frame )
 	{
-		const auto& cfg = config::general_settings.m_hitsound;
+		const auto& cfg = frame.config->general.m_hitsound;
 		if ( !cfg.show_damage )
 		{
-			this->m_damage_popups.clear( );
+
 			return;
 		}
 
@@ -1043,12 +1008,8 @@ namespace features::visuals {
 		if ( !base_font ) return;
 		const auto now = std::chrono::steady_clock::now( );
 		const auto duration = std::clamp( cfg.damage_duration, 0.15f, 2.0f );
-		std::erase_if( this->m_damage_popups, [ & ]( const damage_popup_t& popup )
-		{
-			return std::chrono::duration<float>( now - popup.timestamp ).count( ) >= duration;
-		} );
 
-		for ( const auto& popup : this->m_damage_popups )
+		for ( const auto& popup : frame.damage )
 		{
 			const auto projected = game::camera().project( popup.position );
 			if ( !game::camera().projection_valid( projected ) ) continue;
@@ -1103,6 +1064,8 @@ namespace features::visuals {
 			}
 		}
 
+		// Some effects are already authored in world space. Their scene-node origin is
+		// the actual contact point and is safer than extending a ray to weapon range.
 		const auto node = app::context().process.load<std::uintptr_t>( entity + SCHEMA( "C_BaseEntity", "m_pGameSceneNode"_id ) );
 		if ( node )
 		{
@@ -1160,6 +1123,7 @@ namespace features::visuals {
 		std::uintptr_t data{};
 		std::size_t count{};
 
+		// Current CUtlVector layout is size@+0, data@+8, capacity@+16, flags@+20.
 		if ( vector.size > 0 && vector.size <= 128 && vector.capacity >= vector.size &&
 			vector.capacity <= 128 && plausible_pointer( vector.data ) )
 		{
@@ -1225,7 +1189,7 @@ namespace features::visuals {
 				continue;
 			}
 
-			if ( config::general_settings.m_bullet_tracers.enabled )
+			if ( this->m_config_snapshot->general.m_bullet_tracers.enabled )
 			{
 				this->add_tracer( start, end, true );
 			}
@@ -1264,10 +1228,12 @@ namespace features::visuals {
 
 		const auto total = static_cast<std::size_t>( std::max( entries.size, 0 ) );
 
+		// Identity key: position bits combined with the timestamp bits. Two pellets
+		// share a timestamp but never a position, so position must be part of it.
 		const auto impact_key = [ ]( const bullet_service_impact& v ) -> std::uint64_t
 		{
 			auto bits = [ ]( float f ) { std::uint32_t u; std::memcpy( &u, &f, 4 ); return u; };
-			std::uint64_t h = 1469598103934665603ull;
+			std::uint64_t h = 1469598103934665603ull; // FNV-1a offset basis
 			for ( const auto u : { bits( v.position.x ), bits( v.position.y ),
 				bits( v.position.z ), bits( v.timestamp ) } )
 			{
@@ -1291,7 +1257,7 @@ namespace features::visuals {
 		constexpr std::size_t k_window = 512;
 		std::array<bullet_service_impact, k_window> impacts{};
 		const auto count = std::min( total, k_window );
-		const auto begin_index = total - count;
+		const auto begin_index = total - count; // newest entries are appended last
 		if ( count && !app::context().process.copy(
 			entries.data + begin_index * sizeof( bullet_service_impact ),
 			impacts.data( ), count * sizeof( bullet_service_impact ) ) )
@@ -1312,6 +1278,7 @@ namespace features::visuals {
 			return;
 		}
 
+		// Collect this frame's unseen impacts, oldest first.
 		struct fresh_impact { std::uint64_t key; bullet_service_impact data; };
 		std::array<fresh_impact, k_window> fresh{};
 		std::size_t fresh_count{};
@@ -1377,6 +1344,8 @@ namespace features::visuals {
 				continue;
 			}
 
+			// Group by the game shot_time so a penetrating bullet's holes join one
+			// tracer (one origin, several cubes) instead of spawning diverging lines.
 			this->add_tracer( start, impact.position, true, impact.timestamp );
 		}
 
@@ -1666,7 +1635,7 @@ namespace features::visuals {
 		const auto players = game::world().players( );
 		const auto pose_frame = game::render_poses().latest( );
 		const auto now = std::chrono::steady_clock::now( );
-		const auto& feedback_cfg = config::general_settings.m_hitsound;
+		const auto& feedback_cfg = this->m_config_snapshot->general.m_hitsound;
 		const auto emit_damage = [ & ]( const foundation::vec3& position, int damage )
 		{
 			if ( !feedback_cfg.show_damage || damage <= 0 ) return;
@@ -1799,7 +1768,7 @@ namespace features::visuals {
 			return now - shot.timestamp > std::chrono::milliseconds( 700 );
 		} );
 
-		if ( config::general_settings.m_bullet_tracers.enabled )
+		if ( this->m_config_snapshot->general.m_bullet_tracers.enabled )
 		{
 			this->collect_bullet_service_impacts( game::local_player().pawn( ) );
 		}
@@ -1810,12 +1779,12 @@ namespace features::visuals {
 				return !shot.resolved &&
 					now - shot.timestamp <= std::chrono::milliseconds( 700 );
 			} );
-		const auto impact_feedback = config::general_settings.m_hitmarker.enabled
-			|| config::general_settings.m_hitsound.enabled
-			|| config::general_settings.m_hitsound.show_damage
-			|| config::visual_settings.m_chams.on_shot.enabled
-			|| config::visual_settings.m_chams.kill_effect.enabled;
-		if ( needs_hit_model && ( config::general_settings.m_bullet_tracers.enabled
+		const auto impact_feedback = this->m_config_snapshot->general.m_hitmarker.enabled
+			|| this->m_config_snapshot->general.m_hitsound.enabled
+			|| this->m_config_snapshot->general.m_hitsound.show_damage
+			|| this->m_config_snapshot->visual.m_chams.on_shot.enabled
+			|| this->m_config_snapshot->visual.m_chams.kill_effect.enabled;
+		if ( needs_hit_model && ( this->m_config_snapshot->general.m_bullet_tracers.enabled
 			|| impact_feedback ) )
 		{
 			const auto players = game::world().players( );
@@ -1828,7 +1797,7 @@ namespace features::visuals {
 						this->collect_bullet_hit_models( player.pawn, true );
 				}
 			}
-			if ( config::general_settings.m_bullet_tracers.enabled )
+			if ( this->m_config_snapshot->general.m_bullet_tracers.enabled )
 			{
 				this->collect_bullet_hit_models( game::local_player().pawn( ), false );
 				for ( const auto& player : *players )
@@ -1842,65 +1811,111 @@ namespace features::visuals {
 		}
 	}
 
-	void bullet_impacts_t::on_render( zdraw::draw_list& draw_list )
+    void bullet_impacts_t::reset()
+    {
+	    this->m_tracers.clear();
+	    this->m_pending_shots.clear();
+	    this->m_seen_impacts.clear();
+	    this->m_seen_bullet_service.clear();
+	    this->m_seen_hitmarker_impacts.clear();
+	    this->m_hit_candidates.clear();
+	    this->m_hitmarkers.clear();
+	    this->m_pending_damage.clear();
+	    this->m_damage_popups.clear();
+	    this->m_known_health.clear();
+	    this->m_tracked_health.clear();
+	    this->m_local_utility.clear();
+	    this->m_utility_damage_sources.clear();
+	    this->m_pending_nonbullet_damage.clear();
+	    this->m_recent_bullet_hits.clear();
+	    this->m_server_health.clear();
+	    this->m_recent_hit_positions.clear();
+	    this->m_local_victim_evidence.clear();
+	    this->m_pending_server_damage.clear();
+	    this->m_hit_confirmations.clear();
+	    this->m_action_feedback.clear();
+	    this->m_action_tracking_services = 0;
+	    this->m_action_tracking_initialized = false;
+	    this->m_last_bullet_service_count = -1;
+	    this->m_last_hitmarker_impact_count = -1;
+	    this->m_last_total_hits = -1;
+	    this->m_hit_counter_pawn = 0;
+	    this->m_last_hitmarker_shot_time = -1.0f;
+	    this->m_last_fire_time = -1.0f;
+	    this->m_last_shot_render_tick = -1;
+	    this->m_next_capture = {};
+	    this->m_has_cached_weapon_ctx = false;
+	    m_render_snapshot.store({}, std::memory_order_release);
+	    m_render_pool.clear();
+	    m_snapshot_active = false;
+    }
+
+    void bullet_impacts_t::tick()
+    {
+	    const auto config = config::get_runtime_snapshot();
+	    const auto enabled =
+	        config && (config->general.m_bullet_tracers.enabled || config->general.m_hitmarker.enabled ||
+	                   config->general.m_hitsound.enabled || config->general.m_hitsound.show_damage ||
+	                   config->visual.m_chams.on_shot.enabled || config->visual.m_chams.kill_effect.enabled ||
+	                   config->general.m_event_log.enabled);
+	    if (!enabled && !m_snapshot_active)
+		    return;
+	    update_state();
+	    if (!enabled || !m_config_snapshot)
+	    {
+		    m_render_snapshot.store({}, std::memory_order_release);
+		    m_render_pool.clear();
+		    m_snapshot_active = false;
+		    return;
+	    }
+	    m_snapshot_active = true;
+	    const auto now = std::chrono::steady_clock::now();
+        const auto lifetime = std::clamp(m_config_snapshot->general.m_hitmarker.duration, 0.05f, 2.0f);
+        std::erase_if(m_hitmarkers, [&](const auto& item) {
+            return std::chrono::duration<float>(now - item.timestamp).count() >= lifetime;
+        });
+        std::erase_if(m_damage_popups, [&](const auto& item) {
+            return now - item.timestamp >= std::chrono::seconds(2);
+        });
+	    auto frame = m_render_pool.acquire();
+	    frame->config = m_config_snapshot;
+        frame->tracers = m_tracers;
+        frame->markers = m_hitmarkers;
+        frame->damage = m_damage_popups;
+        m_render_snapshot.store(std::move(frame), std::memory_order_release);
+    }
+
+	void bullet_impacts_t::update_state( )
 	{
-		const auto& cfg = config::general_settings.m_bullet_tracers;
-		const auto& hitmarker_cfg = config::general_settings.m_hitmarker;
-		const auto& hitsound_cfg = config::general_settings.m_hitsound;
+		auto snapshot = config::get_runtime_snapshot( );
+		if ( !snapshot )
+			return;
+
+		this->m_config_snapshot = std::move( snapshot );
+		const auto& cfg = this->m_config_snapshot->general.m_bullet_tracers;
+		const auto& hitmarker_cfg = this->m_config_snapshot->general.m_hitmarker;
+		const auto& hitsound_cfg = this->m_config_snapshot->general.m_hitsound;
 		const auto impact_feedback = hitmarker_cfg.enabled || hitsound_cfg.enabled
 			|| hitsound_cfg.show_damage
-			|| config::visual_settings.m_chams.on_shot.enabled
-			|| config::visual_settings.m_chams.kill_effect.enabled
-			|| config::general_settings.m_event_log.enabled;
+			|| this->m_config_snapshot->visual.m_chams.on_shot.enabled
+			|| this->m_config_snapshot->visual.m_chams.kill_effect.enabled
+			|| this->m_config_snapshot->general.m_event_log.enabled;
 		if ( !cfg.enabled && !impact_feedback )
 		{
-			this->m_tracers.clear( );
-			this->m_pending_shots.clear( );
-			this->m_seen_impacts.clear( );
-			this->m_seen_bullet_service.clear( );
-			this->m_seen_hitmarker_impacts.clear( );
-			this->m_hit_candidates.clear( );
-			this->m_hitmarkers.clear( );
-			this->m_pending_damage.clear( );
-			this->m_damage_popups.clear( );
-			this->m_known_health.clear( );
-			this->m_tracked_health.clear( );
-			this->m_local_utility.clear( );
-			this->m_utility_damage_sources.clear( );
-			this->m_pending_nonbullet_damage.clear( );
-			this->m_recent_bullet_hits.clear( );
-			this->m_server_health.clear( );
-			this->m_recent_hit_positions.clear( );
-			this->m_local_victim_evidence.clear( );
-			this->m_pending_server_damage.clear( );
-			this->m_hit_confirmations.clear( );
-			this->m_action_feedback.clear( );
-			this->m_action_tracking_services = 0;
-			this->m_action_tracking_initialized = false;
-			this->m_last_bullet_service_count = -1;
-			this->m_last_hitmarker_impact_count = -1;
-			this->m_last_total_hits = -1;
-			this->m_hit_counter_pawn = 0;
-			this->m_last_hitmarker_shot_time = -1.0f;
-			this->m_last_fire_time = -1.0f;
-			this->m_last_shot_render_tick = -1;
-			this->m_next_capture = {};
-			this->m_has_cached_weapon_ctx = false;
-			return;
+		    reset();
+		    return;
 		}
 
 		const auto now = std::chrono::steady_clock::now( );
 		if ( now >= this->m_next_capture )
 		{
 			VESTA_PERF_SCOPE( bullet_feedback_capture );
-
 			this->m_next_capture = now + std::chrono::milliseconds( 8 );
 			this->capture_shot( );
 			this->collect_exact_impacts( );
 			if ( impact_feedback )
 			{
 				this->collect_impact_hitmarkers( game::local_player().pawn( ) );
-
 				this->poll_server_hits( );
 				this->poll_action_tracking( );
 				this->collect_server_damage( );
@@ -1911,8 +1926,6 @@ namespace features::visuals {
 			this->resolve_pending_traces( );
 		}
 
-		this->render_hitmarkers( draw_list );
-		this->render_damage_numbers( draw_list );
 		if ( !hitmarker_cfg.enabled )
 		{
 			this->m_hit_candidates.clear( );
@@ -1963,10 +1976,27 @@ namespace features::visuals {
 			return;
 		}
 
+	}
+
+	void bullet_impacts_t::on_render( zdraw::draw_list& draw_list )
+	{
+        const auto frame_ptr = m_render_snapshot.load(std::memory_order_acquire);
+        if (!frame_ptr) return;
+        const auto& frame = *frame_ptr;
+		if ( !frame.config )
+			return;
+		const auto& cfg = frame.config->general.m_bullet_tracers;
+		const auto now = std::chrono::steady_clock::now( );
+		this->render_hitmarkers( draw_list, frame );
+		this->render_damage_numbers( draw_list, frame );
+		if ( frame.tracers.empty( ) || !cfg.enabled )
+			return;
+
 		const auto& matrix = game::camera().matrix( );
 		const auto cam_origin = game::camera().origin( );
 		const auto [ scr_w, scr_h ] = zdraw::get_display_size( );
 
+		// Project a single world point to screen; false if behind the camera.
 		const auto project = [ & ]( const foundation::vec3& p, foundation::vec2& out ) -> bool
 		{
 			const auto x = matrix[ 0 ][ 0 ] * p.x + matrix[ 0 ][ 1 ] * p.y + matrix[ 0 ][ 2 ] * p.z + matrix[ 0 ][ 3 ];
@@ -1981,6 +2011,8 @@ namespace features::visuals {
 			return true;
 		};
 
+		// Project a world segment to screen, clipping the near plane so a start
+		// point beside the camera still yields the visible part of the line.
 		const auto clip_line = [ & ]( const foundation::vec3& p0, const foundation::vec3& p1,
 			foundation::vec2& s0, foundation::vec2& s1 ) -> bool
 		{
@@ -2001,7 +2033,7 @@ namespace features::visuals {
 			return true;
 		};
 
-		for ( const auto& tracer : this->m_tracers )
+		for ( const auto& tracer : frame.tracers )
 		{
 			const auto elapsed = std::chrono::duration<float>( now - tracer.timestamp ).count( );
 			const auto fade = std::pow( std::clamp( 1.0f - elapsed / cfg.duration, 0.0f, 1.0f ), 2.0f );
@@ -2118,4 +2150,4 @@ namespace features::visuals {
 		}
 	}
 
-}
+} // namespace features::visuals

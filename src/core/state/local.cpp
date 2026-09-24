@@ -26,7 +26,7 @@ namespace game {
 					+ SCHEMA( "CPlayer_ObserverServices", "m_hObserverTarget"_id ) )
 				: 0u;
 		}
-	}
+	} // namespace
 
 	local_pawn_binding resolve_local_pawn( std::uintptr_t controller )
 	{
@@ -72,6 +72,8 @@ namespace game {
 		const auto base_handle = process.load<std::uint32_t>( controller
 			+ SCHEMA( "CBasePlayerController", "m_hPawn"_id ) );
 
+		// m_hPawn follows the pawn controlled by the input owner on takeover-capable
+		// builds, while m_hPlayerPawn may continue to identify the dead human pawn.
 		if ( controlling_bot )
 		{
 			add_candidate( base_handle );
@@ -96,6 +98,8 @@ namespace game {
 				+ SCHEMA( "CBasePlayerController", "m_hPawn"_id ) ) );
 		}
 
+		// Source 2 briefly exposes the taken pawn as the observer target while the
+		// controller handles are changing. It is safe only in an actual takeover.
 		if ( controlling_bot )
 			add_candidate( observer_target_handle( controller ) );
 
@@ -129,6 +133,10 @@ namespace game {
 		const auto binding = resolve_local_pawn( controller_address );
 		if ( !binding ) return reset( );
 
+		const auto snapshot = config::get_runtime_snapshot( );
+		if ( !snapshot )
+			return reset( );
+
 		const auto pawn_address = binding.pawn;
 		const auto team = binding.team;
 		const auto health = binding.health;
@@ -145,9 +153,9 @@ namespace game {
 		{
 			crosshair = app::context().process.load<std::int32_t>( pawn_address +
 				SCHEMA( "C_CSPlayerPawn", "m_iIDEntIndex"_id ) );
-			const auto combat = config::combat_settings.get(
+			const auto combat = snapshot->combat.get(
 				game::local_player().weapon_type( ) );
-			if ( config::visual_settings.m_no_flash.enabled
+			if ( snapshot->visual.m_no_flash.enabled
 				|| combat.aimbot.checks.flashed
 				|| combat.triggerbot.checks.flashed )
 			{
@@ -194,9 +202,9 @@ namespace game {
 			( game_type == 2 && game_mode == 0 );
 		const auto tick = app::context().process.load<std::uint32_t>( controller_address +
 			SCHEMA( "CBasePlayerController", "m_nTickBase"_id ) );
-		const auto needs_game_time = config::visual_settings.m_player.active( )
-			|| config::visual_settings.m_projectile.enabled
-			|| config::visual_settings.m_bomb.enabled;
+		const auto needs_game_time = snapshot->visual.m_player.active( )
+			|| snapshot->visual.m_projectile.enabled
+			|| snapshot->visual.m_bomb.enabled;
 		const auto global_vars = needs_game_time
 			? app::context().process.load<std::uintptr_t>(
 				app::context().addresses.global_vars ) : 0;
@@ -217,6 +225,25 @@ namespace game {
 		std::uint32_t tick, std::int32_t health, float game_time,
 		float flash_alpha )
 	{
+		const auto next = std::make_shared<const local_snapshot>( local_snapshot{
+			.controller = controller_address,
+			.pawn = pawn_address,
+			.pawn_handle = pawn_handle,
+			.observer_pawn = observer,
+			.team = team,
+			.view_team = view_team,
+			.crosshair_id = crosshair,
+			.alive = alive_now,
+			.team_mode = team_mode,
+			.weapon = active_weapon,
+			.weapon_vdata = weapon_data,
+			.weapon_type = active_weapon_type,
+			.tick_base = tick,
+			.health = health,
+			.game_time = game_time,
+			.flash_alpha = flash_alpha } );
+		std::atomic_store_explicit( &m_snapshot, next, std::memory_order_release );
+
 		m_controller.store( controller_address, std::memory_order_relaxed );
 		m_pawn.store( pawn_address, std::memory_order_relaxed );
 		m_pawn_handle.store( pawn_handle, std::memory_order_relaxed );
@@ -235,10 +262,15 @@ namespace game {
 		m_flash_alpha.store( flash_alpha, std::memory_order_relaxed );
 	}
 
+	std::shared_ptr<const local_snapshot> local_state::snapshot( ) const
+	{
+		return std::atomic_load_explicit( &m_snapshot, std::memory_order_acquire );
+	}
+
 	void local_state::reset( )
 	{
 		publish( 0, 0, 0, 0, 0, 0, 0, false, true, 0, 0, 0, 0,
 			0, 0.0f, 0.0f );
 	}
 
-}
+} // namespace game

@@ -28,14 +28,14 @@ namespace chams {
 			float scale_start{ 1.0f };
 			float scale_length{};
 			foundation::rotation constant_rotation{};
-			std::uint32_t read_offset{};
+			std::uint32_t read_offset{}; // in u16 words, like the file stores it
 			bool rotation_static{ true };
 			bool translation_static{ true };
 			bool scale_static{ true };
 		};
 
 		std::vector<track> tracks{};
-		std::vector<std::uint32_t> frame_offsets{};
+		std::vector<std::uint32_t> frame_offsets{}; // u16 words into `words`
 		std::vector<std::uint16_t> words{};
 		std::uint32_t frame_count{};
 		float duration{};
@@ -47,10 +47,12 @@ namespace chams {
 	[[nodiscard]] nm_skeleton load_nm_skeleton( vpk_archive& vpk, const std::string& archive_path );
 	[[nodiscard]] nm_clip load_nm_clip( vpk_archive& vpk, const std::string& archive_path );
 
+	// Maps clip tracks onto a model's bones by name. Built once per (clip, model)
+	// pair; -1 means the model has no such bone.
 	[[nodiscard]] std::vector<int> map_tracks_to_model( const nm_skeleton& skeleton, const skinned_mesh& mesh );
 
 	void sample_pose( const nm_clip& clip, const nm_skeleton& skeleton, const skinned_mesh& mesh,
 		const std::vector<int>& track_to_bone, float time,
 		std::vector<bone_matrix>& out, std::vector<bone_matrix>& world );
 
-}
+} // namespace chams

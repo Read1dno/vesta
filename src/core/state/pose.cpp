@@ -1,6 +1,7 @@
 #include <stdafx.hpp>
 
 #include <core/state/pose.hpp>
+#include <system/frame_schedule.hpp>
 
 namespace game {
 
@@ -11,7 +12,7 @@ namespace game {
 	void player_pose_sampler::set_presentation_state(
 		const bool active, const std::uint32_t display_refresh )
 	{
-		const auto rate = std::clamp<std::uint32_t>( display_refresh, 144, 240 );
+		const auto rate = std::clamp<std::uint32_t>( display_refresh, 60, 240 );
 		const auto active_changed = this->m_active.exchange(
 			active, std::memory_order_acq_rel ) != active;
 		const auto rate_changed = this->m_rate.exchange(
@@ -113,6 +114,7 @@ namespace game {
 			timer = ::CreateWaitableTimerW( nullptr, FALSE, nullptr );
 		}
 
+		foundation::frame_schedule cadence;
 		while ( true )
 		{
 			if ( !this->m_active.load( std::memory_order_acquire ) )
@@ -130,12 +132,17 @@ namespace game {
 				continue;
 			}
 
+			const auto sample_start = std::chrono::steady_clock::now();
 			this->sample_once( );
 
 			const auto rate = std::max<std::uint32_t>(
 				this->m_rate.load( std::memory_order_acquire ), 1 );
 			LARGE_INTEGER due{};
-			due.QuadPart = -static_cast<LONGLONG>( 10'000'000ull / rate );
+			cadence.set_rate(rate, sample_start);
+            cadence.advance(sample_start);
+            const auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                cadence.deadline() - std::chrono::steady_clock::now()).count();
+            due.QuadPart = -std::max<LONGLONG>(1, (remaining + 99) / 100);
 			if ( timer && ::SetWaitableTimer( timer, &due, 0, nullptr, nullptr, FALSE ) )
 			{
 				if ( wake_event )
@@ -155,4 +162,4 @@ namespace game {
 		}
 	}
 
-}
+} // namespace game

@@ -15,6 +15,8 @@ public:
 
 	template<typename T>
 	[[nodiscard]] T get( std::uintptr_t cvar_ptr );
+	template<typename T>
+	[[nodiscard]] bool try_get(std::uintptr_t cvar_ptr, T& value);
 };
 
 class field_catalog
@@ -64,8 +66,10 @@ public:
 
 	void refresh( );
 
+	// Resolve a real CHandle and reject a slot whose serial no longer matches.
 	[[nodiscard]] std::uintptr_t lookup( std::uint32_t handle ) const;
-
+	// Resolve a plain entity index such as m_iIDEntIndex or a controller-list slot.
+	// These values intentionally have no serial bits and must not pass lookup().
 	[[nodiscard]] std::uintptr_t lookup_index( std::uint32_t index ) const;
 	[[nodiscard]] std::vector<cached> by_type( type filter ) const;
 	[[nodiscard]] std::shared_ptr<const std::vector<cached>> all( ) const;
@@ -78,6 +82,7 @@ private:
 		std::uintptr_t entity_class_info{};
 		std::uint32_t schema_id{};
 		type entity_type{ type::unknown };
+		bool seen{};
 	};
 
 	[[nodiscard]] std::uintptr_t get_entity_list( ) const;
@@ -92,4 +97,4 @@ private:
 	std::unordered_map<std::uintptr_t, class_cache_entry> m_class_cache{};
 };
 
-}
+} // namespace game

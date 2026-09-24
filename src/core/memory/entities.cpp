@@ -1,4 +1,6 @@
 #include <stdafx.hpp>
+#include <core/memory/read_pair.hpp>
+#include <core/memory/entity_slot.hpp>
 
 namespace game {
 
@@ -14,20 +16,15 @@ namespace game {
 		std::uintptr_t chunk_ptrs[ 4 ]{};
 		if ( !app::context().process.copy( entity_list + 0x10, chunk_ptrs, sizeof( chunk_ptrs ) ) )
 		{
-
+			// Never publish an empty directory assembled from a failed header read.
 			return;
 		}
 
 		std::vector<cached> fresh{};
 		fresh.reserve( 64 );
 
-		thread_local std::unordered_set<std::uintptr_t> seen{};
-		seen.clear( );
-		if ( seen.bucket_count( ) < 256 )
-		{
-			seen.reserve( 256 );
-		}
-
+		// Каждый chunk хранит 512 указателей entity по шагу 0x70 (112) байт.
+		// Читаем chunk целиком одним сисколлом: 512 * 0x70 = 0xE000 (56 КБ).
 		constexpr std::size_t k_entries_per_chunk{ 512 };
 		constexpr std::size_t k_entry_stride{ 0x70 };
 		constexpr std::size_t k_chunk_size{ k_entries_per_chunk * k_entry_stride };
@@ -38,6 +35,8 @@ namespace game {
 			if ( buffer.size( ) != k_chunk_size ) buffer.resize( k_chunk_size );
 		}
 
+		// Acquire every active chunk before class-cache mutation begins. This keeps
+		// both the published directory and its identity cache transactional.
 		for ( std::int32_t ci = 0; ci < 4; ++ci )
 		{
 			if ( chunk_ptrs[ ci ] && !app::context().process.copy(
@@ -47,9 +46,13 @@ namespace game {
 			}
 		}
 
-		auto& cache = this->m_class_cache;
-		static std::uint32_t validation_phase{};
-		validation_phase = ( validation_phase + 1 ) & 7u;
+		// Класс-кэш используется только из game thread → синхронизация не нужна.
+	    auto &cache = this->m_class_cache;
+	    // Clear marks only after every chunk read succeeds; failed reads keep the cache intact.
+	    for (auto &[address, entry] : cache)
+		    entry.seen = false;
+	    static std::uint32_t validation_phase{};
+	    validation_phase = ( validation_phase + 1 ) & 7u;
 
 		for ( std::int32_t ci = 0; ci < 4; ++ci )
 		{
@@ -70,16 +73,17 @@ namespace game {
 				{
 					continue;
 				}
-				seen.insert( entity );
 
 				const auto index = static_cast<std::int32_t>( ci * k_entries_per_chunk + ei );
 
+				// Hot path: entity уже классифицирован — пропускаем 6 сисколлов на чтение схемы.
 				if ( auto it = cache.find( entity ); it != cache.end( ) )
 				{
+				    it->second.seen = true;
 
-					const auto audit_identity =
-						( ( static_cast<std::uint32_t>( index ) + validation_phase ) & 7u ) == 0u;
-					if ( !audit_identity )
+				    const auto audit_identity =
+				        ((static_cast<std::uint32_t>(index) + validation_phase) & 7u) == 0u;
+				    if ( !audit_identity )
 					{
 						if ( it->second.entity_type != type::unknown )
 						{
@@ -89,9 +93,12 @@ namespace game {
 						continue;
 					}
 
-					const auto identity_8 = app::context().process.load<std::uintptr_t>( entity + 0x8 );
-					const auto identity_10 = app::context().process.load<std::uintptr_t>( entity + 0x10 );
-					const auto identity_matches = it->second.entity_identity != 0 &&
+				    const auto [identity_8, identity_10] =
+				        foundation::read_pair<std::uintptr_t, std::uintptr_t, 8>(
+				            entity + 0x8, [](auto address, auto *out, auto size) {
+					            return app::context().process.copy(address, out, size);
+				            });
+				    const auto identity_matches = it->second.entity_identity != 0 &&
 						( identity_8 == it->second.entity_identity || identity_10 == it->second.entity_identity );
 					const auto class_info = identity_matches
 						? app::context().process.load<std::uintptr_t>( it->second.entity_identity + 0x8 )
@@ -108,6 +115,8 @@ namespace game {
 						continue;
 					}
 
+					// Entity slots and allocations are reused between rounds. A pointer match
+					// alone does not mean this is still an instance of the same class.
 					cache.erase( it );
 				}
 
@@ -116,16 +125,17 @@ namespace game {
 				const auto schema_id = this->get_schema_id( entity, identity, class_info );
 				if ( !schema_id )
 				{
-
+					// Transient read/layout failure -- retry next refresh instead of
+					// permanently caching this entity as unknown.
 					continue;
 				}
 
 				const auto entity_type = this->classify( schema_id );
 
-				cache.emplace( entity, class_cache_entry{ identity, class_info, schema_id, entity_type } );
+			    cache.emplace(entity, class_cache_entry{identity, class_info, schema_id, entity_type, true});
 
-				if ( entity_type == type::unknown )
-				{
+			    if (entity_type == type::unknown)
+			    {
 					continue;
 				}
 
@@ -133,11 +143,13 @@ namespace game {
 			}
 		}
 
+		// Remove entities as soon as they disappear. Keeping them until an arbitrary
+		// size threshold leaves stale class identities alive across round changes.
 		for ( auto it = cache.begin( ); it != cache.end( ); )
 		{
-			if ( !seen.contains( it->first ) )
-				it = cache.erase( it );
-			else
+		    if (!it->second.seen)
+			    it = cache.erase(it);
+		    else
 				++it;
 		}
 
@@ -164,44 +176,9 @@ namespace game {
 	std::uintptr_t entity_directory::lookup_slot(
 		std::uint32_t value, bool validate_serial ) const
 	{
-		if ( !value || value == 0xffffffff )
-		{
-			return 0;
-		}
-
-		const auto entity_list = this->get_entity_list( );
-		if ( !entity_list )
-		{
-			return 0;
-		}
-
-		const auto list_entry = app::context().process.load<std::uintptr_t>( entity_list + ( static_cast< std::uintptr_t >( ( value & 0x7fff ) >> 9 ) * 8 ) + 0x10 );
-		if ( !list_entry )
-		{
-			return 0;
-		}
-
-		const auto identity = list_entry
-			+ ( static_cast<std::uintptr_t>( value & 0x1ff ) * 112 );
-		const auto entity = app::context().process.load<std::uintptr_t>( identity );
-		if ( !entity || entity < 0x10000 )
-		{
-			return 0;
-		}
-
-		if ( validate_serial )
-		{
-			const auto resident_handle = app::context().process.load<std::uint32_t>(
-				identity + 0x10 );
-			if ( resident_handle != 0 && resident_handle != 0xffffffff
-				&& resident_handle != value )
-			{
-				return 0;
-			}
-		}
-
-		return entity;
-	}
+        return read_entity_slot(get_entity_list(),value,validate_serial,
+            [](auto address,void* out,auto size) { return app::context().process.copy(address,out,size); });
+    }
 
 	std::vector<entity_directory::cached> entity_directory::by_type( type filter ) const
 	{
@@ -259,7 +236,7 @@ namespace game {
 			return len >= 3;
 		}
 
-	}
+	} // namespace
 
 	std::uint32_t entity_directory::get_schema_id( std::uintptr_t entity, std::uintptr_t& resolved_identity, std::uintptr_t& resolved_class_info ) const
 	{
@@ -270,7 +247,7 @@ namespace game {
 		{
 			std::uint32_t ident_off;
 			std::uint32_t name_off;
-			bool extra_deref;
+			bool extra_deref; // name_ptr = read( read( class_info + name_off ) + 0x8 )
 		};
 
 		static constexpr chain k_chains[ ]{

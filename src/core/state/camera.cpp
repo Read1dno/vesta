@@ -27,17 +27,10 @@ namespace game {
 		} sample{};
 		static_assert( sizeof( camera_sample ) == 0x18 );
 
-		if ( app::context().process.copy( view_state, &sample, sizeof( sample ) ) )
-		{
-			origin = sample.origin;
-			angles = sample.angles;
-		}
-		else
-		{
-
-			origin = app::context().process.load<foundation::vec3>( view_state );
-			angles = app::context().process.load<foundation::vec3>( view_state + 0xc );
-		}
+        if (!app::context().process.copy(view_state, &sample, sizeof(sample)))
+            return false;
+        origin = sample.origin;
+        angles = sample.angles;
 		return std::isfinite( origin.x ) && std::isfinite( origin.y ) && std::isfinite( origin.z )
 			&& std::isfinite( angles.x ) && std::isfinite( angles.y ) && std::isfinite( angles.z );
 	}
@@ -223,7 +216,13 @@ namespace game {
 			&& std::isfinite( sample.angles.x )
 			&& std::isfinite( sample.angles.y )
 			&& std::isfinite( sample.angles.z )
-			&& std::isfinite( sample.fov );
+			&& std::isfinite( sample.fov ) && sample.fov > 0.0f && sample.fov < 180.0f
+            && [&sample] {
+                for (int r = 0; r < 4; ++r)
+                    for (int c = 0; c < 4; ++c)
+                        if (!std::isfinite(sample.matrix[r][c])) return false;
+                return true;
+            }();
 	}
 
 	void camera_state::begin_presentation_frame(
@@ -240,4 +239,4 @@ namespace game {
 		this->m_fov = sample.fov;
 	}
 
-}
+} // namespace game

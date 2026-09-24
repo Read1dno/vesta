@@ -108,7 +108,8 @@ namespace chams {
 				float3 N = normalize(input.Normal);
 				if (g_HasNormal != 0)
 				{
-
+					// BC5 stores only XY; Z is reconstructed as the unit-length
+					// completion, which is why the map has no blue channel.
 					float2 packed = g_Normal.Sample(g_Sampler, input.UV).xy * 2.0f - 1.0f;
 					float3 tangentNormal = float3(packed, sqrt(saturate(1.0f - dot(packed, packed))));
 					float3x3 tbn = float3x3(normalize(input.Tangent), normalize(input.Bitangent), N);
@@ -118,6 +119,9 @@ namespace chams {
 				float metalness = g_HasMetalness != 0 ? g_Metalness.Sample(g_Sampler, input.UV).r : 0.0f;
 				float ao        = g_HasAO        != 0 ? g_AO.Sample(g_Sampler, input.UV).r : 1.0f;
 
+				// Cloth and gear are close to fully rough; the default leans that
+				// way so a material without a gloss map reads as fabric rather
+				// than the latex look a hardcoded tight highlight produced.
 				float roughness = 0.82f;
 				if (g_HasGloss != 0)
 				{
@@ -127,6 +131,11 @@ namespace chams {
 				float3 V = normalize(g_EyePos - input.WorldPos);
 				N = dot(N, V) < 0.0f ? -N : N;
 
+				// Soft three-point rig. Diffuse is wrapped (half-lambert) rather
+				// than clamped, so the terminator falls off gently instead of
+				// cutting a hard line across the body, and the lights are tinted:
+				// warm key, cool fill, warm rim. That reads as studio lighting
+				// rather than a lamp bolted to the camera.
 				float3 key  = normalize(V + float3( 0.55f,  0.45f, 0.55f));
 				float3 fill = normalize(V + float3(-0.75f, -0.25f, 0.10f));
 
@@ -134,10 +143,12 @@ namespace chams {
 				float wrap_fill = saturate(dot(N, fill) * 0.5f + 0.5f);
 				float rim       = pow(1.0f - saturate(dot(N, V)), 2.5f);
 
-				const float3 key_color  = float3(1.00f, 0.93f, 0.82f);
-				const float3 fill_color = float3(0.72f, 0.80f, 0.95f);
+				const float3 key_color  = float3(1.00f, 0.93f, 0.82f); // warm
+				const float3 fill_color = float3(0.72f, 0.80f, 0.95f); // cool
 				const float3 rim_color  = float3(1.00f, 0.88f, 0.72f);
 
+				// Sky/ground ambient: a little brighter from above, keeping the
+				// undersides readable without flattening the form.
 				float  sky = saturate(N.z * 0.5f + 0.5f);
 				float3 ambient = lerp(float3(0.16f, 0.17f, 0.20f), float3(0.30f, 0.30f, 0.31f), sky);
 
@@ -147,6 +158,9 @@ namespace chams {
 
 				float3 diffuse = albedo.rgb * light * ao;
 
+				// Broad, weak lobe: exponent falls with roughness and the whole
+				// term is scaled down by it, so a rough surface keeps almost no
+				// highlight instead of a plastic sheen.
 				float3 H = normalize(key + V);
 				float gloss_exp = lerp(64.0f, 4.0f, roughness);
 				float spec = pow(saturate(dot(N, H)), gloss_exp) * (1.0f - roughness) * 0.5f;
@@ -155,12 +169,13 @@ namespace chams {
 				float3 rgb = diffuse + specColor * spec + rim_color * albedo.rgb * rim * 0.18f;
 				return float4(rgb, 1.0f);
 			}
-)";
+		)";
 
 		void build_view_projection( const foundation::vec3& eye, const foundation::vec3& target,
 			float fov_radians, float aspect, float near_z, float far_z, float out[ 4 ][ 4 ] )
 		{
-
+			// Right-handed look-at, then a D3D-style [0,1] depth projection, in the
+			// same row-major convention game::view uses: clip = M * (world, 1).
 			auto forward = target - eye;
 			const auto forward_len = forward.length( );
 			if ( forward_len > 1e-6f )
@@ -178,6 +193,7 @@ namespace chams {
 			const auto w = h / aspect;
 			const auto q = far_z / ( far_z - near_z );
 
+			// View rows dotted with (world - eye), then scaled into clip space.
 			const float view[ 3 ][ 3 ]{
 				{ right.x, right.y, right.z },
 				{ up.x, up.y, up.z },
@@ -202,7 +218,7 @@ namespace chams {
 			out[ 3 ][ 3 ] = t[ 2 ];
 		}
 
-	}
+	} // namespace
 
 	bool preview::initialize( ID3D11Device* device, ID3D11DeviceContext* context )
 	{
@@ -277,7 +293,7 @@ namespace chams {
 			return false;
 		}
 
-		cb.ByteWidth = sizeof( float ) * 16 * 128;
+		cb.ByteWidth = sizeof( float ) * 16 * 128; // matches g_Bones[128]
 		if ( FAILED( this->m_device->CreateBuffer( &cb, nullptr, &this->m_cb_bones ) ) )
 		{
 			return false;
@@ -299,7 +315,8 @@ namespace chams {
 
 		D3D11_RASTERIZER_DESC rs{};
 		rs.FillMode = D3D11_FILL_SOLID;
-
+		// Winding order was never established for these meshes, and the shader
+		// flips normals toward the viewer, so both faces render correctly.
 		rs.CullMode = D3D11_CULL_NONE;
 		rs.DepthClipEnable = TRUE;
 		if ( FAILED( this->m_device->CreateRasterizerState( &rs, &this->m_rasterizer ) ) ) return false;
@@ -408,6 +425,8 @@ namespace chams {
 			return it->second.srv;
 		}
 
+		// Cache the failure too -- a missing texture must not re-read the VPK
+		// every single frame.
 		gpu_texture entry{};
 		const auto data = load_texture( vpk, path );
 
@@ -431,7 +450,7 @@ namespace chams {
 
 				subresources[ level ].pSysMem = data.mips[ level ].data( );
 				subresources[ level ].SysMemPitch = data.block_size != 0
-					? blocks_x * data.block_size
+					? blocks_x * data.block_size            // one row of 4x4 blocks
 					: w * 4;
 			}
 
@@ -500,7 +519,8 @@ namespace chams {
 
 	void preview::update_camera( const skinned_mesh& mesh, std::uint32_t width, std::uint32_t height )
 	{
-
+		// Frame the model from its own bounds rather than a hardcoded distance, so
+		// any agent fills the viewport the same way.
 		foundation::vec3 mins{ 1e9f, 1e9f, 1e9f };
 		foundation::vec3 maxs{ -1e9f, -1e9f, -1e9f };
 		for ( const auto& v : mesh.vertices )
@@ -512,7 +532,7 @@ namespace chams {
 
 		const foundation::vec3 center{ ( mins.x + maxs.x ) * 0.5f, ( mins.y + maxs.y ) * 0.5f, ( mins.z + maxs.z ) * 0.5f };
 
-		constexpr auto k_box_top = 0.035f;
+		constexpr auto k_box_top = 0.035f;    // matches unit_min/unit_max in the editor
 		constexpr auto k_box_bottom = 0.828f;
 		constexpr auto k_box_fill = k_box_bottom - k_box_top;
 		constexpr auto k_box_center = ( k_box_top + k_box_bottom ) * 0.5f;
@@ -523,11 +543,17 @@ namespace chams {
 		const auto aspect = static_cast< float >( width ) / static_cast< float >( std::max<std::uint32_t>( height, 1 ) );
 		const auto tan_half = std::tan( vertical_fov * 0.5f );
 
+		// At distance d the visible half-height is d * tan(fov/2); solving for the
+		// model covering k_box_fill of the viewport gives the distance directly.
 		const auto distance = half_height / ( k_box_fill * tan_half );
 
+		// The box is not vertically centred in the viewport, so the camera looks
+		// slightly below the model's centre to line the two up.
 		const auto ndc_center = 1.0f - 2.0f * k_box_center;
 		const foundation::vec3 target{ center.x, center.y, center.z - ndc_center * distance * tan_half };
 
+		// Camera stays level with that target: the figure is upright and only
+		// spins about the vertical axis, so there is no pitch to apply.
 		this->m_eye = foundation::vec3{
 			target.x + distance * std::cos( this->m_yaw ),
 			target.y + distance * std::sin( this->m_yaw ),
@@ -548,6 +574,8 @@ namespace chams {
 				"animation/anims/ui_anims/main_menu/ct/ct_main_menu_famas_idle.vnmclip" );
 		}
 
+		// The mapping is by bone name, so it only has to be rebuilt when the
+		// previewed model changes.
 		if ( this->m_idle_mapped_model != model_path )
 		{
 			this->m_idle_mapped_model = model_path;
@@ -570,6 +598,8 @@ namespace chams {
 			return false;
 		}
 
+		// Prefer the animated transform so overlays track the pose; inverting
+		// inverse_bind recovers the bind pose when nothing is playing.
 		const auto m = bone < this->m_bone_world.size( )
 			? this->m_bone_world[ bone ]
 			: this->m_mesh->bones[ bone ].inverse_bind.inverse_rigid( );
@@ -606,6 +636,7 @@ namespace chams {
 			? this->m_bone_world[ bone ]
 			: to_bone.inverse_rigid( );
 
+		// Rotation only -- translation columns are deliberately not applied.
 		const float local[ 3 ]{
 			to_bone.m[ 0 ][ 0 ] * model_space.x + to_bone.m[ 0 ][ 1 ] * model_space.y + to_bone.m[ 0 ][ 2 ] * model_space.z,
 			to_bone.m[ 1 ][ 0 ] * model_space.x + to_bone.m[ 1 ][ 1 ] * model_space.y + to_bone.m[ 1 ][ 2 ] * model_space.z,
@@ -677,7 +708,7 @@ namespace chams {
 		}
 		else
 		{
-
+			// No clip: fall back to the bind pose rather than inventing motion.
 			this->m_skin_matrices.assign( mesh.bones.size( ), bone_matrix::identity( ) );
 			this->m_bone_world.clear( );
 		}
@@ -701,6 +732,8 @@ namespace chams {
 			this->m_context->Unmap( this->m_cb_bones, 0 );
 		}
 
+		// This runs while ImGui is still recording, so the overlay's own render
+		// target and viewport must be back in place before returning.
 		ID3D11RenderTargetView* saved_rtv{};
 		ID3D11DepthStencilView* saved_dsv{};
 		this->m_context->OMGetRenderTargets( 1, &saved_rtv, &saved_dsv );
@@ -708,10 +741,14 @@ namespace chams {
 		D3D11_VIEWPORT saved_viewport{};
 		this->m_context->RSGetViewports( &saved_viewport_count, &saved_viewport );
 
+		// When antialiasing is on, render into the multisampled targets and resolve
+		// into m_color_texture at the end; otherwise draw straight into it.
 		const bool use_msaa = config::visual_settings.m_chams.antialiasing && this->m_msaa_samples > 1;
 		ID3D11RenderTargetView* const active_rtv = use_msaa ? this->m_msaa_rtv : this->m_rtv;
 		ID3D11DepthStencilView* const active_dsv = use_msaa ? this->m_msaa_dsv : this->m_dsv;
 
+		// Fully transparent: the editor composites this over its own panel, so an
+		// opaque clear showed up as a second container box inside the editor.
 		constexpr float clear[ 4 ]{ 0.0f, 0.0f, 0.0f, 0.0f };
 		this->m_context->ClearRenderTargetView( active_rtv, clear );
 		this->m_context->ClearDepthStencilView( active_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0 );
@@ -739,6 +776,7 @@ namespace chams {
 		this->m_context->IASetVertexBuffers( 0, 1, &gpu->vertex_buffer, &stride, &offset );
 		this->m_context->IASetIndexBuffer( gpu->index_buffer, DXGI_FORMAT_R32_UINT, 0 );
 
+		// One draw per material range: each carries its own texture set.
 		for ( const auto& dc : mesh.draw_calls )
 		{
 			const auto& material = this->get_material( vpk, dc.material );
@@ -769,6 +807,8 @@ namespace chams {
 				material.ambient_occlusion, material.gloss };
 			this->m_context->PSSetShaderResources( 0, 5, views );
 
+			// A draw call whose albedo never resolved would sample black and hide
+			// the model; skip it rather than paint a silhouette.
 			if ( material.color && !chams_material )
 			{
 				this->m_context->DrawIndexed( dc.index_count, dc.index_offset, 0 );
@@ -783,7 +823,7 @@ namespace chams {
 
 		if ( use_msaa )
 		{
-
+			// Resolve the multisampled colour into the SRV texture the editor samples.
 			this->m_context->OMSetRenderTargets( 0, nullptr, nullptr );
 			this->m_context->ResolveSubresource( this->m_color_texture, 0, this->m_msaa_color, 0, DXGI_FORMAT_R8G8B8A8_UNORM );
 		}
@@ -830,4 +870,4 @@ namespace chams {
 		this->m_ready = false;
 	}
 
-}
+} // namespace chams

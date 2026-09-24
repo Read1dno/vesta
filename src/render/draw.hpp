@@ -4,7 +4,7 @@
 #include <backends/imgui_impl_dx11.h>
 #include <backends/imgui_impl_win32.h>
 #include <misc/freetype/imgui_freetype.h>
-#include <nlohmann/json.hpp>
+#include <external/json.hpp>
 #include <string>
 #include <string_view>
 #include <span>
@@ -15,9 +15,11 @@
 
 namespace zdraw {
 
+// Forward declarations
 struct font;
 struct font_atlas;
 
+// rgba - same layout as before
 struct rgba
 {
 	union
@@ -49,6 +51,7 @@ struct rgba
 	}
 };
 
+// text_style - same as before
 enum class text_style : std::uint8_t
 {
 	normal,
@@ -69,10 +72,12 @@ enum class font_raster_profile : std::uint8_t
 		|| profile == font_raster_profile::esp_icon;
 }
 
+// font wrapper around ImFont
 struct font
 {
 	ImFont* im_font{ nullptr };
-
+	// Optional source without the embedded ESP outline. It is only used for a
+	// deliberately unoutlined draw (for example the clipped ammo colour mask).
 	ImFont* plain_im_font{ nullptr };
 	float font_size{ 12.0f };
 	font_raster_profile raster_profile{ font_raster_profile::smooth };
@@ -101,12 +106,14 @@ struct font
 	void clear_caches() const noexcept {}
 };
 
+// Font atlas (stub for compatibility)
 struct font_atlas
 {
 	int m_width{ 0 };
 	int m_height{ 0 };
 };
 
+// Global font stack
 inline std::vector<font*> g_font_stack{};
 inline font* g_default_font{ nullptr };
 inline std::vector<std::unique_ptr<font>> g_owned_fonts{};
@@ -137,13 +144,14 @@ inline void shutdown_fonts() noexcept
 	g_owned_fonts.clear();
 }
 
+// Push/pop font
 inline void push_font(font* f)
 {
 	if (!f || !f->im_font)
 	{
-
+		// Fall back to default font if the requested font is invalid or null
 		f = g_default_font;
-		if (!f) return;
+		if (!f) return; // No default font available
 	}
 	g_font_stack.push_back(f);
 }
@@ -161,6 +169,7 @@ inline font* get_current_font()
 	return g_default_font;
 }
 
+// Measure text
 inline std::pair<float, float> measure_text(std::string_view text, const font* fnt = nullptr)
 {
 	const auto* f = fnt ? fnt : get_current_font();
@@ -172,12 +181,14 @@ inline std::pair<float, float> measure_text(std::string_view text, const font* f
 	return { sz.x, sz.y };
 }
 
+// Get display size
 inline std::pair<int, int> get_display_size()
 {
 	const auto& io = ImGui::GetIO();
 	return { static_cast<int>(io.DisplaySize.x), static_cast<int>(io.DisplaySize.y) };
 }
 
+// draw_list - wraps ImDrawList
 class draw_list
 {
 public:
@@ -187,6 +198,7 @@ public:
 	explicit draw_list(ImDrawList* list = nullptr, float alpha = 1.0f)
 		: m_im_draw_list(list), m_alpha(std::clamp(alpha, 0.0f, 1.0f)) {}
 
+	// Convert rgba to ImU32
 	static ImU32 to_im_color(const rgba& c)
 	{
 		return IM_COL32(c.r, c.g, c.b, c.a);
@@ -208,7 +220,7 @@ public:
 	void add_rect(float x, float y, float w, float h, rgba color, float thickness = 1.0f)
 	{
 		if (!this->m_im_draw_list) return;
-
+		// Draw as outline using AddRect with rounding
 		const float half = thickness * 0.5f;
 		this->m_im_draw_list->AddRect(
 			ImVec2(x - half, y - half),
@@ -326,7 +338,8 @@ public:
 				this->m_im_draw_list->AddText(font->im_font, size, ImVec2(x, y - 1), outline_col, text.data(), text.data() + text.size());
 				this->m_im_draw_list->AddText(font->im_font, size, ImVec2(x, y + 1), outline_col, text.data(), text.data() + text.size());
 			}
-
+			// ESP glyphs already carry fill and outline in one atlas rectangle;
+			// the font-atlas pixel shader composites both from this single quad.
 		}
 		else if (style == text_style::shadowed)
 		{
@@ -341,11 +354,12 @@ public:
 
 	void add_text_multi_color(float x, float y, std::string_view text, const font* f, rgba color_tl, rgba color_tr, rgba color_br, rgba color_bl)
 	{
-
+		// ImGui doesn't support multi-color text natively, fall back to single color
 		this->add_text(x, y, text, f, color_tl);
 	}
 };
 
+// Font management
 inline font* add_font_from_memory(const void* font_data, int font_size, float size_pixels,
 	int atlas_width = 512, int atlas_height = 512,
 	font_raster_profile raster_profile = font_raster_profile::smooth,
@@ -353,7 +367,8 @@ inline font* add_font_from_memory(const void* font_data, int font_size, float si
 {
 	(void)atlas_width;
 	(void)atlas_height;
-
+	// Validate the common TrueType and OpenType signatures before handing the
+	// embedded byte array to FreeType.
 	if (!font_data || font_size < 4 || !std::isfinite(size_pixels) || size_pixels <= 0.0f)
 		return nullptr;
 	const auto* bytes = static_cast<const unsigned char*>(font_data);
@@ -363,7 +378,7 @@ inline font* add_font_from_memory(const void* font_data, int font_size, float si
 		&& bytes[2] == 'T' && bytes[3] == 'O';
 	if (!true_type && !open_type)
 	{
-
+		// Not a valid TTF font - silently skip
 		return nullptr;
 	}
 
@@ -379,7 +394,7 @@ inline font* add_font_from_memory(const void* font_data, int font_size, float si
 	cfg.FontLoaderFlags = ImGuiFreeTypeLoaderFlags_LightHinting
 		| ( is_esp_profile( raster_profile )
 			? ImGuiFreeTypeLoaderFlags_VestaEspMask : 0u );
-	cfg.FontDataOwnedByAtlas = false;
+	cfg.FontDataOwnedByAtlas = false; // Data stays valid for lifetime of program
 
 	ImFont* im_font = fonts->AddFontFromMemoryTTF(
 		const_cast<void*>(font_data),
@@ -442,6 +457,7 @@ inline bool merge_font_from_file(font* destination, std::string_view filepath,
 inline font* get_font() { return g_default_font; }
 inline font* get_default_font() { return g_default_font; }
 
+// JSON serialization for rgba (must be in zdraw namespace for ADL)
 struct json_rgba
 {
 	std::uint8_t r, g, b, a;
@@ -460,6 +476,7 @@ inline void from_json(const nlohmann::json& j, rgba& c)
 	c.r = tmp.r; c.g = tmp.g; c.b = tmp.b; c.a = tmp.a;
 }
 
+// Stub functions for compatibility
 inline bool initialize(void* device, void* context) { return true; }
 inline float get_delta_time() { return ImGui::GetIO().DeltaTime; }
 inline void begin_frame() {}
@@ -473,4 +490,4 @@ inline draw_list& get_draw_list(int layer = 0)
 inline void push_clip_rect(float x0, float y0, float x1, float y1) {}
 inline void pop_clip_rect() {}
 
-}
+} // namespace zdraw

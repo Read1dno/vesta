@@ -6,6 +6,7 @@
 #include <limits>
 #include <optional>
 #include <shared_mutex>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,7 @@ public:
 		std::uint8_t global_index{ 255 };
 		std::uint32_t contents{};
 		float density{};
+		std::uint32_t interacts_as{};
 	};
 
 	struct global_surface_entry
@@ -134,10 +136,12 @@ public:
 		std::uint64_t entity_revision{};
 	};
 
-	void parse( );
-	[[nodiscard]] bool build_from_map_file( const std::string& map_name );
-	void refresh_map_entities( );
+	void parse( std::stop_token stop = {} );
+	[[nodiscard]] bool build_from_map_file( const std::string& map_name,
+		std::stop_token stop = {} );
+	void refresh_map_entities(std::stop_token stop = {});
 	void clear( );
+	void replace_with(collision_world &built);
 
 	[[nodiscard]] std::vector<global_surface_entry> read_surface_table( ) const;
 	[[nodiscard]] trace_result trace_ray( const foundation::vec3& start,
@@ -242,4 +246,4 @@ private:
 	std::uint64_t m_entity_render_revision{};
 };
 
-}
+} // namespace game

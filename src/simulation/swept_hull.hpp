@@ -120,4 +120,4 @@ struct swept_hull_contact
 		.normal = normal };
 }
 
-}
+} // namespace simulation::geometry

@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include <core/memory/compatibility_contracts.hpp>
 
 namespace game {
 
@@ -30,9 +31,10 @@ namespace game {
 			return len >= 2;
 		}
 
+		// ConVarData current value; +8 points to the default, not the live value.
 		std::atomic<std::uint32_t> g_value_offset{ 0x58 };
 
-	}
+	} // namespace
 
 	std::uintptr_t variable_registry::find( std::uint32_t name_id )
 	{
@@ -48,6 +50,8 @@ namespace game {
 				return map;
 			}
 
+			// The list-head slot inside CCvar drifts between builds; probe candidates
+			// and keep the one that actually yields a large set of named entries.
 			for ( const std::uintptr_t head_off : { 0x48, 0x40, 0x50, 0x58, 0x60, 0x68 } )
 			{
 				const auto base = app::context().process.load<std::uintptr_t>( cvar + head_off );
@@ -58,7 +62,7 @@ namespace game {
 
 				constexpr std::size_t k_node_stride{ 16 };
 				constexpr std::size_t k_nodes_per_chunk{ 4096 };
-				constexpr std::size_t k_max_chunks{ 8 };
+				constexpr std::size_t k_max_chunks{ 8 }; // 32768 nodes max
 
 				std::vector<std::uint8_t> buffer( k_nodes_per_chunk * k_node_stride );
 
@@ -100,26 +104,11 @@ namespace game {
 					}
 				}
 
+				// A wrong slot yields near-zero plausible names; the real list has thousands.
 				if ( map.size( ) >= 200 )
 				{
 					app::context().diagnostics.info( "[diag] cvar list found at CCvar+{:#x} ({} convars)", head_off, map.size( ) );
 
-					if ( const auto it = map.find( identity::of( "sv_gravity" ) ); it != map.end( ) )
-					{
-						const auto current = g_value_offset.load( std::memory_order_relaxed );
-						if ( app::context().process.load<float>( it->second + current ) != 800.0f )
-						{
-							for ( std::uint32_t off = 0x40; off <= 0x90; off += 4 )
-							{
-								if ( app::context().process.load<float>( it->second + off ) == 800.0f )
-								{
-									g_value_offset.store( off, std::memory_order_relaxed );
-									app::context().diagnostics.info( "[diag] cvar value offset recalibrated: +{:#x}", off );
-									break;
-								}
-							}
-						}
-					}
 
 					return map;
 				}
@@ -146,9 +135,23 @@ namespace game {
 		return app::context().process.load<T>( cvar_ptr + g_value_offset.load( std::memory_order_relaxed ) );
 	}
 
+    template<typename T>
+    bool variable_registry::try_get(std::uintptr_t ptr, T& value)
+    {
+        value = {};
+        if (!ptr) return false;
+        std::array<std::byte, 0x5c> data{};
+        if (!app::context().process.copy(ptr, data.data(), data.size())) return false;
+        return compatibility::detail::convar_value(data,value);
+    }
+
+    template bool variable_registry::try_get<bool>(std::uintptr_t, bool&);
+    template bool variable_registry::try_get<int>(std::uintptr_t, int&);
+    template bool variable_registry::try_get<float>(std::uintptr_t, float&);
+
 	template int variable_registry::get<int>( std::uintptr_t );
 	template float variable_registry::get<float>( std::uintptr_t );
 	template bool variable_registry::get<bool>( std::uintptr_t );
 	template std::uint8_t variable_registry::get<std::uint8_t>( std::uintptr_t );
 
-}
+} // namespace game

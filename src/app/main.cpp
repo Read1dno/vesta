@@ -1,8 +1,13 @@
 #include <stdafx.hpp>
 #include <app/context.hpp>
+#include <core/memory/compatibility.hpp>
+#include <app/startup_stage.hpp>
 #include <app/workers.hpp>
+#include <simulation/seed_diagnostics.hpp>
 #include <render/overlay/ui.hpp>
 #include <scripting/runtime.hpp>
+
+namespace features::misc { int auto_accept_report( const char* path ); }
 
 #include <timeapi.h>
 #pragma comment( lib, "winmm.lib" )
@@ -37,18 +42,32 @@ namespace
 
 }
 
-int main( )
+int main(int argc, char** argv)
 {
+    if (argc == 3 && std::string_view(argv[1]) == "--seed-snapshot-report")
+        return simulation::seed_diagnostics::report(argv[2]);
+    if (argc == 3 && std::string_view(argv[1]) == "--compatibility-report")
+        return game::compatibility::report(argv[2]);
+    if (argc == 3 && std::string_view(argv[1]) == "--auto-accept-report")
+        return features::misc::auto_accept_report(argv[2]);
 	::SetProcessDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 );
-#if defined( VESTA_PERF_LOG ) && VESTA_PERF_LOG
-
-	const DWORD ui_access_result = ERROR_SUCCESS;
-#else
-	if ( !ui_access::elevated( ) )
+#if defined(VESTA_WINDOWED_PROFILE) && VESTA_WINDOWED_PROFILE
+	constexpr DWORD ui_access_result = ERROR_SUCCESS;
+#elif defined(VESTA_INSTALLED_UIACCESS) && VESTA_INSTALLED_UIACCESS
+	if (!ui_access::enabled())
 	{
-		const DWORD elevation_result = ui_access::elevate( );
-		return elevation_result == ERROR_SUCCESS ? 0 : 1;
+		::MessageBoxW(nullptr,
+		              L"Vesta requires the UIAccess token declared in its manifest. "
+		              L"Install a trusted, signed build in Program Files.",
+		              L"Vesta installation", MB_OK | MB_ICONERROR);
+		return 1;
 	}
+	constexpr DWORD ui_access_result = ERROR_SUCCESS;
+#else
+	// Elevation is a bootstrap stage; no game, window or D3D state exists yet.
+	if (app::select_startup_stage(ui_access::elevated(), ui_access::enabled()) ==
+	    app::startup_stage::request_elevation)
+		return ui_access::elevate() == ERROR_SUCCESS ? 0 : 1;
 	const DWORD ui_access_result = ui_access::prepare( );
 #endif
 	const single_instance_guard instance{};
@@ -65,9 +84,11 @@ int main( )
 
 		if ( ui_access_result != ERROR_SUCCESS )
 		{
-			app::context().diagnostics.warning(
-				"UIAccess initialization failed with Win32 error {}; continuing without UIAccess.",
-				ui_access_result );
+			const auto message = std::format(
+                L"UIAccess initialization failed (Win32 {}). Vesta requires UIAccess for presentation.",
+                ui_access_result );
+            ::MessageBoxW(nullptr, message.c_str(), L"Vesta startup", MB_OK | MB_ICONERROR);
+            return 1;
 		}
 	}
 
@@ -104,7 +125,8 @@ int main( )
 	}
 
 	{
-
+		// Start from the curated legit profile, then overlay the user's last live
+		// cache.  Clean installs and missing/new keys therefore inherit legit.cfg.
 		config::apply_default_config( );
 		if ( !config::storage.read_cache( ) )
 		{
@@ -116,6 +138,8 @@ int main( )
 				"Lua runtime storage could not be initialized; scripting is disabled." );
 			config::general_settings.lua_enabled = false;
 		}
+
+		config::publish_runtime_snapshot();
 
 		const auto game_process = static_cast<HANDLE>(
 			app::context().process.native_handle( ) );
@@ -151,10 +175,17 @@ int main( )
 		std::thread( app::workers::watchdog ).detach( );
 #endif
 
+#if defined(VESTA_WINDOWED_PROFILE) && VESTA_WINDOWED_PROFILE
+		std::thread([] {
+			::Sleep(90'000);
+			app::context().overlay.request_shutdown();
+		}).detach();
+#endif
+
 		if ( !app::context().overlay.launch( ) )
 		{
 			scripting::runtime().shutdown( );
-			return 1;
+			::ExitProcess(EXIT_FAILURE);
 		}
 	}
 	scripting::runtime().shutdown( );

@@ -3,7 +3,7 @@
 #include <config/default_profile.hpp>
 #include <config/settings.hpp>
 #include <render/menu/localization.hpp>
-#include <nlohmann/json.hpp>
+#include <external/json.hpp>
 #include <fstream>
 #include <filesystem>
 #include <cstdio>
@@ -148,7 +148,8 @@ static void from_json(const json& j, combat_profile::global_settings& g)
 	g.triggerbot_activation_mode = std::clamp(g.triggerbot_activation_mode,
 		static_cast<int>(combat_profile::activation::hold),
 		static_cast<int>(combat_profile::activation::toggle));
-
+	// Legacy Simple was equivalent to unseeded Advanced with zero hitchance and
+	// only a pre-shot delay. Migrate it once while no longer serializing the mode.
 	const auto legacy_simple_mode = j.value("triggerbot_mode", 0) == 1;
 	if (j.contains("triggerbot_seed_type"))
 		j.at("triggerbot_seed_type").get_to(g.triggerbot_seed_type);
@@ -947,7 +948,8 @@ static void from_json(const json& j, visual_profile::player& p)
 		if (l.contains("direct_visible")) l.at("direct_visible").get_to(p.m_legit_sync.direct_visible);
 		if (l.contains("radar")) l.at("radar").get_to(p.m_legit_sync.radar);
 		if (l.contains("sound")) l.at("sound").get_to(p.m_legit_sync.sound);
-
+		// Backward compatibility for configs written while Spectator Sync lived
+		// inside Legit Sync.
 		if (!j.contains("spectator_sync") && l.contains("spectator_sync"))
 			l.at("spectator_sync").get_to(p.spectator_sync);
 		if (l.contains("radar_hold")) l.at("radar_hold").get_to(p.m_legit_sync.radar_hold);
@@ -1164,7 +1166,8 @@ static void from_json(const json& j, visual_profile::bomb& b)
 	if (j.contains("safe_zone_band_step")) j.at("safe_zone_band_step").get_to(b.safe_zone_band_step);
 	if (j.contains("safe_zone_draw_radius")) j.at("safe_zone_draw_radius").get_to(b.safe_zone_draw_radius);
 	b.safe_zone_draw_radius = std::clamp(b.safe_zone_draw_radius, 200.0f, 2500.0f);
-
+	// Migrate the former default that filled the floor with four widely spaced
+	// 14-HP contours. Explicit custom combinations remain untouched.
 	if (b.safe_zone_bands == 4 && std::abs(b.safe_zone_band_step - 14.0f) < 0.01f)
 	{
 		b.safe_zone_bands = 1;
@@ -1867,7 +1870,8 @@ static void from_json(const json& j, general_profile& m)
 	if (j.contains("m_auto_stop")) j.at("m_auto_stop").get_to(m.m_auto_stop);
 	if (j.contains("language")) j.at("language").get_to(m.language);
 	m.language = std::clamp(m.language, 0, static_cast<int>(render::localization::id::count) - 1);
-
+	// The config is the only persistent home for the language, so applying it
+	// here keeps lang and settings from drifting apart on load.
 	render::localization::set(static_cast<render::localization::id>(m.language));
 	if (j.contains("menu_scale")) j.at("menu_scale").get_to(m.menu_scale);
 	m.menu_scale = std::isfinite(m.menu_scale) ? std::clamp(m.menu_scale, 0.50f, 1.50f) : 1.0f;
@@ -1928,7 +1932,8 @@ combat_profile::resolved_config combat_profile::get( std::uint32_t weapon_type )
 	cfg.aimbot.rcs = ov.use_global ? gl.aimbot_rcs : ov.aimbot_rcs;
 	cfg.aimbot.fov_config = ov.use_global ? gl.aimbot_fov_config : ov.aimbot_fov_config;
 	cfg.aimbot.predictive = cfg.aimbot.prediction.enabled;
-
+	// The legacy toggle is migration input only. Runtime ownership belongs to the
+	// standalone RCS profile so it can work independently from Aimbot activation.
 	cfg.aimbot.recoil_sync = cfg.aimbot.rcs.enabled;
 
 	cfg.triggerbot.enabled = gl.triggerbot_enabled;
@@ -1982,14 +1987,19 @@ bool combat_profile::seed_trigger_configured( ) const noexcept
 	return false;
 }
 
-json build_config_json()
+json build_config_json(const runtime_snapshot& state)
 {
 	json j;
-	j["combat_global"] = combat_settings.global;
-	j["combat_overrides"] = combat_settings.overrides;
-	j["esp"] = visual_settings;
-	j["misc"] = general_settings;
+	j["combat_global"] = state.combat.global;
+	j["combat_overrides"] = state.combat.overrides;
+	j["esp"] = state.visual;
+	j["misc"] = state.general;
 	return j;
+}
+
+json build_config_json()
+{
+    return build_config_json(runtime_snapshot{combat_settings, visual_settings, general_settings});
 }
 
 void apply_config_json(const json& j)
@@ -2006,6 +2016,7 @@ void apply_config_json(const json& j)
 			|| std::ranges::any_of(combat_settings.overrides,
 				[](const auto& group) { return group.triggerbot_autostop; });
 	}
+	publish_runtime_snapshot();
 }
 
 bool apply_default_config()
@@ -2081,6 +2092,9 @@ std::string configuration_store::cache_path() const
 
 bool configuration_store::write_cache() const
 {
+	static std::mutex cache_mutex;
+	const std::lock_guard lock(cache_mutex);
+	const auto snapshot = get_runtime_snapshot();
 	try
 	{
 		const auto target = std::filesystem::u8path(this->cache_path());
@@ -2094,8 +2108,13 @@ bool configuration_store::write_cache() const
 
 		auto pending = target;
 		pending += L".tmp";
-		if (!this->write_to(path_to_utf8(pending)))
-			return false;
+        {
+            std::ofstream output(pending, std::ios::binary | std::ios::trunc);
+            if (!output) return false;
+            output << build_config_json(*snapshot).dump(4);
+            output.close();
+            if (!output) return false;
+        }
 
 		if (!::MoveFileExW(pending.c_str(), target.c_str(),
 			MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
@@ -2117,4 +2136,4 @@ bool configuration_store::read_cache()
 	return !path.empty() && std::filesystem::exists(std::filesystem::u8path(path)) && this->read_from(path);
 }
 
-}
+} // namespace config

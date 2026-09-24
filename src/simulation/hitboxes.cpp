@@ -6,6 +6,7 @@ namespace game {
 
 		constexpr auto k_hitbox_stride{ 0x70 };
 
+		// Два известных лейаута полей CHitBox (менялись между обновлениями игры).
 		struct field_layout
 		{
 			int mins;
@@ -16,8 +17,8 @@ namespace game {
 
 		constexpr field_layout k_layouts[]
 		{
-			{ 0x20, 0x2C, 0x50, 0x38 },
-			{ 0x18, 0x24, 0x30, 0x00 },
+			{ 0x20, 0x2C, 0x50, 0x38 }, // m_vMinBounds / m_vMaxBounds / m_flShapeRadius / m_name
+			{ 0x18, 0x24, 0x30, 0x00 }, // старый вариант
 		};
 
 		struct recipe
@@ -28,12 +29,13 @@ namespace game {
 			int set_off;
 		};
 
+		// Известные варианты (проверяются каждый кадр, они дешёвые)
 		constexpr recipe k_known[]
 		{
-			{ 0xC0, 0x78, true,  0x168 },
-			{ 0xC0, 0x78, true,  0x150 },
+			{ 0xC0, 0x78, true,  0x168 }, // найдено deep-сканом (июль 2026), имена подтверждены
+			{ 0xC0, 0x78, true,  0x150 }, // старая цепочка
 			{ 0xC0, 0x78, true,  0x140 },
-			{ 0xD0, 0x78, true,  0x140 },
+			{ 0xD0, 0x78, true,  0x140 }, // варианты с UC-треда
 			{ 0xD0, 0x78, true,  0x150 },
 			{ 0xD0, 0x78, true,  0x168 },
 		};
@@ -67,6 +69,8 @@ namespace game {
 			return plausible_vec( mins ) && plausible_vec( maxs );
 		}
 
+		// Настоящий массив CHitBox статичен и однороден: почти все записи обязаны
+		// проходить проверку. Случайный буфер с парой удачных float её не пройдёт.
 		int count_valid_entries( const std::byte* buf, int count, const field_layout& fl )
 		{
 			int valid = 0;
@@ -88,6 +92,8 @@ namespace game {
 			std::uintptr_t model_handle{};
 		};
 
+		// strict=true — для широкого брутфорс-скана (требования жёстче, чтобы
+		// исключить ложные срабатывания при переборе сотен указателей)
 		bool walk_recipe( std::uintptr_t model_state, const recipe& r, bool strict, resolved_set& out )
 		{
 			const auto model_handle = app::context().process.load<std::uintptr_t>( model_state + r.handle_off );
@@ -161,6 +167,7 @@ namespace game {
 			return false;
 		}
 
+		// Полный перебор цепочек. Запускается только по F8 — один раз за нажатие.
 		bool deep_scan( std::uintptr_t model_state, recipe& out_recipe, resolved_set& out )
 		{
 			constexpr int handle_offs[] = { 0xC0, 0xD0, 0xA0, 0xA8, 0xB0, 0xB8, 0xC8, 0xD8, 0xE0 };
@@ -241,6 +248,7 @@ namespace game {
 		resolved_set rs{};
 		bool resolved = false;
 
+		// 1. Кэшированный рецепт (обычный путь после первого успеха)
 		if ( s_has_cached )
 		{
 			resolved = walk_recipe( model_state, s_cached, false, rs );
@@ -250,6 +258,7 @@ namespace game {
 			}
 		}
 
+		// 2. Известные цепочки (дёшево: почти все отваливаются на первых чтениях)
 		if ( !resolved )
 		{
 			for ( const auto& r : k_known )
@@ -264,6 +273,7 @@ namespace game {
 			}
 		}
 
+		// 3. Полный брутфорс — только по F8, один раз за нажатие
 		if ( !resolved && dbg )
 		{
 			app::context().diagnostics.info( "\n=== HITBOX DEEP SCAN ===" );
@@ -332,6 +342,7 @@ namespace game {
 				{
 					const auto& hb = result.entries[ i ];
 
+					// Имя хитбокса ("head", "neck_0", ...) — решающая проверка
 					char name_buf[ 16 ]{};
 					std::uintptr_t name_ptr{};
 					std::memcpy( &name_ptr, rs.buffer.data( )
@@ -376,28 +387,28 @@ namespace game {
 
 	int hitbox_catalog::hitgroup_from_hitbox( int hitbox ) const
 	{
-
+		// Переписано под НОВЫЙ порядок индексов (0-18)
 		switch ( hitbox )
 		{
 		case 0:
-		case 1:  return 1;
+		case 1:  return 1; // Head & Neck
 		case 2:
-		case 3:  return 3;
+		case 3:  return 3; // Pelvis & Spine_0 (Stomach)
 		case 4:
 		case 5:
-		case 6:  return 2;
+		case 6:  return 2; // Spine_1, 2, 3 (Chest)
 		case 7:
 		case 9:
-		case 11: return 6;
+		case 11: return 6; // Left Leg (Upper, Lower, Ankle)
 		case 8:
 		case 10:
-		case 12: return 7;
+		case 12: return 7; // Right Leg (Upper, Lower, Ankle)
 		case 13:
 		case 15:
-		case 16: return 4;
+		case 16: return 4; // Left Arm (Hand, Upper, Lower)
 		case 14:
 		case 17:
-		case 18: return 5;
+		case 18: return 5; // Right Arm (Hand, Upper, Lower)
 		default: return 2;
 		}
 	}
@@ -419,4 +430,4 @@ namespace game {
 		return this->m_snapshot;
 	}
 
-}
+} // namespace game

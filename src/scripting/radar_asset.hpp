@@ -24,4 +24,4 @@ namespace scripting::radar_asset {
 		const std::filesystem::path& output_directory,
 		const std::string& output_stem );
 
-}
+} // namespace scripting::radar_asset

@@ -17,4 +17,4 @@ namespace platform::windows {
 		std::uintptr_t panorama{};
 	};
 
-}
+} // namespace platform::windows

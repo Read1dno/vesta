@@ -27,6 +27,8 @@ namespace features::misc {
 				bool pressed{};
 			};
 
+			// Detached copy of one table row. Strings point into the generated
+			// constexpr table, so they outlive any use of this struct.
 			struct lineup_view
 			{
 				const char* name{};
@@ -42,9 +44,12 @@ namespace features::misc {
 				float distance{};
 			};
 
+			// Pure with respect to feature state: both the render and combat threads
+			// call it so their idea of "nearest lineup" cannot drift apart.
 			[[nodiscard]] bool collect( const foundation::vec3& player_pos, std::vector<lineup_view>& out ) const;
 			[[nodiscard]] static std::uint8_t resolve_kind( std::uintptr_t weapon_vdata );
-
+			// Index of the lineup nearest the crosshair among those armed at the
+			// player's current stand point, or -1 when none are.
 			[[nodiscard]] int select_armed( const std::vector<lineup_view>& lineups, const foundation::vec3& view_angles ) const;
 			[[nodiscard]] bool execution_position_ready( const lineup_view& lineup,
 				const foundation::vec3& player_pos ) const;
@@ -64,8 +69,12 @@ namespace features::misc {
 			void release_attacks( );
 			void cancel_throw( bool latch );
 
+			// Human-readable "hold X, do Y, release" for the marker label, built
+			// from the parsed movement flags rather than the raw action text.
 			[[nodiscard]] static std::string throw_instruction( const lineup_view& lineup );
 
+			// Shared plaque primitive: dark rounded panel, white title, dimmed
+			// subtitle, accent edge. Anchored by the top-centre of the box.
 			void draw_text_plaque( zdraw::draw_list& draw_list, float center_x, float top_y,
 				std::string_view title, std::string_view subtitle, const zdraw::rgba& accent, float alpha ) const;
 
@@ -101,6 +110,8 @@ namespace features::misc {
 			float m_lock_yaw{};
 			bool m_activation_latched{};
 
+			// Distance the aim marker is projected out from the eye. Only affects
+			// where the marker is drawn, never the angles that are aimed at.
 			static constexpr float k_aim_marker_distance{ 220.0f };
 		};
 
@@ -144,8 +155,9 @@ namespace features::misc {
 				const foundation::vec3& origin, const foundation::vec3& velocity,
 				bool require_current_support ) const;
 
-			std::uint16_t m_jump_key{};
-			std::uint16_t m_activation_key{};
+	        int m_reported_jump_key{-1};
+	        std::uint16_t m_jump_key{};
+	        std::uint16_t m_activation_key{};
 			std::chrono::steady_clock::time_point m_next_binding_refresh{};
 			bool m_jump_down{ false };
 			std::uint16_t m_owned_jump_key{};
@@ -154,7 +166,8 @@ namespace features::misc {
 			bool m_edge_armed{ false };
 			float m_last_bunny_simulation_time{ -1.0f };
 			std::chrono::steady_clock::time_point m_last_bunny_tap{};
-
+			// Every transition is held long enough to cross a game input sample. If a
+			// held edge-jump press survives long enough for the game to sample it.
 			std::chrono::steady_clock::time_point m_last_transition{};
 		};
 
@@ -162,4 +175,4 @@ namespace features::misc {
 		inline auto_accept_t& auto_accept( ) { static auto_accept_t value{}; return value; }
 		inline bhop_t& bhop( ) { static bhop_t value{}; return value; }
 
-}
+} // namespace features::misc

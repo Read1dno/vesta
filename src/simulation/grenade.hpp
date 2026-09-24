@@ -62,4 +62,4 @@ private:
 	static constexpr int maximum_contacts_per_tick{ 4 };
 };
 
-}
+} // namespace simulation

@@ -16,7 +16,8 @@ namespace chams {
 			std::uint16_t archive_index{};
 			std::uint32_t offset{};
 			std::uint32_t length{};
-
+			// Leading bytes stored inside the directory file itself. They prefix
+			// whatever is read out of the numbered archive.
 			std::vector<std::uint8_t> preload{};
 		};
 
@@ -29,6 +30,8 @@ namespace chams {
 		[[nodiscard]] std::size_t count( ) const { return this->m_entries.size( ); }
 		[[nodiscard]] const std::string& path( ) const { return this->m_dir_path; }
 
+		// Paths are archive-relative and lower case, e.g.
+		// "agents/models/ctm_sas/ctm_sas.vmdl_c".
 		[[nodiscard]] const entry* find( const std::string& archive_path ) const;
 		[[nodiscard]] std::vector<std::uint8_t> read( const entry& e ) const;
 		[[nodiscard]] std::vector<std::string> list_prefix( const std::string& prefix ) const;
@@ -44,4 +47,4 @@ namespace chams {
 		bool m_open{ false };
 	};
 
-}
+} // namespace chams

@@ -11,7 +11,7 @@ namespace chams::kv3 {
 
 	namespace {
 
-		constexpr std::uint32_t k_magic0{ 0x03564B56 };
+		constexpr std::uint32_t k_magic0{ 0x03564B56 }; // legacy text-wrapped KV3, unused by compiled CS2 resources
 		constexpr std::uint32_t k_kv3_prefix{ 0x4B563300 };
 
 		enum class node_type : std::uint8_t
@@ -94,8 +94,8 @@ namespace chams::kv3 {
 			cursor binary_blobs{};
 			cursor binary_blob_lengths{};
 			std::vector<std::string> strings{};
-			buffers* buffer{};
-			buffers* auxiliary{};
+			buffers* buffer{};      // active pool set (points at buffer1 or buffer2 storage below)
+			buffers* auxiliary{};   // v5 only; swapped in for ARRAY_TYPE_AUXILIARY_BUFFER
 		};
 
 		[[nodiscard]] std::size_t align_up( std::size_t offset, std::size_t alignment )
@@ -107,7 +107,7 @@ namespace chams::kv3 {
 		[[nodiscard]] std::string read_null_term_utf8( cursor& c )
 		{
 
-			const auto* start = c.read( 0 );
+			const auto* start = c.read( 0 ); // peek without consuming
 			std::size_t len = 0;
 			while ( len < c.remaining( ) && start[ len ] != 0 )
 			{
@@ -235,7 +235,7 @@ namespace chams::kv3 {
 		void parse_member( context& ctx, object& parent )
 		{
 			const auto [ datatype, flag ] = read_type( ctx );
-			( void ) flag;
+			( void ) flag; // resource/subclass/panorama annotations; irrelevant to geometry extraction
 
 			if ( parent.is_array( ) )
 			{
@@ -379,7 +379,7 @@ namespace chams::kv3 {
 			}
 		}
 
-	}
+	} // namespace
 
 	const object* object::find( const std::string& key ) const
 	{
@@ -518,13 +518,14 @@ namespace chams::kv3 {
 		( void ) count_objects; ( void ) count_arrays; ( void ) compression_dict_id;
 		const auto size_uncompressed_total = read_i32( );
 		( void ) size_uncompressed_total;
-
+		// sizeCompressedTotal: for v5 the per-buffer sizes below supersede it, but the
+		// ZSTD binary-blob stream length is derived from it (total minus the two buffers).
 		const auto size_compressed_total = static_cast< std::size_t >( read_i32( ) );
 		const auto count_blocks = read_i32( );
 		const auto size_binary_blobs_bytes = static_cast< std::uint32_t >( read_i32( ) );
 
-		const auto count_bytes2 = read_i32( );
-		read_i32( );
+		const auto count_bytes2 = read_i32( ); // bytes2 pool count (present in both v4 and v5 header)
+		read_i32( ); // sizeBlockCompressedSizesBytes
 
 		std::size_t size_u1{}, size_c1{}, size_u2{}, size_c2{};
 		std::int32_t cb1_2{}, cb2_2{}, cb4_2{}, cb8_2{}, count_objects_2{};
@@ -538,10 +539,10 @@ namespace chams::kv3 {
 			cb2_2 = read_i32( );
 			cb4_2 = read_i32( );
 			cb8_2 = read_i32( );
-			read_i32( );
+			read_i32( ); // unk13
 			count_objects_2 = read_i32( );
-			read_i32( );
-			read_i32( );
+			read_i32( ); // countArrays_buffer2
+			read_i32( ); // unk16
 		}
 
 		if ( compression_method != 0 && compression_method != 1 && compression_method != 2 )
@@ -549,6 +550,7 @@ namespace chams::kv3 {
 			throw std::runtime_error( "kv3: unknown compression method " + std::to_string( compression_method ) );
 		}
 
+		// Buffers 1 and 2 are each one self-contained frame: raw, LZ4, or ZSTD.
 		const auto decode_buffer = [ & ]( std::size_t compressed_size, std::size_t uncompressed_size )
 		{
 			std::vector<std::uint8_t> out{};
@@ -575,6 +577,8 @@ namespace chams::kv3 {
 			throw std::runtime_error( "kv3: countBytes4 must be > 0 (string count)" );
 		}
 
+		// Storage backing every cursor built below; declared at function scope so it
+		// outlives the value read at the end (the cursors point into these vectors).
 		std::vector<std::uint8_t> buf1_storage{};
 		std::vector<std::uint8_t> buf2_storage{};
 		std::vector<std::uint8_t> single_storage{};
@@ -587,7 +591,7 @@ namespace chams::kv3 {
 
 		if ( version >= 5 )
 		{
-
+			// ---- Buffer 1: byte/int/eight pools + string table ----
 			buf1_storage = decode_buffer( size_c1, size_u1 );
 			{
 				std::size_t off = 0;
@@ -619,6 +623,7 @@ namespace chams::kv3 {
 				ctx.strings[ static_cast< std::size_t >( i ) ] = read_null_term_utf8( buffer1.bytes1 );
 			}
 
+			// ---- Buffer 2: object lengths + pools + types + blob bookkeeping ----
 			buf2_storage = decode_buffer( size_c2, size_u2 );
 
 			ctx.buffer = &buffer2;
@@ -680,6 +685,8 @@ namespace chams::kv3 {
 				off += static_cast< std::size_t >( count_bytes8 ) * 8;
 			}
 
+			// String+type region: string count from the int pool, then the null-
+			// terminated strings, then the type stream fills the rest of the region.
 			const std::size_t region_start = off;
 			const std::size_t region_end = region_start + static_cast< std::size_t >( count_types );
 			const auto string_count = buffer_single.bytes4.read_pod<std::int32_t>( );
@@ -702,7 +709,7 @@ namespace chams::kv3 {
 			}
 			else
 			{
-
+				// Same blob bookkeeping as v5, sitting after the string+type region.
 				blob_table = cursor( single_storage.data( ), region_end, single_storage.size( ) );
 			}
 		}
@@ -727,7 +734,7 @@ namespace chams::kv3 {
 			}
 			else if ( compression_method == 1 )
 			{
-
+				// The remainder of the table is the per-chunk compressed sizes.
 				std::vector<std::uint16_t> chunk_sizes{};
 				while ( blob_table.remaining( ) >= 2 )
 				{
@@ -742,6 +749,8 @@ namespace chams::kv3 {
 				cursor reader( data, p, p + total_compressed );
 				p += total_compressed;
 
+				// One linked LZ4 block per blob (per-blob length drives the frame
+				// size); the chunk table holds the compressed frame sizes.
 				const auto* blob_lengths = reinterpret_cast< const std::int32_t* >( blob_lengths_storage.data( ) );
 				blob_storage = lz4_chain_decode( reader, chunk_sizes, blob_lengths,
 					static_cast< std::size_t >( count_blocks ), compression_frame_size, size_binary_blobs_bytes );
@@ -774,4 +783,4 @@ namespace chams::kv3 {
 		return doc;
 	}
 
-}
+} // namespace chams::kv3

@@ -57,4 +57,4 @@ namespace platform::windows {
 #endif
 	}
 
-}
+} // namespace platform::windows

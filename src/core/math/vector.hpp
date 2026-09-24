@@ -221,4 +221,4 @@ namespace foundation {
 	[[nodiscard]] vec3 rotate( const rotation& orientation,
 		const vec3& value ) noexcept;
 
-}
+} // namespace foundation

@@ -9,6 +9,7 @@ namespace chams {
 		this->m_valid = false;
 		this->m_data = std::move( file_data );
 
+		// header: u32 fileSize, u16 headerVersion, u16 version, u32 blockOffset, u32 blockCount
 		constexpr std::size_t k_header_size{ 16 };
 		if ( this->m_data.size( ) < k_header_size )
 		{
@@ -29,6 +30,7 @@ namespace chams {
 			return false;
 		}
 
+		// blockOffset is relative to its own field (file offset 8).
 		const std::size_t table = 8u + block_offset;
 		if ( table + static_cast< std::size_t >( block_count ) * 12u > this->m_data.size( ) )
 		{
@@ -48,6 +50,7 @@ namespace chams {
 			std::memcpy( &rel_offset, this->m_data.data( ) + entry + 4, 4 );
 			std::memcpy( &size, this->m_data.data( ) + entry + 8, 4 );
 
+			// Each block's offset is likewise relative to the field holding it.
 			const std::size_t absolute = entry + 4u + rel_offset;
 			if ( absolute + size > this->m_data.size( ) )
 			{
@@ -90,4 +93,4 @@ namespace chams {
 		return result;
 	}
 
-}
+} // namespace chams

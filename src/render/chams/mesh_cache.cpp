@@ -9,7 +9,7 @@ namespace chams {
 
 	namespace {
 
-		constexpr std::uint32_t k_cache_magic{ 0x4D414843 };
+		constexpr std::uint32_t k_cache_magic{ 0x4D414843 }; // "CHAM"
 
 		constexpr std::uint32_t k_cache_version{ 6 };
 
@@ -36,7 +36,7 @@ namespace chams {
 		[[nodiscard]] bool read_string( std::ifstream& f, std::string& out )
 		{
 			std::uint32_t len{};
-			if ( !read_pod( f, len ) || len > ( 1u << 20 ) )
+			if ( !read_pod( f, len ) || len > ( 1u << 20 ) ) // 1 MiB sanity cap
 			{
 				return false;
 			}
@@ -56,11 +56,12 @@ namespace chams {
 			return out;
 		}
 
-	}
+	} // namespace
 
 	std::string mesh_cache::cache_file_path( const std::string& model_path )
 	{
-
+		// Lives under the shared %TEMP%\vesta root rather than as its own sibling
+		// directory, so everything vesta leaves behind sits in one folder.
 		auto dir = platform::windows::runtime_storage::area( "chams_cache" );
 		if ( dir.empty( ) )
 		{
@@ -263,4 +264,4 @@ namespace chams {
 
 	}
 
-}
+} // namespace chams

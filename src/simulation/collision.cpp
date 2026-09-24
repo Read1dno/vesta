@@ -1,6 +1,8 @@
 #include <stdafx.hpp>
 
 #include <simulation/collision_segments.hpp>
+#include <simulation/mesh_leaves.hpp>
+#include <simulation/bvh_capacity.hpp>
 #include <simulation/swept_hull.hpp>
 #include <simulation/swept_sphere.hpp>
 
@@ -11,16 +13,6 @@ namespace game {
 		static constexpr std::size_t k_inner_node_size{ 32 };
 		static constexpr std::size_t k_outer_node_size{ 48 };
 
-		struct packed_mesh_node
-		{
-			float min[ 3 ];
-			std::uint32_t packed0;
-			float max[ 3 ];
-			std::uint32_t packed1;
-
-			[[nodiscard]] std::uint32_t type( ) const { return packed0 >> 30; }
-			[[nodiscard]] std::uint32_t payload( ) const { return packed0 & 0x3FFFFFFFu; }
-		};
 
 		struct half_edge_record
 		{
@@ -69,25 +61,14 @@ namespace game {
 			return { rotated.x + pos[ 0 ], rotated.y + pos[ 1 ], rotated.z + pos[ 2 ] };
 		}
 
-		struct triangle_span
-		{
-			std::uint32_t first{};
-			std::uint32_t count{};
-		};
-
-		struct mesh_leaf_map
-		{
-			std::vector<triangle_span> spans{};
-			std::uint32_t first_triangle{ UINT32_MAX };
-			std::uint32_t past_last_triangle{};
-		};
 
 		template <typename T>
 		[[nodiscard]] std::optional<std::vector<T>> read_remote_array(
 			std::uintptr_t address, std::size_t count )
 		{
-			if ( !address || count == 0 )
-				return std::nullopt;
+	        if (!address || count == 0 || count > remote_array_budget / sizeof(T) ||
+	            count * sizeof(T) > UINTPTR_MAX - address)
+		        return std::nullopt;
 			std::vector<T> values( count );
 			if ( !app::context().process.copy(
 				address, values.data( ), values.size( ) * sizeof( T ) ) )
@@ -107,87 +88,31 @@ namespace game {
 			return value;
 		}
 
-		[[nodiscard]] std::optional<mesh_leaf_map> discover_mesh_leaves(
-			std::span<const packed_mesh_node> nodes )
-		{
-			mesh_leaf_map result{};
-			std::vector<std::uint32_t> deferred{};
-			deferred.reserve( 128 );
-			auto cursor = 0u;
-
-			const auto resume = [ & ]( ) -> bool
-			{
-				if ( deferred.empty( ) )
-					return false;
-				cursor = deferred.back( );
-				deferred.pop_back( );
-				return true;
-			};
-
-			for ( ;; )
-			{
-				if ( cursor >= nodes.size( ) )
-				{
-					if ( !resume( ) ) break;
-					continue;
-				}
-
-				const auto& node = nodes[ cursor ];
-				const auto stride = node.payload( );
-				if ( node.type( ) == 3 )
-				{
-					if ( stride > 0 && stride < 0x1000000 )
-					{
-						result.spans.push_back( { node.packed1, stride } );
-						result.first_triangle = std::min( result.first_triangle, node.packed1 );
-						result.past_last_triangle = std::max(
-							result.past_last_triangle, node.packed1 + stride );
-					}
-					if ( !resume( ) ) break;
-					continue;
-				}
-
-				if ( stride == 0 )
-				{
-					if ( !resume( ) ) break;
-					continue;
-				}
-				if ( cursor + stride < nodes.size( ) )
-					deferred.push_back( cursor + stride );
-				++cursor;
-			}
-
-			if ( result.spans.empty( )
-				|| result.past_last_triangle <= result.first_triangle )
-			{
-				return std::nullopt;
-			}
-			return result;
-		}
-
-		static bool decode_mesh_shape( std::uintptr_t bvh_ptr, std::uintptr_t vert_ptr,
-			std::uintptr_t tri_ptr, std::uint32_t node_count, const rotation_basis& rotation,
-			const float scale[ 3 ], const float position[ 3 ], std::uintptr_t material_ptr,
-			std::int32_t material_count,
-			const std::vector<collision_world::global_surface_entry>& surface_table,
-			const collision_world::surface_info& fallback_surface,
-			std::vector<collision_world::triangle>& output, std::uint64_t solid_id )
-		{
-			if ( !bvh_ptr || !vert_ptr || !tri_ptr || node_count == 0
-				|| node_count > 0x1000000 )
-			{
+        static bool decode_mesh_shape(std::uintptr_t bvh_ptr, std::uintptr_t vert_ptr, std::uintptr_t tri_ptr,
+                                      std::uint32_t node_count, const rotation_basis &rotation,
+                                      const float scale[3], const float position[3],
+                                      std::uintptr_t material_ptr, std::int32_t material_count,
+                                      const std::vector<collision_world::global_surface_entry> &surface_table,
+                                      const collision_world::surface_info &fallback_surface,
+                                      std::vector<collision_world::triangle> &output, std::uint64_t solid_id,
+                                      std::stop_token stop)
+        {
+	        if (!bvh_ptr || !vert_ptr || !tri_ptr || node_count == 0 ||
+	            node_count > remote_array_budget / sizeof(packed_mesh_node))
+	        {
 				return false;
 			}
 			static_assert( sizeof( packed_mesh_node ) == k_inner_node_size );
 			const auto nodes = read_remote_array<packed_mesh_node>( bvh_ptr, node_count );
 			if ( !nodes ) return false;
-			const auto leaves = discover_mesh_leaves(
-				std::span<const packed_mesh_node>{ *nodes } );
-			if ( !leaves ) return false;
+	        const auto leaves = discover_mesh_leaves(std::span<const packed_mesh_node>{*nodes}, stop);
+	        if ( !leaves ) return false;
 
 			const auto triangle_count = leaves->past_last_triangle - leaves->first_triangle;
-			if ( triangle_count > 0x1000000 ) return false;
-			const auto indices = read_remote_array<std::int32_t>(
+	        if (stop.stop_requested() || triangle_count > remote_array_budget / 12 ||
+	            output.size() + triangle_count > 4 * remote_array_budget / sizeof(collision_world::triangle))
+		        return false;
+	        const auto indices = read_remote_array<std::int32_t>(
 				tri_ptr + static_cast<std::uintptr_t>( leaves->first_triangle ) * 12,
 				static_cast<std::size_t>( triangle_count ) * 3 );
 			if ( !indices ) return false;
@@ -220,7 +145,9 @@ namespace game {
 			{
 				for ( auto ordinal = 0u; ordinal < span.count; ++ordinal )
 				{
-					const auto local = span.first - leaves->first_triangle + ordinal;
+			        if ((ordinal & 255u) == 0 && stop.stop_requested())
+				        return false;
+			        const auto local = span.first - leaves->first_triangle + ordinal;
 					if ( local >= triangle_count ) continue;
 					const auto base = static_cast<std::size_t>( local ) * 3;
 					const std::array vertex_indices{
@@ -330,10 +257,10 @@ namespace game {
 			decode_convex_shape( data, scale, material, output, shape_body );
 		}
 
-		static void decode_mesh_body( std::uintptr_t shape_body,
-			const std::vector<collision_world::global_surface_entry>& surface_table,
-			std::vector<collision_world::triangle>& output )
-		{
+        static void decode_mesh_body(std::uintptr_t shape_body,
+                                     const std::vector<collision_world::global_surface_entry> &surface_table,
+                                     std::vector<collision_world::triangle> &output, std::stop_token stop)
+        {
 			const auto mesh_data = app::context().process.load<std::uintptr_t>( shape_body + 0xc0 );
 			if ( !mesh_data || app::context().process.load<float>( shape_body + 0x2c ) < 0.0f )
 				return;
@@ -355,11 +282,13 @@ namespace game {
 			{
 				return;
 			}
-			const auto quaternion_length = orientation.x * orientation.x
+	        if (std::ranges::any_of(position, [](float value) { return !std::isfinite(value); }))
+		        return;
+	        const auto quaternion_length = orientation.x * orientation.x
 				+ orientation.y * orientation.y + orientation.z * orientation.z
 				+ orientation.w * orientation.w;
-			if ( quaternion_length < 0.5f || quaternion_length > 1.5f )
-				orientation = { 0.0f, 0.0f, 0.0f, 1.0f };
+	        if (!std::isfinite(quaternion_length) || quaternion_length < 0.5f || quaternion_length > 1.5f)
+		        orientation = { 0.0f, 0.0f, 0.0f, 1.0f };
 
 			const std::array count_candidates{
 				blob_field<std::int32_t>( descriptor, 0x28 ),
@@ -372,30 +301,27 @@ namespace game {
 
 			collision_world::surface_info fallback{};
 			fallback.penetration = app::context().process.load<float>( shape_body + 0x28 );
-			decode_mesh_shape(
-				blob_field<std::uintptr_t>( descriptor, 0x20 ),
-				blob_field<std::uintptr_t>( descriptor, 0x38 ),
-				blob_field<std::uintptr_t>( descriptor, 0x50 ),
-				static_cast<std::uint32_t>( *count ), make_rotation_basis( orientation ),
-				scale.data( ), position.data( ),
-				blob_field<std::uintptr_t>( descriptor, 0x98 ),
-				blob_field<std::int32_t>( descriptor, 0x90 ), surface_table,
-				fallback, output, shape_body );
-		}
+	        decode_mesh_shape(
+	            blob_field<std::uintptr_t>(descriptor, 0x20), blob_field<std::uintptr_t>(descriptor, 0x38),
+	            blob_field<std::uintptr_t>(descriptor, 0x50), static_cast<std::uint32_t>(*count),
+	            make_rotation_basis(orientation), scale.data(), position.data(),
+	            blob_field<std::uintptr_t>(descriptor, 0x98), blob_field<std::int32_t>(descriptor, 0x90),
+	            surface_table, fallback, output, shape_body, stop);
+        }
 
-		static void append_shape_triangles( std::uintptr_t shape_body,
-			std::uintptr_t hull_vtable, std::uintptr_t mesh_vtable,
-			const std::vector<collision_world::global_surface_entry>& surface_table,
-			std::vector<collision_world::triangle>& output )
-		{
+        static void append_shape_triangles(
+            std::uintptr_t shape_body, std::uintptr_t hull_vtable, std::uintptr_t mesh_vtable,
+            const std::vector<collision_world::global_surface_entry> &surface_table,
+            std::vector<collision_world::triangle> &output, std::stop_token stop)
+        {
 			const auto type = app::context().process.load<std::uintptr_t>( shape_body );
 			if ( type == hull_vtable )
 				decode_convex_body( shape_body, output );
 			else if ( type == mesh_vtable )
-				decode_mesh_body( shape_body, surface_table, output );
-		}
+		        decode_mesh_body(shape_body, surface_table, output, stop);
+        }
 
-	}
+	} // namespace detail
 
 	std::uintptr_t collision_world::surface_manager( ) const
 	{
@@ -501,8 +427,9 @@ namespace game {
 		return table;
 	}
 
-	void collision_world::parse( )
+	void collision_world::parse( const std::stop_token stop )
 	{
+		if ( stop.stop_requested( ) ) return;
 
 		const auto anchor = app::context().process.scan_signature( app::context().modules.client, "E8 ? ? ? ? C7 87 ? ? ? ? ? ? ? ? 48 8D 54 24 ? 48 8B CF" );
 		if ( !anchor )
@@ -522,6 +449,7 @@ namespace game {
 				return;
 			}
 
+			// mov rcx, [rip+disp32] == 48 8B 0D; nearest one below the call wins.
 			for ( int i = k_window - 7; i >= 0; --i )
 			{
 				if ( window[ i ] == 0x48 && window[ i + 1 ] == 0x8B && window[ i + 2 ] == 0x0D )
@@ -538,6 +466,8 @@ namespace game {
 			return;
 		}
 
+		// Double indirection: the static slot holds a pointer to a holder object
+		// (itself in client.dll .data), whose first field is the actual heap world.
 		const auto world_holder = app::context().process.load<std::uintptr_t>( vphys2_world_global );
 		if ( !world_holder )
 		{
@@ -552,6 +482,9 @@ namespace game {
 			return;
 		}
 
+		// Surface table is optional: without it triangles still trace, they just get
+		// default penetration values -- so a broken signature must not abort parsing.
+		if ( stop.stop_requested( ) ) return;
 		const auto global_table = read_surface_table( );
 
 		const auto inner_world = app::context().process.load<std::uintptr_t>( vphys2_world + 0x30 );
@@ -585,15 +518,17 @@ namespace game {
 		}
 
 		std::vector<triangle> fresh;
-		fresh.reserve( 262144 );
+	    fresh.reserve(16384);
 
-		std::int32_t bodies_with_nodes{ 0 };
+	    std::int32_t bodies_with_nodes{ 0 };
 		std::int32_t bodies_static{ 0 };
 		std::unordered_map<std::uint32_t, std::int32_t> flag_histogram{};
 
-		for ( std::int32_t body_idx = 0; body_idx < body_count; ++body_idx )
+		for ( std::int32_t body_idx = 0; body_idx < body_count && !stop.stop_requested( ); ++body_idx )
 		{
-			const auto body = body_array + static_cast< std::uintptr_t >( body_idx ) * 88;
+		    if (fresh.size() > 4 * detail::remote_array_budget / sizeof(triangle))
+			    throw std::length_error("live geometry exceeds memory budget");
+		    const auto body = body_array + static_cast< std::uintptr_t >( body_idx ) * 88;
 			const auto bvh_root = app::context().process.load<std::int32_t>( body );
 			const auto bvh_nodes_ptr = app::context().process.load<std::uintptr_t>( body + 0x18 );
 
@@ -611,8 +546,8 @@ namespace game {
 
 			if ( bvh_root >= 0 )
 			{
-				const auto count_a = static_cast< std::uint32_t >( bvh_root + 1 );
-				const auto count_b = static_cast< std::uint32_t >( app::context().process.load<std::int32_t>( body + 0x08 ) );
+			    const auto count_a = static_cast<std::uint32_t>(bvh_root) + 1u;
+			    const auto count_b = static_cast< std::uint32_t >( app::context().process.load<std::int32_t>( body + 0x08 ) );
 				const auto count_c = static_cast< std::uint32_t >( app::context().process.load<std::int32_t>( body + 0x10 ) );
 				const auto outer_node_count = std::max( { count_a, count_b, count_c } );
 
@@ -634,18 +569,21 @@ namespace game {
 				std::vector<std::int32_t> outer_stack;
 				outer_stack.reserve( 128 );
 				outer_stack.push_back( bvh_root );
+			    detail::traversal_guard visited(outer_node_count);
+			    bool malformed{};
 
-				while ( !outer_stack.empty( ) )
+			    while ( !outer_stack.empty( ) && !stop.stop_requested( ) )
 				{
 					const auto idx = outer_stack.back( );
 					outer_stack.pop_back( );
 
-					if ( idx < 0 || static_cast< std::uint32_t >( idx ) >= outer_node_count )
-					{
-						continue;
-					}
+				    if (idx < 0 || !visited.enter(static_cast<std::size_t>(idx)))
+				    {
+					    malformed = true;
+					    break;
+				    }
 
-					const auto node = outer_buf.data( ) + static_cast< std::uintptr_t >( idx ) * detail::k_outer_node_size;
+				    const auto node = outer_buf.data( ) + static_cast< std::uintptr_t >( idx ) * detail::k_outer_node_size;
 					std::int32_t left{};
 					std::memcpy( &left, node + 12, sizeof( left ) );
 
@@ -674,31 +612,40 @@ namespace game {
 					}
 				}
 
-				std::unordered_set<std::uintptr_t> seen;
+			    if (malformed)
+				    continue;
+			    std::unordered_set<std::uintptr_t> seen;
 
 				for ( const auto shape : leaves )
 				{
+					if ( stop.stop_requested( ) ) break;
 					if ( seen.count( shape ) )
 					{
 						continue;
 					}
 
 					seen.insert( shape );
-					detail::append_shape_triangles( shape, hull_vtable, mesh_vtable, global_table, fresh );
-				}
+				    detail::append_shape_triangles(shape, hull_vtable, mesh_vtable, global_table, fresh,
+				                                   stop);
+			    }
 			}
 			else
 			{
 				const auto shape = app::context().process.load<std::uintptr_t>( body + 0x28 );
 				if ( shape )
 				{
-					detail::append_shape_triangles( shape, hull_vtable, mesh_vtable, global_table, fresh );
-				}
+				    detail::append_shape_triangles(shape, hull_vtable, mesh_vtable, global_table, fresh,
+				                                   stop);
+			    }
 			}
 		}
 
+		if ( stop.stop_requested( ) ) return;
+
 		app::context().diagnostics.info( "[bvh] bodies={} with_nodes={} static={} triangles={}", body_count, bodies_with_nodes, bodies_static, fresh.size( ) );
 
+		// Zero static bodies with plenty of candidates means the flags slot/value
+		// drifted -- dump what actually lives there so the filter can be re-derived.
 		if ( fresh.empty( ) && bodies_with_nodes > 0 )
 		{
 			std::string hist{};
@@ -709,41 +656,46 @@ namespace game {
 			app::context().diagnostics.warning( "[bvh] no triangles extracted; body flag histogram: {}", hist );
 		}
 
-		{
-			std::unique_lock lock( this->m_mutex );
-			this->m_triangles = std::move( fresh );
-			this->m_world_triangle_count = this->m_triangles.size( );
-			this->m_entity_triangle_count = 0;
-			this->m_entity_collision.reset( );
-			this->m_entity_state_hash = 0;
-			this->rebuild_accel( );
-			++this->m_world_render_revision;
-			++this->m_entity_render_revision;
-			this->m_geometry_revision.fetch_add( 1, std::memory_order_release );
-		}
-	}
+	    if (app::context().process.load<std::uintptr_t>(world_holder) != vphys2_world)
+		    return;
+	    collision_world built;
+	    built.m_triangles = std::move(fresh);
+	    built.m_world_triangle_count = built.m_triangles.size();
+	    built.rebuild_accel();
+	    if (stop.stop_requested())
+		    return;
+	    replace_with(built);
+    }
 
-	void collision_world::clear( )
-	{
-		std::unique_lock lock( this->m_mutex );
-		this->m_triangles.clear( );
-		this->m_world_triangle_count = 0;
-		this->m_map_name.clear( );
-		this->m_entity_triangle_count = 0;
-		this->m_nodes.clear( );
-		this->m_indices.clear( );
-		this->m_tri_bounds.clear( );
-		this->m_centroids.clear( );
-		this->m_world_render.reset( );
-		this->m_entity_render.reset( );
-		this->m_entity_collision.reset( );
-		this->m_entity_state_hash = 0;
-		++this->m_world_render_revision;
-		++this->m_entity_render_revision;
-		this->m_geometry_revision.fetch_add( 1, std::memory_order_release );
-	}
+    void collision_world::replace_with(collision_world &built)
+    {
+	    if (this == &built)
+		    return;
+	    std::scoped_lock lock(m_mutex, built.m_mutex);
+	    std::swap(m_triangles, built.m_triangles);
+	    std::swap(m_world_triangle_count, built.m_world_triangle_count);
+	    std::swap(m_map_name, built.m_map_name);
+	    std::swap(m_entity_triangle_count, built.m_entity_triangle_count);
+	    std::swap(m_nodes, built.m_nodes);
+	    std::swap(m_indices, built.m_indices);
+	    std::swap(m_tri_bounds, built.m_tri_bounds);
+	    std::swap(m_centroids, built.m_centroids);
+	    std::swap(m_world_render, built.m_world_render);
+	    std::swap(m_entity_render, built.m_entity_render);
+	    std::swap(m_entity_collision, built.m_entity_collision);
+	    std::swap(m_entity_state_hash, built.m_entity_state_hash);
+	    ++m_world_render_revision;
+	    ++m_entity_render_revision;
+	    m_geometry_revision.fetch_add(1, std::memory_order_release);
+    }
 
-	std::optional<collision_world::ray_query> collision_world::make_ray_query(
+    void collision_world::clear()
+    {
+	    collision_world retired;
+	    replace_with(retired);
+    }
+
+    std::optional<collision_world::ray_query> collision_world::make_ray_query(
 		const foundation::vec3& start, const foundation::vec3& end )
 	{
 		const auto displacement = end - start;
@@ -1298,8 +1250,8 @@ namespace game {
 				m_centroids[ base + axis ] = ( bounds.mins[ axis ] + bounds.maxs[ axis ] ) * 0.5f;
 		}
 
-		m_nodes.reserve( static_cast<std::size_t>( triangle_count ) * 2 );
-		build_recursive( 0, triangle_count, 0 );
+	    m_nodes.reserve(detail::bvh_node_capacity(triangle_count, k_max_leaf_tris));
+	    build_recursive( 0, triangle_count, 0 );
 
 		m_tri_bounds.clear( );
 		m_tri_bounds.shrink_to_fit( );
@@ -1446,4 +1398,4 @@ namespace game {
 		return node_index;
 	}
 
-}
+} // namespace game

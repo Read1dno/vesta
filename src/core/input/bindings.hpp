@@ -50,6 +50,7 @@ namespace game {
 	class live_input_bindings
 	{
 	public:
+        void refresh();
 		[[nodiscard]] input_binding resolve( input_action action,
 			std::uint16_t preferred_virtual_key = 0 );
 		[[nodiscard]] std::vector<input_binding> candidates( input_action action );
@@ -59,6 +60,8 @@ namespace game {
 		void refresh_locked( std::chrono::steady_clock::time_point now );
 
 		std::mutex m_mutex{};
+        std::mutex m_refresh_mutex{};
+        std::string m_diagnostic_state{};
 		std::array<std::vector<input_binding>,
 			static_cast<std::size_t>( input_action::count )> m_bindings{};
 		std::uintptr_t m_input_service{};
@@ -83,4 +86,4 @@ namespace game {
 		return value;
 	}
 
-}
+} // namespace game

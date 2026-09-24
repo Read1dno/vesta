@@ -43,4 +43,4 @@ namespace foundation {
 			YieldProcessor( );
 	}
 
-}
+} // namespace foundation

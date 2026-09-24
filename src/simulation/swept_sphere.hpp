@@ -202,4 +202,4 @@ struct swept_sphere_contact
 	return nearest;
 }
 
-}
+} // namespace simulation::geometry

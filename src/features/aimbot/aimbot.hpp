@@ -1,6 +1,8 @@
 #pragma once
 
 #include <simulation/ballistics.hpp>
+#include <simulation/seed_reaction.hpp>
+#include <config/settings.hpp>
 
 namespace features::aimbot {
 	using simulation::ballistics_t;
@@ -122,6 +124,8 @@ namespace features::aimbot {
 				int tick{};
 				foundation::vec3 hash_angles{};
 				foundation::vec3 direction_angles{};
+                float fraction{};
+                foundation::vec3 punch{};
 			};
 
 			struct seed_shot_plan
@@ -183,22 +187,23 @@ namespace features::aimbot {
 			float m_aim_degrees_candidate{};
 			int m_aim_degrees_confirmations{};
 
+			// Humanize-СЃРѕСЃС‚РѕСЏРЅРёРµ Р°РёРјР±РѕС‚Р° (РѕРґРёРЅ В«Р·Р°С…РѕРґВ» РЅР° С†РµР»СЊ = СЃРІРѕРё РїР°СЂР°РјРµС‚СЂС‹)
 			std::uintptr_t m_aim_pawn{};
 			std::chrono::steady_clock::time_point m_aim_last_call{};
 			std::chrono::steady_clock::time_point m_aim_last_seen{};
 			std::chrono::steady_clock::time_point m_aim_reaction_until{};
-			float m_aim_ramp{};
-			float m_aim_initial_dist{};
-			float m_aim_curve{};
-			float m_aim_overshoot{ 1.0f };
+			float m_aim_ramp{};           // СЂР°Р·РіРѕРЅ В«СЂСѓРєРёВ» 0..1
+			float m_aim_initial_dist{};   // СѓРіР»РѕРІР°СЏ РґРёСЃС‚Р°РЅС†РёСЏ РІ РјРѕРјРµРЅС‚ Р·Р°С…РІР°С‚Р°
+			float m_aim_curve{};          // РІРµР»РёС‡РёРЅР°/СЃС‚РѕСЂРѕРЅР° РґСѓРіРё
+			float m_aim_overshoot{ 1.0f };// РјРЅРѕР¶РёС‚РµР»СЊ РїСЂРѕР»С‘С‚Р° РјРёРјРѕ С†РµР»Рё
 			float m_aim_wander_phase{};
 			float m_aim_wander_freq{};
 			float m_aim_tracking_lag{};
-
+			// Recoil-sync СЃРѕСЃС‚РѕСЏРЅРёРµ: РєРѕРјРїРµРЅСЃР°С†РёСЏ РѕС‚СЃС‚Р°С‘С‚ РѕС‚ РѕС‚РґР°С‡Рё Рё РЅРµ СЃРѕРІРїР°РґР°РµС‚ СЃ РЅРµР№ С‚РѕС‡РЅРѕ
 			foundation::vec3 m_rcs_raw{};
 			foundation::vec3 m_rcs_target{};
-			foundation::vec3 m_rcs_velocity{};
-			float m_rcs_gain{ 1.0f };
+			foundation::vec3 m_rcs_velocity{};   // continuous compensation velocity
+			float m_rcs_gain{ 1.0f };         // РЅРµРґРѕ-/РїРµСЂРµРєРѕРјРїРµРЅСЃР°С†РёСЏ Р·Р° РѕС‡РµСЂРµРґСЊ
 			float m_rcs_response_scale{ 1.0f };
 			float m_rcs_phase{};
 			float m_rcs_freq{ 2.5f };
@@ -213,7 +218,7 @@ namespace features::aimbot {
 			float m_rcs_last_shot_time{ -1.0f };
 			int m_rcs_burst_shots{};
 			int m_rcs_input_step{ 24 };
-			bool m_rcs_active{ false };
+			bool m_rcs_active{ false };       // РѕС‡РµСЂРµРґСЊ РёРґС‘С‚ (РѕС‚РґР°С‡Р° РЅР°РєРѕРїР»РµРЅР°)
 			std::uint64_t m_combat_sequence{};
 
 			foundation::vec3 m_aim_previous_relative_velocity{};
@@ -246,6 +251,7 @@ namespace features::aimbot {
 			int m_seed_pending_target_tick{ -1 };
 			std::chrono::steady_clock::time_point m_seed_pending_time{};
 
+			simulation::seed_reaction m_seed_reaction{};
 			int m_seed_memo_sequence{ -1 };
 			float m_seed_memo_pitch{};
 			float m_seed_memo_yaw{};
@@ -265,7 +271,20 @@ namespace features::aimbot {
 			int m_seed_last_tick{ -1 };
 			std::chrono::steady_clock::time_point m_seed_tick_observed_at{};
 
+			mutable std::shared_ptr<const config::runtime_snapshot> m_runtime_config{};
 			float m_last_time{ 0.0f };
+			[[nodiscard]] std::shared_ptr<const config::runtime_snapshot> runtime_config( ) const noexcept
+			{
+				auto snapshot = std::atomic_load_explicit(
+					&this->m_runtime_config, std::memory_order_acquire );
+				return snapshot ? snapshot : config::get_runtime_snapshot( );
+			}
+			void refresh_runtime_config( ) const noexcept
+			{
+				std::atomic_store_explicit( &this->m_runtime_config,
+					config::get_runtime_snapshot( ), std::memory_order_release );
+			}
+
 		};
 
 		class grenade_aim_t
@@ -320,9 +339,21 @@ namespace features::aimbot {
 			std::chrono::steady_clock::time_point m_last_calculation{};
 			grenade_kind m_last_kind{ grenade_kind::unknown };
 			std::uintptr_t m_last_weapon{};
+			mutable std::shared_ptr<const config::runtime_snapshot> m_runtime_config{};
+			[[nodiscard]] std::shared_ptr<const config::runtime_snapshot> runtime_config( ) const noexcept
+			{
+				auto snapshot = std::atomic_load_explicit(
+					&this->m_runtime_config, std::memory_order_acquire );
+				return snapshot ? snapshot : config::get_runtime_snapshot( );
+			}
+			void refresh_runtime_config( ) const noexcept
+			{
+				std::atomic_store_explicit( &this->m_runtime_config,
+					config::get_runtime_snapshot( ), std::memory_order_release );
+			}
 		};
 
 	inline grenade_aim_t& grenade_aim( ) { static grenade_aim_t value{}; return value; }
 	inline aimbot_t& aim( ) { static aimbot_t value{}; return value; }
 
-}
+} // namespace features::aimbot

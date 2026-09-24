@@ -30,12 +30,16 @@ namespace chams {
 
 		[[nodiscard]] bool bone_direction( std::uint32_t bone, const foundation::vec3& model_space, foundation::vec3& out ) const;
 
+		// Projects a world position into pixel coordinates inside the viewport.
+		// Returns false when the point is behind the camera.
 		[[nodiscard]] bool project( const foundation::vec3& world, float& x, float& y ) const;
 
 		void orbit( float delta_yaw );
 
 		[[nodiscard]] const skinned_mesh* current_mesh( ) const { return this->m_mesh; }
 
+		// Row-major view-projection of the last render, so overlays (bones,
+		// hitboxes) can project into the same image.
 		[[nodiscard]] const float ( &view_projection( ) const )[ 4 ][ 4 ] { return this->m_view_projection; }
 		[[nodiscard]] const foundation::vec3& eye( ) const { return this->m_eye; }
 
@@ -72,10 +76,14 @@ namespace chams {
 
 		void update_camera( const skinned_mesh& mesh, std::uint32_t width, std::uint32_t height );
 
+		// Loads the idle clip and the skeleton it is authored against, once, and
+		// caches the track -> model bone mapping for the current model.
 		void ensure_idle_clip( vpk_archive& vpk, const std::string& model_path, const skinned_mesh& mesh );
 
 		std::vector<bone_matrix> m_skin_matrices{};
 
+		// Animated model-space transform per bone, so the editor's skeleton lines
+		// and hitbox capsules follow the animation instead of the bind pose.
 		std::vector<bone_matrix> m_bone_world{};
 
 		nm_skeleton m_idle_skeleton{};
@@ -125,4 +133,4 @@ namespace chams {
 
 	inline preview g_preview{};
 
-}
+} // namespace chams

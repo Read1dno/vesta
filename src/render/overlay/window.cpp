@@ -242,7 +242,8 @@ bool window_tracker::poll( update& result )
 
 	if ( m_visibility_pending.exchange( false, std::memory_order_acq_rel ) )
 	{
-
+		// MINIMIZESTART/HIDE/foreground-loss must detach in the callback's first
+		// message-loop pass even if Win32 has not updated IsIconic/placement yet.
 		const bool visible = !force_hidden && calculate_visibility( );
 		result.visibility_changed = visible != m_visible;
 		m_visible = visible;
@@ -254,7 +255,8 @@ bool window_tracker::poll( update& result )
 		&& ::GetWindow( m_target, GW_HWNDPREV ) != m_overlay;
 	if ( m_target && m_visible && now >= m_next_z_order_repair_tick )
 	{
-
+		// Auditing is cheap; SetWindowPos is issued only when another window has
+		// actually entered the slot between CS2 and the overlay.
 		result.z_order_changed = result.z_order_changed
 			|| ( m_overlay && ::GetWindow( m_target, GW_HWNDPREV ) != m_overlay );
 		m_next_z_order_repair_tick = now + 1000;
@@ -481,6 +483,8 @@ bool window_tracker::calculate_visibility( ) const
 	if ( foreground_process != m_process_id )
 		return false;
 
+	// Minimized windows use a sentinel near -32000 even briefly after foreground
+	// has returned. Never treat that intermediate DXGI restore state as ready.
 	constexpr LONG minimized_sentinel = -30000;
 	if ( m_client.left <= minimized_sentinel || m_client.top <= minimized_sentinel )
 		return false;

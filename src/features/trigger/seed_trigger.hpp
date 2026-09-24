@@ -40,4 +40,4 @@ namespace features::trigger {
 		return instance;
 	}
 
-}
+} // namespace features::trigger

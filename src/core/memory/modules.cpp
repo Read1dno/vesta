@@ -17,7 +17,9 @@ namespace platform::windows {
 		physics = lookup( "vphysics2.dll" );
 		panorama = lookup( "panorama.dll" );
 
+		// Panorama is optional during the earliest CS2 startup phase. Features that
+		// need it resolve it lazily once the UI module has actually loaded.
 		return client && engine && input_system && tier && schema && physics;
 	}
 
-}
+} // namespace platform::windows

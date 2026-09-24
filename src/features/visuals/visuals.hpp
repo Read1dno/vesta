@@ -1,8 +1,10 @@
 #pragma once
 
 #include <simulation/ballistics.hpp>
+#include <system/snapshot_pool.hpp>
 #include <simulation/grenade.hpp>
 #include <core/state/pose.hpp>
+#include <config/settings.hpp>
 
 namespace features::visuals {
 	using simulation::grenade_path;
@@ -15,6 +17,8 @@ namespace features::visuals {
 				const std::shared_ptr<const game::player_pose_frame>& frame );
 			[[nodiscard]] static std::string_view weapon_glyph( std::string_view weapon_name );
 
+			// Shared with the ESP editor preview so it cannot silently drift away
+			// from the exact in-game skeleton and threat-hitbox bone sets.
 			inline static constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 18> skeleton_connections
 			{ {
 				{ 1, 2 }, { 2, 3 }, { 3, 4 }, { 4, 23 }, { 23, 6 }, { 6, 7 },
@@ -133,7 +137,8 @@ namespace features::visuals {
 
 			void draw_planted_bomb( zdraw::draw_list& draw_list, const bomb_data& data, const config::visual_profile::bomb& cfg, float current_time ) const;
 			void draw_active_bomb( zdraw::draw_list& draw_list, const active_bomb_data& data, const config::visual_profile::bomb& cfg ) const;
-
+			// Safe zone РїРѕ С‚РѕС‡РЅРѕР№ РЅР°С‚РёРІРЅРѕР№ С„РѕСЂРјСѓР»Рµ client.dll; marching squares
+			// СЃС‚СЂРѕРёС‚СЃСЏ РЅРµРїРѕСЃСЂРµРґСЃС‚РІРµРЅРЅРѕ РїРѕ СЂР°СЃСЃС‡РёС‚Р°РЅРЅРѕРјСѓ СѓСЂРѕРЅСѓ СЃРµС‚РєРё 10u.
 			void draw_safe_zone( zdraw::draw_list& draw_list, const bomb_data& data,
 				const config::visual_profile::bomb& cfg, int local_health );
 			void rebuild_safe_zone( const foundation::vec3& center,
@@ -203,7 +208,8 @@ namespace features::visuals {
 		class radar_t
 		{
 		public:
-			void tick( );
+			static bool diagnose(float width, float height, std::ostream& out);
+            void tick( );
 			void on_render( zdraw::draw_list& draw_list );
 		};
 
@@ -216,7 +222,9 @@ namespace features::visuals {
 		class grenade_prediction_t
 		{
 		public:
-			void on_render( zdraw::draw_list& draw_list );
+			void tick( );
+	        void reset();
+	        void on_render( zdraw::draw_list& draw_list );
 
 		private:
 			struct held_grenade_snapshot
@@ -249,7 +257,7 @@ namespace features::visuals {
 				game::projectile_kind type );
 
 			void draw_path( zdraw::draw_list& draw_list,
-				const grenade_path& trajectory, float alpha ) const;
+				const grenade_path& trajectory, float alpha, const config::general_profile::grenades& settings ) const;
 
 			std::uintptr_t m_weapon_vdata{};
 			std::uintptr_t m_weapon_id{};
@@ -264,15 +272,28 @@ namespace features::visuals {
 			std::chrono::steady_clock::time_point m_last_preview_update{};
 			std::chrono::steady_clock::time_point m_last_preview_blend{};
 			bool m_was_holding{ false };
+			std::shared_ptr<const config::runtime_snapshot> m_config_snapshot{};
+            struct render_snapshot
+            {
+                std::shared_ptr<const config::runtime_snapshot> config;
+                std::vector<in_flight_grenade> flights;
+                grenade_path preview;
+            };
+            void update_state();
+            std::atomic<std::shared_ptr<const render_snapshot>> m_render_snapshot{};
+	        platform::snapshot_pool<render_snapshot> m_render_pool;
+	        bool m_snapshot_active{};
 
-			static constexpr auto throw_cooldown{ 1.0f };
+	        static constexpr auto throw_cooldown{ 1.0f };
 			static constexpr auto missing_grace{ 0.5f };
 		};
 
 		class bullet_impacts_t
 		{
 		public:
-			void on_render( zdraw::draw_list& draw_list );
+			void tick( );
+	        void reset();
+	        void on_render( zdraw::draw_list& draw_list );
 			struct confirmed_hit
 			{
 				std::uintptr_t pawn{};
@@ -287,10 +308,10 @@ namespace features::visuals {
 		private:
 			struct tracer_t
 			{
-				foundation::vec3 start;
-				std::vector<foundation::vec3> impacts;
+				foundation::vec3 start;                 // one shoot origin per bullet
+				std::vector<foundation::vec3> impacts;  // this bullet's holes (entry/exit/final)
 				std::chrono::steady_clock::time_point timestamp;
-				float shot_time{};
+				float shot_time{};                   // game timestamp; groups one bullet's holes
 				bool exact{};
 			};
 			struct pending_shot_t
@@ -420,8 +441,20 @@ namespace features::visuals {
 			std::chrono::steady_clock::time_point m_next_capture{};
 			simulation::ballistics_t::context m_cached_weapon_ctx{};
 			bool m_has_cached_weapon_ctx{};
+			std::shared_ptr<const config::runtime_snapshot> m_config_snapshot{};
+            struct render_snapshot
+            {
+                std::shared_ptr<const config::runtime_snapshot> config;
+                std::vector<tracer_t> tracers;
+                std::vector<hitmarker_t> markers;
+                std::vector<damage_popup_t> damage;
+            };
+            void update_state();
+            std::atomic<std::shared_ptr<const render_snapshot>> m_render_snapshot{};
+	        platform::snapshot_pool<render_snapshot> m_render_pool;
+	        bool m_snapshot_active{};
 
-			void collect_nonbullet_damage_feedback( );
+	        void collect_nonbullet_damage_feedback( );
 			void capture_shot( );
 			void collect_exact_impacts( );
 			void resolve_pending_traces( );
@@ -434,8 +467,8 @@ namespace features::visuals {
 				const foundation::vec3& position, int damage, bool killed,
 				bool correlate_trigger = true );
 			void resolve_hitmarkers( );
-			void render_hitmarkers( zdraw::draw_list& draw_list );
-			void render_damage_numbers( zdraw::draw_list& draw_list );
+			void render_hitmarkers( zdraw::draw_list& draw_list, const render_snapshot& frame );
+			void render_damage_numbers( zdraw::draw_list& draw_list, const render_snapshot& frame );
 			void add_tracer( const foundation::vec3& start, const foundation::vec3& end, bool exact, float shot_time = 0.0f );
 			void collect_bullet_hit_models( std::uintptr_t pawn, bool enemy_pawn );
 			void collect_bullet_service_impacts( std::uintptr_t pawn );
@@ -455,4 +488,4 @@ namespace features::visuals {
 	inline radar_t& radar( ) { static radar_t value{}; return value; }
 	inline crosshair_t& crosshair( ) { static crosshair_t value{}; return value; }
 
-}
+} // namespace features::visuals

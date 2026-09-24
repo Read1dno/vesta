@@ -47,4 +47,4 @@ namespace game {
 		return snapshot;
 	}
 
-}
+} // namespace game

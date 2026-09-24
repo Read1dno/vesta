@@ -23,7 +23,7 @@ inline world_sampler& world( ) { static world_sampler value{}; return value; }
 inline collision_world& collision( ) { static collision_world value{}; return value; }
 inline blast_model& blast_damage( ) { static blast_model value{}; return value; }
 
-}
+} // namespace game
 
 #define SCHEMA( class_name, field_id ) \
 	[]( ) -> std::int32_t { \

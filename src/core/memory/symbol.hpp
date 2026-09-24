@@ -16,7 +16,7 @@ namespace identity {
 		return value;
 	}
 
-}
+} // namespace identity
 
 [[nodiscard]] constexpr std::uint32_t operator""_id(
 	const char* text, std::size_t length ) noexcept

@@ -12,7 +12,7 @@ namespace chams {
 		struct block
 		{
 			char type[ 5 ]{};
-			std::uint32_t offset{};
+			std::uint32_t offset{}; // absolute offset into the owned buffer
 			std::uint32_t size{};
 
 			[[nodiscard]] bool is( const char* name ) const
@@ -42,4 +42,4 @@ namespace chams {
 		bool m_valid{ false };
 	};
 
-}
+} // namespace chams

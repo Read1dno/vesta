@@ -1,12 +1,15 @@
-#include <stdafx.hpp>
+#include <core/math/random.hpp>
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstring>
+#include <limits>
 
 namespace foundation {
 
 	void source_random::seed( int value ) noexcept
 	{
-		const auto magnitude = value < 0 ? -static_cast<std::int64_t>( value ) :
-			static_cast<std::int64_t>( value );
-		m_state = -static_cast<int>( magnitude % 2147483647LL );
+        m_state = value == std::numeric_limits<int>::min() ? 0 : (value > 0 ? -value : value);
 		m_shuffle = 0;
 		m_pool.fill( 0 );
 		m_ready = false;
@@ -21,7 +24,7 @@ namespace foundation {
 
 	int source_random::next_integer( ) noexcept
 	{
-		if ( !m_ready )
+		if ( !m_ready || m_state <= 0 )
 		{
 			auto value = std::max( -m_state, 1 );
 			for ( int warmup = 39; warmup >= 0; --warmup )
@@ -93,4 +96,4 @@ namespace foundation {
 		return std::byteswap( 0x67452301u + a );
 	}
 
-}
+} // namespace foundation

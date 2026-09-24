@@ -1,5 +1,10 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <span>
+
 namespace foundation {
 
 	class source_random
@@ -22,4 +27,4 @@ namespace foundation {
 	[[nodiscard]] std::uint32_t sha1_first_word(
 		std::span<const std::byte> message ) noexcept;
 
-}
+} // namespace foundation

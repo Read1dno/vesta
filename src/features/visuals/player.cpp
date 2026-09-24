@@ -68,6 +68,8 @@ namespace features::visuals {
 				}
 			}
 
+			// Separators are painted after the fill so every module stays visually
+			// independent at any value, including partially filled blocks.
 			const auto segments = std::clamp( style.segments, 1, 10 );
 			const auto gap = std::clamp( style.segment_gap, 0.0f, 4.0f ) * layout.scale;
 			if ( segments > 1 && gap > 0.0f )
@@ -111,7 +113,7 @@ namespace features::visuals {
 			{
 			case status_icon::kit:
 			case status_icon::defusing:
-
+				// Compact pliers: two jaws, crossed arms and two handle loops.
 				stroke( x + s * 0.24f, y + s * 0.18f, x + s * 0.76f, y + s * 0.82f );
 				stroke( x + s * 0.76f, y + s * 0.18f, x + s * 0.24f, y + s * 0.82f );
 				draw_list.add_circle( x + s * 0.22f, y + s * 0.82f, s * 0.13f, outline, 12, line + 2.0f );
@@ -148,14 +150,14 @@ namespace features::visuals {
 				stroke( x + s * 0.18f, y + s * 0.25f, cx, y + s * 0.08f );
 				break;
 			default:
-
+				// Remaining flags keep a compact, language-independent badge.
 				draw_list.add_circle( cx, cy, s * 0.35f, outline, 16, line + 2.0f );
 				draw_list.add_circle( cx, cy, s * 0.35f, color, 16, line );
 				stroke( cx, cy, cx + s * 0.22f, cy - s * 0.22f );
 				break;
 			}
 		}
-	}
+	} // namespace
 
 	void player_t::render( zdraw::draw_list& draw_list,
 		const std::shared_ptr<const game::player_pose_frame>& frame )
@@ -294,10 +296,12 @@ namespace features::visuals {
 		const auto center_y = static_cast<float>( display.second ) * 0.5f;
 
 		const auto size = std::max( 6.0f, cfg.size );
-
+		// Keep the ring on screen even at large radii so the arrow head can never be
+		// pushed past the viewport edge.
 		const auto max_radius = std::max( 20.0f, std::min( center_x, center_y ) - size * 2.0f );
 		const auto radius = std::clamp( cfg.radius, 20.0f, max_radius );
 
+		// Same view-projection matrix game::camera_state::project() uses, read once.
 		const auto m = game::camera().matrix( );
 		if ( m[ 3 ][ 3 ] == 0.0f )
 		{
@@ -341,17 +345,22 @@ namespace features::visuals {
 			auto ndc_y = clip_y / clip_w;
 			const bool behind = clip_w < 0.0f;
 
+			// In front of the near plane and inside the viewport -> the player is on
+			// screen and the normal ESP already covers them.
 			if ( !behind && std::abs( ndc_x ) <= 1.0f && std::abs( ndc_y ) <= 1.0f )
 			{
 				continue;
 			}
 
+			// A target behind the camera has its projection mirrored through the
+			// origin; flip it back so the arrow points the correct way.
 			if ( behind )
 			{
 				ndc_x = -ndc_x;
 				ndc_y = -ndc_y;
 			}
 
+			// Screen space: +x is right, +y is down (ndc_y points up).
 			auto dir_x = ndc_x;
 			auto dir_y = -ndc_y;
 			const auto length = std::sqrt( dir_x * dir_x + dir_y * dir_y );
@@ -377,6 +386,8 @@ namespace features::visuals {
 			const auto saved_flags = canvas->Flags;
 			canvas->Flags |= ImDrawListFlags_AntiAliasedFill | ImDrawListFlags_AntiAliasedLines;
 
+			// Start with a regular triangle. The fourth vertex is the exact centre
+			// of its base moved halfway along the altitude toward the tip.
 			const auto tip_forward = size * 0.78f;
 			const auto base_forward = -size * 0.52f;
 			const auto tip = point( tip_forward, 0.0f );
@@ -461,6 +472,7 @@ namespace features::visuals {
 
 					const auto& bone_data = bones.bones[ static_cast< std::size_t >( target_hb->bone ) ];
 
+					// mins/maxs — это две точки оси капсулы в пространстве кости (не bounding box)
 					const auto cap_a = bone_data.position + foundation::rotate( bone_data.rotation, target_hb->mins );
 					const auto cap_b = bone_data.position + foundation::rotate( bone_data.rotation, target_hb->maxs );
 					const auto center_world = ( cap_a + cap_b ) * 0.5f;
@@ -473,6 +485,7 @@ namespace features::visuals {
 						continue;
 					}
 
+					// Экранный радиус: проецируем точку на границе капсулы перпендикулярно взгляду
 					const auto view_dir = ( center_world - eye_pos ).normalized( );
 					auto perp = ( cap_b - cap_a ).cross( view_dir );
 					const auto pl = perp.length( );
@@ -503,21 +516,25 @@ namespace features::visuals {
 						continue;
 					}
 
+					// Альфа берётся из альфы выбранного цвета (+ подсветка при получении урона)
 					const auto flash_boost = use_color_alpha ? 0.0f : damage_flash * 60.0f;
 					const auto final_alpha = static_cast< std::uint8_t >( std::min( static_cast< float >( base_color.a ) + flash_boost, 255.0f ) );
 
 					const auto fill_color = zdraw::rgba( base_color.r, base_color.g, base_color.b, final_alpha );
 
+					// Обводка: слайдер outline_alpha масштабируется альфой цвета
 					const auto outline_alpha = static_cast< std::uint8_t >( cfg.outline_alpha * ( static_cast< float >( base_color.a ) / 255.0f ) );
 					const auto outline_color = zdraw::rgba( base_color.r, base_color.g, base_color.b, outline_alpha );
 
+					// Пилюля одним выпуклым полигоном: если рисовать линию + торцевые круги,
+					// их перекрытия складывают альфу и капсула становится непрозрачной
 					const auto dx = sb.x - sa.x;
 					const auto dy = sb.y - sa.y;
 					const auto axis_len = std::sqrt( dx * dx + dy * dy );
 
 					if ( axis_len < 1.0f )
 					{
-
+						// Ось вырождена на экране — просто круг
 						draw_list.add_circle_filled( sa.x, sa.y, screen_radius, fill_color, 24 );
 
 						if ( cfg.outline_thickness > 0.0f )
@@ -534,6 +551,7 @@ namespace features::visuals {
 					std::array<float, ( cap_segments + 1 ) * 4> pts{};
 					int n = 0;
 
+					// Полукруг вокруг A (дальняя от B сторона), затем полукруг вокруг B
 					for ( int s = 0; s <= cap_segments; ++s )
 					{
 						const auto a = phi + pi * 0.5f + pi * static_cast< float >( s ) / cap_segments;
@@ -853,7 +871,8 @@ namespace features::visuals {
 			const zdraw::rgba pin_color{ 235, 65, 70, cfg.icon_color.a };
 			if ( player.weapon.pin_pulled )
 			{
-
+				// A primed grenade is a state, not an ammo fraction: paint the whole
+				// glyph red so it cannot be confused with the ordinary ammo mask.
 				draw_list.add_text( icon_x, icon_y, icon, &icon_font,
 					pin_color, zdraw::text_style::outlined );
 			}
@@ -961,7 +980,8 @@ namespace features::visuals {
 			append( true, std::format( "{:.0f}m", distance ),
 				flags.distance_style, status_icon::distance );
 		}
-
+		// Icon flags are deliberately appended last so they always sit below every
+		// textual status regardless of which subset is currently enabled.
 		append( flags.has( flag::kit ) && player.has_defuser, "kit",
 			flags.kit_style, status_icon::kit );
 		append( flags.has( flag::flashed ) && player.is_flashed, "flashed",
@@ -978,7 +998,7 @@ namespace features::visuals {
 				{
 					auto kit_font = *icon_font;
 					kit_font.font_size = 15.0f * layout.scale * line.style->scale;
-
+					// Verified from the embedded font cmap/preview: 'r' is the pliers glyph.
 					draw_list.add_text( x, y, "r", &kit_font, line.style->color,
 						zdraw::text_style::outlined );
 					y += zdraw::measure_text( "r", &kit_font ).second;
@@ -994,7 +1014,7 @@ namespace features::visuals {
 			{
 				auto flash_font = *icon_font;
 				flash_font.font_size = 15.0f * layout.scale * line.style->scale;
-
+				// 'i' is the flashbang glyph in the bundled CS weapon font.
 				draw_list.add_text( x, y, "i", &flash_font, line.style->color,
 					zdraw::text_style::outlined );
 				y += zdraw::measure_text( "i", &flash_font ).second;
@@ -1038,4 +1058,4 @@ namespace features::visuals {
 		return match->second;
 	}
 
-}
+} // namespace features::visuals

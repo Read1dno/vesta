@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include <render/index_run.hpp>
 #include <render/chams/renderer.hpp>
 #include <render/chams/mesh_cache.hpp>
 #include <features/visuals/visuals.hpp>
@@ -13,6 +14,8 @@ namespace chams {
 
 	namespace {
 
+		// skinned_vertex must map directly onto the D3D11 input layout below --
+		// no CPU-side repack between extract_mesh's output and the GPU buffer.
 		static_assert( sizeof( skinned_vertex ) == 56 );
 		static_assert( offsetof( skinned_vertex, position ) == 0 );
 		static_assert( offsetof( skinned_vertex, normal ) == 12 );
@@ -25,7 +28,7 @@ namespace chams {
 		{
 			float matrix[ 4 ][ 4 ];
 			float eye[ 3 ];
-			float time;
+			float time; // seconds, for the animated materials
 		};
 
 		struct cb_bones
@@ -55,7 +58,7 @@ namespace chams {
 			int split_by_world_depth{};
 			int visible_enabled{ 1 };
 			int invisible_enabled{};
-			int layer{};
+			int layer{}; // 0 = both, 1 = visible only, 2 = invisible only
 			int antialias_split{};
 			float shell_expand{};
 			float effect_progress{};
@@ -183,7 +186,9 @@ namespace chams {
 					{
 						float4x4 bone = g_Bones[input.BoneIndices[i]];
 						skinned += mul(bone, float4(input.Position, 1.0f)) * weight;
-
+						// Bones are rotation + uniform scale only, so the rotation
+						// block transforms the normal directly -- no inverse
+						// transpose needed.
 						normal  += mul((float3x3)bone, input.Normal) * weight;
 					}
 				}
@@ -201,8 +206,12 @@ namespace chams {
 				float3 N = normalize(input.Normal);
 				float3 V = normalize(g_EyePos - input.WorldPos);
 
+				// Two-sided: flip inward-facing normals so back faces and any
+				// mirrored geometry light the same way as the front.
 				N = dot(N, V) < 0.0f ? -N : N;
 
+				// The light sits at the camera, so L == V and there is no angle at
+				// which an enemy falls into shadow.
 				float3 L = V;
 				float3 H = normalize(L + V);
 				float  ndv = saturate(dot(N, V));
@@ -212,46 +221,54 @@ namespace chams {
 
 				float3 rgb = material.Color.rgb;
 
-				if (material.Type == 1)
+				if (material.Type == 1) // shaded
 				{
 					float  shininess = lerp(96.0f, 4.0f, saturate(material.Roughness));
 					float  spec = pow(ndh, shininess) * (1.0f - saturate(material.Roughness));
 					float3 specColor = lerp(float3(1, 1, 1), material.Color.rgb, saturate(material.Metalness));
 					float3 diffuse = material.Color.rgb * (0.25f + 0.75f * ndl);
-
+					// A soft self-lit fresnel rim gives the body some shape at its
+					// silhouette instead of reading as one flat fill.
 					float  fres = rim * rim * 0.20f;
 					rgb = lerp(diffuse, material.Color.rgb * 0.18f, saturate(material.Metalness))
 						+ specColor * spec + material.Color.rgb * fres;
 				}
-				else if (material.Type == 2)
+				else if (material.Type == 2) // glow
 				{
 					rgb = material.Color.rgb * (pow(rim, max(material.Exponent, 0.01f)) + 0.12f);
 				}
-				else if (material.Type == 3)
+				else if (material.Type == 3) // glow outline
 				{
-
+					// Falloff sets how tight the rim band is, fresnel fill lifts
+					// the interior so the body is not fully hollow.
 					float band = pow(rim, max(material.Falloff * 8.0f, 0.01f));
 					rgb = material.Color.rgb * (band * max(material.Exponent, 0.0f) + saturate(material.FresnelFill));
 				}
-				else if (material.Type == 4)
+				else if (material.Type == 4) // iridescent
 				{
 					float3 sweep = 0.5f + 0.5f * cos(6.28318f * (rim * 2.0f + g_Time * material.Speed * 0.15f + float3(0.0f, 0.33f, 0.67f)));
 					float  spec = pow(ndh, lerp(96.0f, 4.0f, saturate(material.Roughness)));
 					rgb = lerp(material.Color.rgb, sweep, saturate(material.Strength)) * (0.35f + 0.65f * ndl)
 						+ spec * (1.0f - saturate(material.Roughness));
 				}
-				else if (material.Type == 5)
+				else if (material.Type == 5) // water
 				{
-
+					// A rippling water surface rather than a single scrolling band.
+					// Several sine waves of different frequency and direction are
+					// summed over the world position so the highlights drift and
+					// interfere the way light does on moving water. Driven by world
+					// position (this pipeline never decodes UVs) and g_Time.
 					float  t = g_Time * max(material.Speed, 0.0001f);
 					float3 p = input.WorldPos;
 					float  w  = sin(p.x * 0.11f + p.z * 0.07f + t * 2.0f);
 					       w += sin(p.z * 0.17f - p.y * 0.09f + t * 1.6f) * 0.7f;
 					       w += sin((p.x + p.y) * 0.08f + t * 1.1f) * 0.5f;
 					       w += sin(p.y * 0.23f + t * 2.7f) * 0.35f;
-					w = w * 0.4f;
+					w = w * 0.4f; // back into roughly [-1, 1]
 					float  ripple = 0.5f + 0.5f * w;
 
+					// Sharpen the crests into thin bright lines, like specular
+					// glints skating across the surface.
 					float  crest = pow(saturate(ripple), 3.0f);
 					float  fres  = pow(1.0f - ndv, 2.5f);
 
@@ -260,7 +277,7 @@ namespace chams {
 					rgb = baseCol
 						+ sheen * (crest * 0.65f * max(material.Strength, 0.15f) + fres * 0.45f);
 				}
-				else if (material.Type == 6)
+				else if (material.Type == 6) // glossy
 				{
 					float spec = pow(ndh, max(material.Exponent * 16.0f, 1.0f));
 					float band = pow(rim, max(material.Falloff * 8.0f, 0.01f));
@@ -307,6 +324,9 @@ namespace chams {
 					return Shade(g_Visible, input);
 				}
 
+				// Blend only the one-pixel geometric transition. This preserves the
+				// exact world-depth classification while avoiding a full-scene MSAA
+				// render target and resolve.
 				if (g_AntialiasSplit != 0 && g_Layer == 0
 					&& g_VisibleEnabled != 0 && g_InvisibleEnabled != 0)
 				{
@@ -360,7 +380,9 @@ namespace chams {
 
 			float4 PS_BloomMask(PS_INPUT input) : SV_TARGET
 			{
-
+				// Bloom needs a saturated silhouette only. Sampling the full-resolution
+				// world-depth texture from a half-resolution target used mismatched pixel
+				// coordinates and desaturated/discarded large parts of the glow mask.
 				return float4(g_Visible.Color.rgb * g_Visible.Color.a,
 					g_Visible.Color.a);
 			}
@@ -475,7 +497,11 @@ namespace chams {
 			}
 				float4 PS_Blur(FullscreenOut input) : SV_TARGET
 				{
-
+					// g_Direction carries the requested radius in output pixels. The previous
+					// five-tap approximation multiplied its already separated tap offsets by
+					// that radius. On a distant silhouette those taps no longer overlapped and
+					// appeared as a grid of complete model copies. Sample every neighbouring
+					// pixel instead, then normalize the real Gaussian kernel.
 					float radius = clamp(max(abs(g_Direction.x), abs(g_Direction.y)), 1.0f, 16.0f);
 					float2 axis = abs(g_Direction.x) >= abs(g_Direction.y)
 						? float2(1.0f, 0.0f) : float2(0.0f, 1.0f);
@@ -503,7 +529,9 @@ namespace chams {
 					float sourceCoverage = g_Original.Sample(g_Linear, input.uv).a;
 					if (g_Padding > 0.5f)
 					{
-
+						// Model mode: g_Inner is the perspective-expanded silhouette and
+						// g_Original is the real silhouette. Their difference is the solid,
+						// distance-correct rim; the narrow outer blur only softens its edge.
 						float originalSoft = sourceCoverage * 0.40f;
 						originalSoft += g_Original.Sample(g_Linear,
 							input.uv + float2(g_Texel.x * 0.5f, 0.0f)).a * 0.15f;
@@ -527,10 +555,17 @@ namespace chams {
 					}
 					float blurCoverage = inner.a * 0.75f + outer.a * 0.55f;
 				float3 weighted = inner.rgb * 0.75f + outer.rgb * 0.55f;
-
+				// Recover the emissive hue from coverage. This prevents RGB from being
+				// multiplied by alpha both during filtering and again during composition.
 				float3 chroma = blurCoverage > 0.0005f
 					? weighted / blurCoverage : float3(0.0f, 0.0f, 0.0f);
-
+				// True screen-space outer glow. Subtracting the linearly filtered source
+				// silhouette from both lobes removes every foggy model copy. The tight lobe
+				// forms a soft coloured rim, the wide lobe only its falloff.
+					// Do not cut the halo with the raw, single-sample triangle edge: that
+					// reproduces its staircase exactly. A sub-pixel inner lobe supplies a
+					// smooth silhouette exclusion while the original mask only prevents light
+					// from painting the middle of large models.
 					float sourceSoft = sourceCoverage * 0.40f;
 					sourceSoft += g_Original.Sample(g_Linear,
 						input.uv + float2(g_Texel.x * 0.5f, 0.0f)).a * 0.15f;
@@ -545,9 +580,14 @@ namespace chams {
 					float tightHalo = inner.a * (1.0f - softInterior);
 					float wideHalo = outer.a * (1.0f - softInterior);
 					float halo = tightHalo * 1.25f + wideHalo * 0.85f;
-
+					// Never amplify the near-zero tails. sqrt(halo) made the normally invisible
+					// corners of the separable kernel visible when the projected model became
+					// small, so the distant glow expanded into a rectangular fog patch. Remove
+					// only that numerical tail and shape the remaining coverage monotonically.
 					float compactHalo = smoothstep(0.004f, 0.22f, max(halo, 0.0f));
-
+					// Keep the sharp source itself emissive as well. UI bloom is composited
+					// after ImGui, so this coloured core illuminates the arrow/trajectory line
+					// instead of only brightening the background outside its black outline.
 					float emissiveCore = sourceCoverage * 0.62f;
 					float glow = max(compactHalo, emissiveCore)
 						* saturate(g_Strength * 1.45f);
@@ -565,7 +605,9 @@ namespace chams {
 			}
 			float4 PS_Bloom2D(Bloom2DOut input) : SV_TARGET
 			{
-
+				// Preserve real coverage. The old constant alpha=1 turned minimum-intensity
+				// UI bloom into an opaque grey patch and made the background, rather than
+				// the arrow itself, appear illuminated.
 				return float4(input.color.rgb * input.color.a, input.color.a);
 			}
 		)";
@@ -593,7 +635,7 @@ namespace chams {
 			dst[ 3 ][ 0 ] = 0.0f; dst[ 3 ][ 1 ] = 0.0f; dst[ 3 ][ 2 ] = 0.0f; dst[ 3 ][ 3 ] = 1.0f;
 		}
 
-	}
+	} // namespace
 
 	bool renderer::initialize( ID3D11Device* device, ID3D11DeviceContext* context )
 	{
@@ -1188,6 +1230,8 @@ namespace chams {
 
 		this->release_msaa_targets( );
 
+		// Four samples remain inexpensive at the common game resolutions. At 4K,
+		// two samples avoid doubling the already sizeable transient color/depth pair.
 		const auto pixels = static_cast<std::uint64_t>( width ) * height;
 		const std::array candidates = pixels <= 2560ull * 1440ull
 			? std::array<UINT, 2>{ 4, 2 }
@@ -1208,6 +1252,8 @@ namespace chams {
 			}
 		}
 
+		// Cache unsupported dimensions too, so the capability probe is not repeated
+		// on every frame. A one-sample value means that the normal path is used.
 		this->m_msaa_width = width;
 		this->m_msaa_height = height;
 		this->m_msaa_samples = samples ? samples : 1;
@@ -1303,7 +1349,8 @@ namespace chams {
 				( std::clamp( union_max_x, -1.0f, 1.0f ) * 0.5f + 0.5f ) * width ) ),
 			.bottom = static_cast<LONG>( std::ceil(
 				( 0.5f - std::clamp( union_min_y, -1.0f, 1.0f ) * 0.5f ) * height ) ) };
-
+		// Cover all partially occupied edge samples, including the interpolation
+		// margin that was added while projecting each player's animated bounds.
 		scissor.left = std::clamp<LONG>( scissor.left - 2, 0, width );
 		scissor.top = std::clamp<LONG>( scissor.top - 2, 0, height );
 		scissor.right = std::clamp<LONG>( scissor.right + 2, 0, width );
@@ -1334,8 +1381,9 @@ namespace chams {
 
 	bool renderer::ensure_world_geometry( )
 	{
-		const auto geometry = game::collision().render_geometry( );
-		static_assert( sizeof( foundation::vec3 ) == 12 );
+	    VESTA_PERF_SCOPE(chams_geometry);
+	    const auto geometry = game::collision().render_geometry();
+	    static_assert( sizeof( foundation::vec3 ) == 12 );
 		static_assert( std::is_trivially_copyable_v<foundation::vec3> );
 
 		const auto release = [ ]( world_geometry& target )
@@ -1408,9 +1456,9 @@ namespace chams {
 		const std::vector<screen_volume>& occlusion_volumes,
 		const foundation::matrix4& view_projection )
 	{
-
-		this->m_context->OMSetRenderTargets( 0, nullptr, dsv );
-		this->m_context->IASetInputLayout( this->m_world_input_layout );
+	    VESTA_PERF_SCOPE(chams_world_depth);
+	    this->m_context->OMSetRenderTargets(0, nullptr, dsv);
+	    this->m_context->IASetInputLayout( this->m_world_input_layout );
 		this->m_context->IASetPrimitiveTopology( D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST );
 		this->m_context->VSSetShader( this->m_world_vertex_shader, nullptr, 0 );
 		this->m_context->PSSetShader( nullptr, nullptr, 0 );
@@ -1444,59 +1492,7 @@ namespace chams {
 		scissor.bottom = std::clamp<LONG>( scissor.bottom + 2, 0, height );
 		this->m_context->RSSetScissorRects( 1, &scissor );
 
-		struct projected_bounds
-		{
-			float min_x{ 1e12f }, min_y{ 1e12f };
-			float max_x{ -1e12f }, max_y{ -1e12f };
-			float min_depth{ 1.0f };
-			bool valid{};
-			bool crosses_near{};
-		};
-		const auto project_bounds = [ & ]( const world_bounds& bounds )
-		{
-			projected_bounds projected{};
-			for ( int corner = 0; corner < 8; ++corner )
-			{
-				const foundation::vec3 point{
-					( corner & 1 ) ? bounds.maxs.x : bounds.mins.x,
-					( corner & 2 ) ? bounds.maxs.y : bounds.mins.y,
-					( corner & 4 ) ? bounds.maxs.z : bounds.mins.z };
-				const auto clip_x = view_projection[ 0 ][ 0 ] * point.x
-					+ view_projection[ 0 ][ 1 ] * point.y
-					+ view_projection[ 0 ][ 2 ] * point.z + view_projection[ 0 ][ 3 ];
-				const auto clip_y = view_projection[ 1 ][ 0 ] * point.x
-					+ view_projection[ 1 ][ 1 ] * point.y
-					+ view_projection[ 1 ][ 2 ] * point.z + view_projection[ 1 ][ 3 ];
-				const auto clip_z = view_projection[ 2 ][ 0 ] * point.x
-					+ view_projection[ 2 ][ 1 ] * point.y
-					+ view_projection[ 2 ][ 2 ] * point.z + view_projection[ 2 ][ 3 ];
-				const auto clip_w = view_projection[ 3 ][ 0 ] * point.x
-					+ view_projection[ 3 ][ 1 ] * point.y
-					+ view_projection[ 3 ][ 2 ] * point.z + view_projection[ 3 ][ 3 ];
-				if ( clip_w <= 0.001f )
-				{
-					projected.crosses_near = true;
-					continue;
-				}
-				const auto inverse_w = 1.0f / clip_w;
-				projected.min_x = std::min( projected.min_x, clip_x * inverse_w );
-				projected.min_y = std::min( projected.min_y, clip_y * inverse_w );
-				projected.max_x = std::max( projected.max_x, clip_x * inverse_w );
-				projected.max_y = std::max( projected.max_y, clip_y * inverse_w );
-				projected.min_depth = std::min( projected.min_depth, clip_z * inverse_w );
-				projected.valid = true;
-			}
-			if ( projected.valid && projected.crosses_near )
-			{
-				projected.min_x = projected.min_y = -1.0f;
-				projected.max_x = projected.max_y = 1.0f;
-				projected.min_depth = 0.0f;
-			}
-			return projected;
-		};
-
-		const auto draw_geometry = [ & ]( const world_geometry& geometry )
-		{
+	    const auto draw_geometry = [&](world_geometry &geometry) {
 			if ( !geometry.vertex_buffer || !geometry.index_buffer || !geometry.index_count )
 				return;
 			const UINT stride = sizeof( foundation::vec3 );
@@ -1506,28 +1502,19 @@ namespace chams {
 			this->m_context->IASetIndexBuffer(
 				geometry.index_buffer, DXGI_FORMAT_R32_UINT, 0 );
 
-			for ( const auto& chunk : geometry.chunks )
-			{
-				const auto projected = project_bounds( chunk.bounds );
-				if ( !projected.valid ) continue;
-				const auto relevant = std::ranges::any_of( occlusion_volumes,
-					[ & ]( const screen_volume& volume )
-					{
-						return projected.min_depth <= volume.max_depth + 0.0005f
-							&& projected.min_x <= volume.max_x
-							&& projected.max_x >= volume.min_x
-							&& projected.min_y <= volume.max_y
-							&& projected.max_y >= volume.min_y;
-					} );
-				if ( relevant )
-				{
-					this->m_context->DrawIndexed(
-						chunk.index_count, chunk.first_index, 0 );
-				}
-			}
-		};
+		    render::index_run run;
+		    const auto emit = [&](std::uint32_t first, std::uint32_t count) {
+			    this->m_context->DrawIndexed(count, first, 0);
+		    };
+		    geometry.depth_projection.update(view_projection, geometry.chunks);
+		    geometry.depth_projection.select(occlusion_volumes, [&](std::size_t index) {
+			    const auto &chunk = geometry.chunks[index];
+			    run.append(chunk.first_index, chunk.index_count, emit);
+		    });
+		    run.flush(emit);
+	    };
 
-		draw_geometry( this->m_static_world );
+	    draw_geometry( this->m_static_world );
 		if ( config::visual_settings.m_chams.occlude_dynamic_doors )
 			draw_geometry( this->m_dynamic_world );
 	}
@@ -1691,7 +1678,8 @@ namespace chams {
 		};
 		push( inner[ 0 ], 1.0f ); push( inner[ 1 ], 1.0f ); push( inner[ 2 ], 1.0f );
 		push( inner[ 0 ], 1.0f ); push( inner[ 2 ], 1.0f ); push( inner[ 3 ], 1.0f );
-
+		// The source contains only the real element. Radius is produced exclusively
+		// by the Gaussian pass, not by stacked/feathered copies of its geometry.
 		this->m_bloom_2d_radius = std::max( this->m_bloom_2d_radius, radius );
 	}
 
@@ -1724,10 +1712,12 @@ namespace chams {
 	void renderer::render_2d_bloom( ID3D11RenderTargetView* backbuffer_rtv,
 		const UINT target_width, const UINT target_height )
 	{
-		if ( !this->m_ready || !backbuffer_rtv || this->m_bloom_2d_vertices.empty( )
-			|| !this->ensure_bloom_targets( target_width, target_height ) ) return;
+	    VESTA_PERF_SCOPE(chams_world_effects);
+	    if (!this->m_ready || !backbuffer_rtv || this->m_bloom_2d_vertices.empty() ||
+	        !this->ensure_bloom_targets(target_width, target_height))
+		    return;
 
-		const auto required = this->m_bloom_2d_vertices.size( );
+	    const auto required = this->m_bloom_2d_vertices.size( );
 		if ( !this->m_bloom_2d_vertex_buffer || required > this->m_bloom_2d_vertex_capacity )
 		{
 			if ( this->m_bloom_2d_vertex_buffer )
@@ -1952,10 +1942,14 @@ namespace chams {
 			for ( int c = 0; c < 4; ++c ) data->matrix[ r ][ c ] = matrix[ r ][ c ];
 		}
 
+		// The light lives at the eye, so the view origin doubles as the light
+		// position and every enemy stays lit from the front wherever they stand.
 		data->eye[ 0 ] = eye.x;
 		data->eye[ 1 ] = eye.y;
 		data->eye[ 2 ] = eye.z;
 
+		// Wrapped to an hour: a raw epoch count loses sub-second resolution in a
+		// float, which would make the animated materials stutter then freeze.
 		data->time = static_cast< float >(
 			std::chrono::duration_cast< std::chrono::milliseconds >(
 				std::chrono::steady_clock::now( ).time_since_epoch( ) ).count( ) % 3600000 ) * 0.001f;
@@ -2091,6 +2085,8 @@ namespace chams {
 			this->m_context->Unmap( this->m_cb_view_projection, 0 );
 		}
 
+		// The caller supplies the pose, so chams lands on the same skeleton the
+		// model was drawn with instead of snapping back to the bind pose.
 		this->update_bones( skin_matrices );
 		this->update_material( material );
 
@@ -3209,7 +3205,8 @@ namespace chams {
 		this->m_context->PSSetShaderResources( 0, 2, null_srvs );
 		if ( use_msaa )
 		{
-
+			// A multisampled texture cannot be an RTV and SRV simultaneously. Detach
+			// it before the custom, player-bounds-only resolve samples it.
 			this->m_context->OMSetRenderTargets( 0, nullptr, nullptr );
 			this->resolve_msaa( backbuffer_rtv, occlusion_volumes );
 		}
@@ -3259,4 +3256,4 @@ namespace chams {
 		this->m_diag.players_drawn = static_cast< int >( drawables.size( ) );
 	}
 
-}
+} // namespace chams

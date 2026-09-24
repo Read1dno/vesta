@@ -13,6 +13,8 @@ namespace chams {
 
 		constexpr std::uint32_t k_vpk_signature{ 0x55AA1234 };
 
+		// Reads a NUL-terminated string out of the directory tree, advancing the
+		// cursor past the terminator.
 		[[nodiscard]] bool read_cstring( const std::vector<std::uint8_t>& buf, std::size_t& cursor, std::string& out )
 		{
 			const auto start = cursor;
@@ -67,6 +69,8 @@ namespace chams {
 			return std::string{ buffer };
 		}
 
+		// libraryfolders.vdf is a small keyvalues file; every library shows up as a
+		// "path" entry. Full VDF parsing is overkill just to collect those.
 		[[nodiscard]] std::vector<std::string> steam_libraries( const std::string& steam_path )
 		{
 			std::vector<std::string> libraries{};
@@ -107,6 +111,7 @@ namespace chams {
 
 				auto value = line.substr( open_quote + 1, close_quote - open_quote - 1 );
 
+				// VDF escapes backslashes; collapse them back to a real path.
 				std::string unescaped{};
 				unescaped.reserve( value.size( ) );
 				for ( std::size_t i = 0; i < value.size( ); ++i )
@@ -144,7 +149,7 @@ namespace chams {
 					if ( ::QueryFullProcessImageNameW( process, 0, image, &length ) )
 					{
 						auto directory = std::filesystem::path{ std::wstring_view{ image, length } };
-
+						// .../game/bin/win64/cs2.exe -> .../game
 						result = directory.parent_path( ).parent_path( ).parent_path( );
 					}
 					::CloseHandle( process );
@@ -155,7 +160,7 @@ namespace chams {
 			return result;
 		}
 
-	}
+	} // namespace
 
 	std::string vpk_archive::locate_cs2_pak( )
 	{
@@ -238,6 +243,7 @@ namespace chams {
 			return false;
 		}
 
+		// v1 has a 12-byte header, v2 adds four more fields before the tree.
 		const std::uint32_t header_size = version == 1 ? 12u : 28u;
 		if ( version != 1 && version != 2 )
 		{
@@ -259,6 +265,8 @@ namespace chams {
 		selected.reserve( archive_paths.size( ) );
 		for ( const auto& path : archive_paths ) selected.emplace( path );
 
+		// Tree layout: extension \0 { directory \0 { filename \0 <entry> } }, each
+		// level terminated by an empty string.
 		std::size_t cursor{ 0 };
 		while ( cursor < tree.size( ) )
 		{
@@ -308,6 +316,7 @@ namespace chams {
 						cursor += preload_size;
 					}
 
+					// A single space stands in for the archive root.
 					auto full = directory == " "
 						? name + "." + extension
 						: directory + "/" + name + "." + extension;
@@ -357,6 +366,8 @@ namespace chams {
 			return out;
 		}
 
+		// 0x7FFF means the payload lives in the directory file after the tree;
+		// anything else indexes a numbered archive part.
 		std::string source{};
 		std::uint64_t seek{};
 
@@ -399,4 +410,4 @@ namespace chams {
 		return out;
 	}
 
-}
+} // namespace chams

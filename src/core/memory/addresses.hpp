@@ -15,4 +15,4 @@ namespace game {
 		std::uintptr_t auto_accept{};
 	};
 
-}
+} // namespace game

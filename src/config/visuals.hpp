@@ -55,7 +55,8 @@ namespace config {
 
 			struct editor_layout
 			{
-
+				// About a two-pixel visual gap between the outlined text and the box
+				// at the reference size. Exterior spacing remains stable at distance.
 				layout_element name{ 0.494192481f, -0.018994622f, 1.160000086f };
 				layout_element weapon{ 0.50f, 1.038997650f, 1.0f };
 				layout_element health{ -0.017735176f, 0.50f, 0.920000017f };
@@ -284,11 +285,12 @@ namespace config {
 			bool show_info_panel{ true };
 			zdraw::rgba panel_background{ 12, 13, 18, 225 };
 
+			// The safe-zone contour is derived from the baked blast-damage map.
 			bool show_safe_zone{ true };
 			zdraw::rgba safe_zone_color{ 70, 235, 105, 240 };
 			int safe_zone_bands{ 1 };
 			float safe_zone_band_step{ 4.0f };
-			float safe_zone_draw_radius{ 1200.0f };
+			float safe_zone_draw_radius{ 1200.0f }; // only submit the nearby contour around the local player
 		} m_bomb{};
 
 		struct no_flash
@@ -308,7 +310,8 @@ namespace config {
 		struct crosshair
 		{
 			bool enabled{ false };
-
+			// Read the user's cl_crosshair* values from the game and mirror them in
+			// the overlay. This is independent of weapon type and is the default mode.
 			bool copy_game{ true };
 
 			bool sync{ true };
@@ -330,7 +333,8 @@ namespace config {
 
 		struct chams
 		{
-
+			// Order must match the material dispatch in the chams pixel shader and
+			// k_chams_materials in the menu.
 			enum material_type : int
 			{
 				solid = 0,
@@ -350,14 +354,14 @@ namespace config {
 				bool wireframe{ false };
 				zdraw::rgba color{ 255, 60, 60, 220 };
 
-				float roughness{ 0.35f };
-				float metalness{ 0.0f };
-				float exponent{ 2.0f };
-				float falloff{ 0.5f };
-				float fresnel_fill{ 0.25f };
-				float strength{ 1.0f };
-				float speed{ 1.0f };
-				zdraw::rgba tint{ 120, 200, 255, 255 };
+				float roughness{ 0.35f };     // shaded, iridescent
+				float metalness{ 0.0f };      // shaded
+				float exponent{ 2.0f };       // glow, glow_outline, glossy
+				float falloff{ 0.5f };        // glow_outline, glossy
+				float fresnel_fill{ 0.25f };  // glow_outline, glossy
+				float strength{ 1.0f };       // iridescent
+				float speed{ 1.0f };          // water_flow
+				zdraw::rgba tint{ 120, 200, 255, 255 }; // glossy
 			};
 
 			bool enabled{ true };
@@ -480,10 +484,10 @@ namespace config {
 		{
 			bool enabled{ false };
 			bool local_sync{ false };
-			float duration{ 1.6f };
-			float radius{ 34.0f };
+			float duration{ 1.6f };            // seconds a ring lasts before it is gone
+			float radius{ 34.0f };             // final world-space ring radius
 			zdraw::rgba color{ 120, 200, 255, 200 };
 		} m_sound{};
 	};
 
-}
+} // namespace config

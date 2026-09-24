@@ -119,4 +119,4 @@ namespace features::visuals {
 		}
 	}
 
-}
+} // namespace features::visuals

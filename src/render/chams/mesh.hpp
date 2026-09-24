@@ -17,6 +17,7 @@ namespace chams {
 			return out;
 		}
 
+		// this * other, treating both as [R|t; 0 0 0 1].
 		[[nodiscard]] bone_matrix operator*( const bone_matrix& other ) const
 		{
 			bone_matrix out{};
@@ -47,7 +48,7 @@ namespace chams {
 			{
 				for ( int col = 0; col < 3; ++col )
 				{
-					out.m[ row ][ col ] = m[ col ][ row ] * inv_scale_sqr;
+					out.m[ row ][ col ] = m[ col ][ row ] * inv_scale_sqr; // transpose / scale^2
 				}
 			}
 
@@ -64,22 +65,22 @@ namespace chams {
 	{
 		std::string name{};
 		int parent{ -1 };
-		bone_matrix inverse_bind{};
+		bone_matrix inverse_bind{}; // model-space bind pose, inverted -- ready to multiply by a live pose matrix
 	};
 
 	struct skinned_vertex
 	{
 		float position[ 3 ]{};
 		float normal[ 3 ]{};
-		float tangent[ 4 ]{};
+		float tangent[ 4 ]{}; // xyz + handedness in w, for normal mapping
 		float uv[ 2 ]{};
 		std::uint8_t bone_indices[ 4 ]{};
-		std::uint8_t bone_weights[ 4 ]{};
+		std::uint8_t bone_weights[ 4 ]{}; // raw 0-255; divide by 255 at skin time
 	};
 
 	struct draw_range
 	{
-		std::uint32_t index_offset{};
+		std::uint32_t index_offset{}; // into the assembled index buffer below
 		std::uint32_t index_count{};
 		std::string material{};
 	};
@@ -87,10 +88,10 @@ namespace chams {
 	struct skinned_mesh
 	{
 		std::vector<skinned_vertex> vertices{};
-		std::vector<std::uint32_t> indices{};
+		std::vector<std::uint32_t> indices{}; // widened from the on-disk u16, base-vertex already applied
 		std::vector<draw_range> draw_calls{};
 		std::vector<bone_info> bones{};
 		bool valid{ false };
 	};
 
-}
+} // namespace chams

@@ -41,6 +41,7 @@ bool game::address_catalog::initialize( )
 	view_matrix = resolve( "dwViewMatrix",
 		"48 8D 0D ? ? ? ? 48 C1 E0 06" );
 
+	// Vesta-specific Panorama state has no upstream dumper entry and is optional.
 	if ( const auto match = process.scan_code_signature( client,
 		"48 89 05 ? ? ? ? E8 ? ? ? ? 48 85 DB" ) )
 	{

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <stop_token>
 #include <shared_mutex>
 #include <unordered_map>
 #include <vector>
@@ -54,7 +55,8 @@ public:
 
 	static_assert( sizeof( damage_value ) == sizeof( std::uint32_t ) );
 
-	void parse( );
+	void parse(std::stop_token stop = {});
+	void replace_with(blast_model &built);
 	void clear( );
 	[[nodiscard]] bool valid( ) const;
 	[[nodiscard]] std::size_t point_count( ) const;
@@ -115,4 +117,4 @@ private:
 	mutable std::shared_mutex m_mutex{};
 };
 
-}
+} // namespace game

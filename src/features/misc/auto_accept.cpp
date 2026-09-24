@@ -1,5 +1,6 @@
 #include <stdafx.hpp>
 #include <features/misc/misc.hpp>
+#include <core/memory/compatibility.hpp>
 
 namespace
 {
@@ -181,7 +182,8 @@ namespace
 		const auto count = process.load<std::uint32_t>( panel + 0x148 );
 		const auto data = process.load<std::uintptr_t>( panel + 0x150 );
 		if ( count == 0 ) return false;
-
+		// A normal Panorama panel has only a handful of classes. Fail closed on
+		// malformed/unresolved storage so a stale pointer can never be clicked.
 		if ( count > 64 || !readable_pointer( data )
 			|| !runtime.class_symbol_table )
 			return true;
@@ -199,7 +201,11 @@ namespace
 	[[nodiscard]] panorama_runtime& panorama( )
 	{
 		static panorama_runtime runtime{};
-		if ( runtime.attempted ) return runtime;
+		if ( runtime.engine ) return runtime;
+		static auto next_retry = std::chrono::steady_clock::time_point{};
+		const auto now = std::chrono::steady_clock::now();
+		if ( now < next_retry ) return runtime;
+		next_retry = now + std::chrono::seconds( 2 );
 
 		const auto& process = app::context().process;
 		const auto panorama_module = app::context().modules.panorama
@@ -231,11 +237,11 @@ namespace
 			process, valid_panel_method );
 
 		if ( !readable_pointer( runtime.engine ) || !runtime.ui_panel_vtable
-			|| !runtime.button_vtable || !runtime.class_symbol_table
+			|| !runtime.button_vtable
 			|| runtime.registry_offset < 0x40
 			|| runtime.registry_offset > 0x1000 )
 		{
-			runtime = { .attempted = true };
+			runtime = {};
 			app::context().diagnostics.warning(
 				"[auto-accept] Panorama object resolver initialization failed" );
 		}
@@ -276,7 +282,8 @@ namespace
 			current = ancestor.parent;
 		}
 
-		return accept_layout && !panel_has_class( panel, runtime, "hidden" );
+		// Geometry verifies current visibility; the panel may be registered while hidden.
+		return accept_layout;
 	}
 
 	[[nodiscard]] panel_geometry inspect_geometry( const std::uintptr_t panel )
@@ -285,16 +292,20 @@ namespace
 		panel_geometry result{};
 		std::uintptr_t current = panel;
 		std::uintptr_t root = panel;
+		game::compatibility::panel_layout root_layout{};
 		std::unordered_set<std::uintptr_t> visited{};
 
 		for ( int depth = 0; depth < 40 && readable_pointer( current ); ++depth )
 		{
 			if ( !visited.emplace( current ).second ) return {};
-			const auto visibility = process.load<std::uint8_t>( current + 0x11d );
+			const auto layout = game::compatibility::panel( current );
+			if ( !layout ) return {};
+			const auto visibility = process.load<std::uint8_t>(
+				current + layout.visible );
 			if ( ( visibility & 0x08 ) == 0 ) return {};
 
-			const auto x = process.load<float>( current + 0x1b0 );
-			const auto y = process.load<float>( current + 0x1b4 );
+			const auto x = process.load<float>( current + layout.x );
+			const auto y = process.load<float>( current + layout.y );
 			if ( !std::isfinite( x ) || !std::isfinite( y )
 				|| std::abs( x ) > 30000.0f || std::abs( y ) > 30000.0f )
 				return {};
@@ -302,18 +313,20 @@ namespace
 			result.y += y;
 			if ( current == panel )
 			{
-				result.width = process.load<float>( current + 0x1c0 );
-				result.height = process.load<float>( current + 0x1c4 );
+				result.width = process.load<float>( current + layout.width );
+				result.height = process.load<float>( current + layout.height );
 			}
 
 			root = current;
+			root_layout = layout;
 			const auto parent = process.load<std::uintptr_t>( current + 0x18 );
 			if ( !readable_pointer( parent ) || parent == current ) break;
 			current = parent;
 		}
 
-		result.root_width = process.load<float>( root + 0x1c0 );
-		result.root_height = process.load<float>( root + 0x1c4 );
+		if ( !root_layout ) return {};
+		result.root_width = process.load<float>( root + root_layout.width );
+		result.root_height = process.load<float>( root + root_layout.height );
 		if ( !std::isfinite( result.width ) || !std::isfinite( result.height )
 			|| !std::isfinite( result.root_width ) || !std::isfinite( result.root_height )
 			|| result.width < 24.0f || result.height < 16.0f
@@ -321,7 +334,6 @@ namespace
 			return {};
 		return result;
 	}
-
 	[[nodiscard]] std::optional<POINT> button_center(
 		const std::uintptr_t panel, const HWND hwnd )
 	{
@@ -424,6 +436,7 @@ namespace features::misc {
 
 	void auto_accept_t::tick( )
 	{
+	const auto runtime_settings = config::get_runtime_snapshot();
 		const auto clear_click = [this]( const bool release_button )
 		{
 			if ( release_button && m_click_phase == click_phase::pressed )
@@ -439,7 +452,7 @@ namespace features::misc {
 			m_saved_cursor_valid = false;
 		};
 
-		if ( !config::general_settings.auto_accept )
+		if ( !runtime_settings->general.auto_accept )
 		{
 			clear_click( true );
 			m_signal_identity = 0;
@@ -507,7 +520,8 @@ namespace features::misc {
 				}
 				m_click_x = live_point->x;
 				m_click_y = live_point->y;
-
+				// Reassert the target once: if Windows coalesced the initial move,
+				// the button still receives both hover and down at the same point.
 				::SetCursorPos( m_click_x, m_click_y );
 				if ( !app::context().input.pointer( 0, 0,
 					platform::windows::pointer_action::primary_down ) )
@@ -523,7 +537,8 @@ namespace features::misc {
 				return;
 
 			case click_phase::pressed:
-
+				// Always release a successfully injected down edge, even if the popup
+				// disappeared or focus changed between worker passes.
 				if ( !app::context().input.pointer( 0, 0,
 					platform::windows::pointer_action::primary_up ) )
 				{
@@ -590,19 +605,18 @@ namespace features::misc {
 		}
 
 		if ( m_candidate_panel && !is_accept_button( m_candidate_panel ) )
+		{
 			m_candidate_panel = 0;
+			m_panorama_slots.clear( );
+			m_panorama_cursor = 0;
+		}
 		if ( !m_candidate_panel ) return;
 
 		const auto cs2_hwnd = ::FindWindowW( nullptr, L"Counter-Strike 2" );
 		if ( !cs2_hwnd ) return;
 
 		const auto point = button_center( m_candidate_panel, cs2_hwnd );
-		if ( !point )
-		{
-			trace_auto_accept( "geometry rejected panel={:#x}", m_candidate_panel );
-			m_candidate_panel = 0;
-			return;
-		}
+		if ( !point ) return;
 
 		const auto foreground = active_root_window( ) == cs2_hwnd;
 		if ( !foreground ) return;
@@ -631,4 +645,148 @@ namespace features::misc {
 			m_saved_cursor_x, m_saved_cursor_y );
 	}
 
-}
+} // namespace features::misc
+
+namespace features::misc {
+
+	int auto_accept_report( const char* path )
+	{
+		std::ofstream out( path, std::ios::trunc );
+		if ( !out ) return 3;
+		out << std::unitbuf << "auto-accept-report v1\n";
+		auto& process = app::context().process;
+		if ( !process.attach( L"cs2.exe" )
+			|| !app::context().modules.discover( process ) )
+		{
+			out << "process=unavailable\n";
+			return 2;
+		}
+		const auto addresses_ready = app::context().addresses.initialize( );
+		const auto signal_address = app::context().addresses.auto_accept;
+		auto previous_signal = signal_address
+			? process.load<std::uintptr_t>( signal_address ) : 0;
+		std::size_t signal_changes{};
+		for ( int sample = 0; sample < 20; ++sample )
+		{
+			::Sleep( 50 );
+			const auto value = signal_address
+				? process.load<std::uintptr_t>( signal_address ) : 0;
+			signal_changes += value != previous_signal;
+			previous_signal = value;
+		}
+		out << "addresses_ready=" << addresses_ready << std::hex
+			<< " signal.address=0x" << signal_address
+			<< " signal.value=0x" << previous_signal << std::dec
+			<< " signal.changes_1s=" << signal_changes << '\n';		const auto panorama_module = app::context().modules.panorama
+			? app::context().modules.panorama
+			: process.module_base( "panorama.dll" );
+		const auto client_module = app::context().modules.client;
+		out << std::hex << "client=0x" << client_module
+			<< " panorama=0x" << panorama_module << std::dec << '\n';
+		const auto ui_vtable = process.locate_vtable(
+			panorama_module, "CUIPanel@panorama" );
+		const auto button_vtable = process.locate_vtable(
+			client_module, "CButton@panorama" );
+		const auto interface_object = process.locate_vtable_object(
+			panorama_module, "CPanoramaUIEngine" );
+		const auto interface_table = process.load<std::uintptr_t>( interface_object );
+		const auto getter = process.load<std::uintptr_t>(
+			interface_table + 13 * sizeof( std::uintptr_t ) );
+		const auto engine = decode_engine_member( process, interface_object, getter );
+		const auto engine_table = process.load<std::uintptr_t>( engine );
+		const auto registry_method = process.load<std::uintptr_t>(
+			engine_table + 32 * sizeof( std::uintptr_t ) );
+		const auto offset = decode_registry_offset( process, registry_method );
+		out << std::hex
+			<< "ui_vtable=0x" << ui_vtable << " button_vtable=0x" << button_vtable
+			<< " interface_object=0x" << interface_object
+			<< " getter=0x" << getter << " engine=0x" << engine
+			<< " registry_method=0x" << registry_method
+			<< " registry_offset=0x" << offset << std::dec << '\n';
+		if ( !readable_pointer( engine ) || !ui_vtable || !offset
+			|| offset < 0x40 || offset > 0x1000 )
+		{
+			out << "resolver=FAIL\n";
+			return 2;
+		}
+		const auto registry = engine + offset;
+		const auto capacity = process.load<std::uint32_t>( registry + 0x0c )
+			& 0x7fffffffu;
+		const auto data = process.load<std::uintptr_t>( registry + 0x10 );
+		out << "capacity=" << capacity << std::hex << " data=0x"
+			<< data << std::dec << '\n';
+		if ( !capacity || capacity > 65536 || !readable_pointer( data ) )
+		{
+			out << "registry=FAIL\n";
+			return 2;
+		}
+		std::size_t panels{}, button_class{}, accept_id{}, read_failures{};
+		for ( std::uint32_t cursor = 0; cursor < capacity; cursor += k_panorama_scan_chunk )
+		{
+			const auto count = std::min( k_panorama_scan_chunk, capacity - cursor );
+			std::vector<registry_entry> entries( count );
+			if ( !process.copy( data + static_cast<std::uintptr_t>( cursor )
+				* sizeof( registry_entry ), entries.data( ),
+				entries.size( ) * sizeof( registry_entry ) ) )
+			{
+				++read_failures;
+				continue;
+			}
+			for ( std::uint32_t index = 0; index < count; ++index )
+			{
+				const auto panel = entries[index].panel;
+				if ( !readable_pointer( panel ) ) continue;
+				const auto header = process.load<panel_header>( panel );
+				if ( header.vtable != ui_vtable ) continue;
+				++panels;
+				const auto client_class = process.load<std::uintptr_t>( header.client );
+				if ( client_class == button_vtable ) ++button_class;
+				if ( !readable_pointer( header.id ) ) continue;
+				const auto id = process.load_text( header.id, 64 );
+				auto lower = id;
+				std::transform( lower.begin( ), lower.end( ), lower.begin( ),
+					[]( unsigned char c ) { return static_cast<char>( std::tolower( c ) ); } );
+				if ( lower.find( "accept" ) == std::string::npos
+					&& lower.find( "match" ) == std::string::npos )
+					continue;
+				++accept_id;
+				if ( accept_id > 40 ) continue;
+				out << std::hex << "candidate.panel=0x" << panel
+					<< " client_vtable=0x" << client_class
+					<< " parent=0x" << header.parent << std::dec
+					<< " id=" << id << " button_class="
+					<< ( client_class == button_vtable )
+					<< " known_accept=" << ( id == k_accept_button_id ) << '\n';
+				if ( id == "StartMatchBtn" )
+				{
+					const auto layout = game::compatibility::panel( panel );
+					const auto geometry = inspect_geometry( panel );
+					out << std::hex << "  layout.width=0x" << layout.width
+						<< " layout.x=0x" << layout.x
+						<< " layout.visible=0x" << layout.visible << std::dec
+						<< " raw.width=" << process.load<float>( panel + layout.width )
+						<< " legacy.width=" << process.load<float>( panel + 0x1c0 )
+						<< " raw.x=" << process.load<float>( panel + layout.x )
+						<< " legacy.x=" << process.load<float>( panel + 0x1b0 )
+						<< " geometry.valid=" << ( geometry.width > 0.0f ) << '\n';
+				}
+				auto current = panel;
+				for ( int depth = 0; depth < 8 && readable_pointer( current ); ++depth )
+				{
+					const auto ancestor = process.load<panel_header>( current );
+					const auto ancestor_id = readable_pointer( ancestor.id )
+						? process.load_text( ancestor.id, 64 ) : std::string{};
+					out << "  ancestor." << depth << '=' << ancestor_id << '\n';
+					if ( !readable_pointer( ancestor.parent )
+						|| ancestor.parent == current ) break;
+					current = ancestor.parent;
+				}
+			}
+		}
+		out << "panels=" << panels << " button_class=" << button_class
+			<< " accept_or_match_ids=" << accept_id
+			<< " read_failures=" << read_failures << '\n';
+		return 0;
+	}
+
+} // namespace features::misc

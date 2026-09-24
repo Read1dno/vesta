@@ -26,6 +26,7 @@ namespace simulation {
 				float turning_inaccuracy{};
 				float accuracy_penalty{};
 				int recoil_index{};
+				foundation::vec3 eye_angles{};
 				foundation::vec3 velocity{};
 				float speed{};
 				std::uint8_t move_type{};
@@ -48,6 +49,7 @@ namespace simulation {
 				std::uint32_t weapon_type;
 				std::uint16_t item_def_idx;
 				int num_bullets;
+            int pattern_seed{};
 				int fire_mode;
 				float inaccuracy;
 				float spread;
@@ -70,16 +72,17 @@ namespace simulation {
 				int postpone_fire_ready_tick;
 				float postpone_fire_ready_fraction;
 				int player_tick;
-
+				// BacktrackLocalPlayer adds this pre-shot offset to the selected
+				// attack timestamp before walking the weapon-history ring.
 				float wat_tick_offset;
 				bool valid;
 				inaccuracy_debug_data debug;
-
+				// Pre-shot player state for accurate inaccuracy recalculation
 				foundation::vec3 velocity{};
 				float velocity_length{};
 				bool on_ground{};
 				std::uint32_t ground_entity{};
-				bool is_walking{};
+				bool is_walking{};  // FIX #7: Store walking state
 			};
 
 			class penetration
@@ -123,9 +126,10 @@ namespace simulation {
 
 			void tick( );
 
+            [[nodiscard]] bool seed_weapon(std::uintptr_t pawn, std::uintptr_t controller,
+                const foundation::vec3& velocity, context& output);
 			[[nodiscard]] bool seed_weapon( std::uintptr_t pawn,
-				std::uintptr_t controller, const foundation::vec3& velocity,
-				context& output );
+				std::uintptr_t controller, context& output );
 
 			[[nodiscard]] context ctx( ) const
 			{
@@ -140,10 +144,10 @@ namespace simulation {
 			[[nodiscard]] std::uint32_t derive_command_seed( const foundation::vec3& angles, int tick ) const;
 			[[nodiscard]] foundation::vec2 sample_spread_offset( int seed, float accuracy, float spread,
 				float recoil_index, int item_def_idx, int weapon_mode, int num_bullets = 1,
-				int bullet_index = 0 ) const;
+				int bullet_index = 0, std::optional<int> pattern_seed = std::nullopt ) const;
 			[[nodiscard]] foundation::vec2 sample_predicted_spread( int seed,
 				float inaccuracy, float spread, float recoil_index,
-				int item_def_idx, int weapon_mode, int bullet_index ) const;
+				int item_def_idx, int weapon_mode, int bullet_index, int num_bullets = 1, std::optional<int> pattern_seed = std::nullopt ) const;
 			[[nodiscard]] foundation::vec3 predict_counter_movement_origin( const foundation::vec3& pos ) const;
 			[[nodiscard]] bool precision_ready( ) const;
 			[[nodiscard]] float command_lead_time( ) const;
@@ -170,4 +174,4 @@ namespace simulation {
 
 	inline ballistics_t& ballistics( ) { static ballistics_t value{}; return value; }
 
-}
+} // namespace simulation

@@ -32,7 +32,8 @@ namespace config {
 			bool airborne{};
 			bool flashed{};
 			bool smoke{};
-
+			// Percentage of the actual flash overlay required to block combat input.
+			// A high default means short edge flashes do not interrupt aiming.
 			float flash_threshold{ 85.0f };
 			int walls{ wall_policy::penetration };
 		};
@@ -85,9 +86,11 @@ namespace config {
 			enum mode : int { fixed = 0, distance = 1, target_distance = 2 };
 			enum indicator : int { center = 0, target = 1 };
 			int selection{ target_distance };
-
+			// Kept for legacy config migration. Rendering now exposes the acquisition
+			// area and selected aim point as independent layers.
 			int visualization{ center };
-
+			// Distance-scaled FOV is interpolated geometrically. These pairs are
+			// explicit clamps at point-blank and long range.
 			float near_distance_m{ 2.5f };
 			float near_fov{ 2.0f };
 			float far_distance_m{ 10.0f };
@@ -103,7 +106,7 @@ namespace config {
 		enum aim_part : int
 		{
 			head = 1 << 0,
-			body = 1 << 1,
+			body = 1 << 1, // chest + stomach
 			arms = 1 << 2,
 			legs = 1 << 3,
 			all  = head | body | arms | legs,
@@ -126,13 +129,13 @@ namespace config {
 			int activation_mode{ activation::hold };
 			int fov{ 2 };
 			int smoothing{ 5 };
-			int humanize{ 35 };
+			int humanize{ 35 }; // 0 preserves mechanical motion; 100 applies the full humanized profile.
 			bool autowall{ true };
 			float min_damage{ 65.0f };
 			bool lethal_only{ true };
-			int hitbox_parts{ aim_part::all };
-			bool multipoint{ true };
-			bool visible_only{ true };
+			int hitbox_parts{ aim_part::all }; // multi-select body parts (was head_only)
+			bool multipoint{ true };            // aim at safe registering points, not raw bone center
+			bool visible_only{ true };          // legacy view; wall behaviour is resolved into checks.walls
 			bool draw_fov{ true };
 			zdraw::rgba fov_color{ 217, 217, 217, 125 };
 			bool predictive{ false };
@@ -209,7 +212,7 @@ namespace config {
 
 			struct grenade_aim_config {
 				bool enabled{ false };
-				int key{ 0x05 };
+				int key{ 0x05 }; // Mouse4
 				int fov{ 30 };
 				int smoothing{ 10 };
 			} grenade_aim{};
@@ -307,4 +310,4 @@ namespace config {
 		std::array<group_config, k_group_count> groups{};
 	};
 
-}
+} // namespace config

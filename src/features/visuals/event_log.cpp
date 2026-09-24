@@ -7,7 +7,8 @@ namespace features::visuals {
 	void event_log_t::push( std::string text, const event_kind kind,
 		const event_category category )
 	{
-		if ( !config::general_settings.m_event_log.enabled ) return;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		if ( !runtime_settings->general.m_event_log.enabled ) return;
 		if ( text.empty( ) ) return;
 		std::scoped_lock lock( this->m_mutex );
 		this->m_entries.push_back( {
@@ -20,7 +21,8 @@ namespace features::visuals {
 		const std::string_view text, const event_kind kind,
 		const std::chrono::milliseconds interval, const event_category category )
 	{
-		if ( !config::general_settings.m_event_log.enabled ) return;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		if ( !runtime_settings->general.m_event_log.enabled ) return;
 		const auto now = std::chrono::steady_clock::now( );
 		std::scoped_lock lock( this->m_mutex );
 		for ( auto& [ stored_key, timestamp ] : this->m_throttles )
@@ -42,7 +44,8 @@ namespace features::visuals {
 	std::uint64_t event_log_t::begin_trigger_shot( std::string source,
 		const bool seed )
 	{
-		if ( !config::general_settings.m_event_log.enabled || source.empty( ) ) return 0;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		if ( !runtime_settings->general.m_event_log.enabled || source.empty( ) ) return 0;
 		const auto now = std::chrono::steady_clock::now( );
 		std::scoped_lock lock( this->m_mutex );
 		const auto sequence = ++this->m_sequence;
@@ -56,7 +59,8 @@ namespace features::visuals {
 
 	void event_log_t::mark_latest_trigger_consumed( )
 	{
-		if ( !config::general_settings.m_event_log.enabled ) return;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		if ( !runtime_settings->general.m_event_log.enabled ) return;
 		const auto now = std::chrono::steady_clock::now( );
 		std::scoped_lock lock( this->m_mutex );
 		for ( auto it = this->m_entries.rbegin( ); it != this->m_entries.rend( ); ++it )
@@ -72,7 +76,8 @@ namespace features::visuals {
 	bool event_log_t::resolve_latest_trigger_shot( const int damage,
 		const bool killed )
 	{
-		if ( !config::general_settings.m_event_log.enabled || damage <= 0 ) return false;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		if ( !runtime_settings->general.m_event_log.enabled || damage <= 0 ) return false;
 		const auto now = std::chrono::steady_clock::now( );
 		std::scoped_lock lock( this->m_mutex );
 		for ( auto it = this->m_entries.rbegin( ); it != this->m_entries.rend( ); ++it )
@@ -94,11 +99,12 @@ namespace features::visuals {
 	std::vector<event_log_entry> event_log_t::snapshot(
 		const float lifetime_seconds, const int maximum )
 	{
+	const auto runtime_settings = config::get_runtime_snapshot();
 		const auto now = std::chrono::steady_clock::now( );
 		const auto lifetime = std::chrono::duration<float>(
 			std::clamp( lifetime_seconds, 0.5f, 20.0f ) );
 		const auto limit = std::clamp( maximum, 1, 12 );
-		const auto& cfg = config::general_settings.m_event_log;
+		const auto& cfg = runtime_settings->general.m_event_log;
 		const auto visible = [ & ]( const event_category category )
 		{
 			switch ( category )
@@ -141,4 +147,4 @@ namespace features::visuals {
 		return result;
 	}
 
-}
+} // namespace features::visuals

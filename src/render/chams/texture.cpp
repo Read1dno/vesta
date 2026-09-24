@@ -16,14 +16,14 @@ namespace chams {
 			vtex_bgra8888 = 28,
 			vtex_bc6h = 19,
 			vtex_bc7 = 20,
-			vtex_ati2n = 21,
-			vtex_ati1n = 27,
+			vtex_ati2n = 21, // BC5, two-channel -- normal maps
+			vtex_ati1n = 27, // BC4, single channel
 		};
 
 		struct format_info
 		{
 			std::uint32_t dxgi{};
-			std::uint32_t block_size{};
+			std::uint32_t block_size{}; // 0 => not block compressed
 			std::uint32_t bytes_per_pixel{};
 		};
 
@@ -53,14 +53,16 @@ namespace chams {
 				return static_cast< std::size_t >( w ) * h * info.bytes_per_pixel;
 			}
 
+			// Block compressed: dimensions round up to whole 4x4 blocks.
 			const auto blocks_x = std::max<std::uint32_t>( 1, ( w + 3 ) / 4 );
 			const auto blocks_y = std::max<std::uint32_t>( 1, ( h + 3 ) / 4 );
 			return static_cast< std::size_t >( blocks_x ) * blocks_y * info.block_size;
 		}
 
+		// Extra-data entry types found in the header's table.
 		constexpr std::uint32_t k_extra_compressed_mip_size{ 4 };
 
-	}
+	} // namespace
 
 	texture_data load_texture( vpk_archive& vpk, const std::string& archive_path )
 	{
@@ -68,7 +70,8 @@ namespace chams {
 
 		try
 		{
-
+			// Materials reference the source ".vtex"; the VPK only holds the
+			// compiled ".vtex_c" -- the same trap as .vmdl / .vmdl_c.
 			auto path = archive_path;
 			if ( path.ends_with( ".vtex" ) )
 			{
@@ -104,7 +107,7 @@ namespace chams {
 			const auto read_u32 = [ & ]( std::size_t offset ) {
 				std::uint32_t v{}; std::memcpy( &v, header + offset, 4 ); return v; };
 
-			if ( read_u16( 0 ) != 1 )
+			if ( read_u16( 0 ) != 1 ) // version
 			{
 				return result;
 			}
@@ -121,6 +124,8 @@ namespace chams {
 				return result;
 			}
 
+			// The extra-data table holds the per-mip stored sizes. Its offset, like
+			// every Source 2 offset, is relative to the field that holds it.
 			const auto extra_offset = read_u32( 32 );
 			const auto extra_count = read_u32( 36 );
 
@@ -172,7 +177,7 @@ namespace chams {
 
 			if ( stored_sizes.empty( ) )
 			{
-
+				// No table: every mip is stored raw, still smallest-first.
 				stored_sizes.resize( mip_count );
 				for ( std::uint32_t m = 0; m < mip_count; ++m )
 				{
@@ -197,7 +202,7 @@ namespace chams {
 
 				if ( stored == raw )
 				{
-
+					// Stored uncompressed -- small mips usually are.
 					std::memcpy( mip.data( ), image + cursor, raw );
 				}
 				else
@@ -231,4 +236,4 @@ namespace chams {
 		}
 	}
 
-}
+} // namespace chams

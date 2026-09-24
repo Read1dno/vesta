@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include <simulation/collision_layers.hpp>
 
 #include <core/assets/vpk.hpp>
 #include <core/assets/resource.hpp>
@@ -95,7 +96,7 @@ namespace game {
 			const auto* interact = attr->find( "m_InteractAsStrings" );
 			if ( !interact || !interact->is_array( ) || interact->size( ) == 0 )
 			{
-				return false;
+				return false; // no interaction flags -> plain solid surface, keep it
 			}
 
 			bool grenade_clip{};
@@ -143,6 +144,18 @@ namespace game {
 			}
 			return 0;
 		}
+
+        [[nodiscard]] std::uint32_t attribute_interacts_as(const chams::kv3::object* attr)
+        {
+            if (!attr) return 0;
+            std::uint32_t result{};
+            if (const auto* numeric = attr->find("m_nInteractsAs"))
+                result = static_cast<std::uint32_t>(numeric->as_int());
+            if (const auto* names = attr->find("m_InteractAsStrings"); names && names->is_array())
+                for (std::size_t i=0; i<names->size(); ++i)
+                    result |= collision_detail::bullet_interaction_layer(names->at(i)->as_string());
+            return result;
+        }
 
 		[[nodiscard]] foundation::vec3 read_vec3(
 			const std::uint8_t* base, std::int32_t index )
@@ -203,6 +216,7 @@ namespace game {
 					? collision_world::surface_info{}
 					: fallback_surface;
 				surface.contents |= fallback_surface.contents;
+                surface.interacts_as |= fallback_surface.interacts_as;
 				if ( has_triangle_materials )
 				{
 
@@ -212,6 +226,7 @@ namespace game {
 						if ( resolved.global_index != 255 )
 						{
 							resolved.contents |= fallback_surface.contents;
+                            resolved.interacts_as |= fallback_surface.interacts_as;
 							surface = resolved;
 						}
 					}
@@ -224,6 +239,8 @@ namespace game {
 			}
 		}
 
+		// m_Hull: convex half-edge mesh, fan-triangulated per face. Byte-wide indices
+		// cap a hull at 256 edges/verts, which holds for CS2's convex pieces.
 		void append_hull( const chams::kv3::object* hull,
 			const collision_world::surface_info& surface,
 			std::uint64_t solid_id, std::vector<collision_world::triangle>& out )
@@ -504,6 +521,7 @@ namespace game {
 
 			std::vector<bool> excluded{};
 			std::vector<std::uint32_t> contents{};
+            std::vector<std::uint32_t> interacts_as{};
 			if ( const auto* attrs = root.find( "m_collisionAttributes" ); attrs && attrs->is_array( ) )
 			{
 				excluded.reserve( attrs->size( ) );
@@ -511,6 +529,7 @@ namespace game {
 				{
 					excluded.push_back( attribute_is_excluded( attrs->at( i ) ) );
 					contents.push_back( attribute_contents( attrs->at( i ) ) );
+                    interacts_as.push_back(attribute_interacts_as(attrs->at(i)));
 				}
 			}
 			const auto is_excluded = [ & ]( std::int64_t ci )
@@ -522,6 +541,11 @@ namespace game {
 				return ci >= 0 && static_cast<std::size_t>( ci ) < contents.size( )
 					? contents[ static_cast<std::size_t>( ci ) ] : 0u;
 			};
+
+            const auto interacts_for = [&](std::int64_t ci) {
+                return ci >= 0 && static_cast<std::size_t>(ci) < interacts_as.size()
+                    ? interacts_as[static_cast<std::size_t>(ci)] : 0u;
+            };
 
 			const auto* parts = root.find( "m_parts" );
 			if ( !parts || !parts->is_array( ) )
@@ -548,8 +572,10 @@ namespace game {
 						}
 						const auto* si = desc->find( "m_nSurfacePropertyIndex" );
 						auto surface = sctx.resolve( phys_ides, si ? si->as_int( ) : -1 );
-						if ( const auto* ci = desc->find( "m_nCollisionAttributeIndex" ) )
-							surface.contents |= contents_for( ci->as_int( ) );
+						if ( const auto* ci = desc->find( "m_nCollisionAttributeIndex" ) ) {
+                            surface.contents |= contents_for(ci->as_int());
+                            surface.interacts_as |= interacts_for(ci->as_int());
+                        }
 						append_mesh( desc->find( "m_Mesh" ), surface, sctx, phys_ides,
 							next_solid_id++, out );
 					}
@@ -566,8 +592,10 @@ namespace game {
 						}
 						const auto* si = desc->find( "m_nSurfacePropertyIndex" );
 						auto surface = sctx.resolve( phys_ides, si ? si->as_int( ) : -1 );
-						if ( const auto* ci = desc->find( "m_nCollisionAttributeIndex" ) )
-							surface.contents |= contents_for( ci->as_int( ) );
+						if ( const auto* ci = desc->find( "m_nCollisionAttributeIndex" ) ) {
+                            surface.contents |= contents_for(ci->as_int());
+                            surface.interacts_as |= interacts_for(ci->as_int());
+                        }
 						append_hull( desc->find( "m_Hull" ), surface,
 							next_solid_id++, out );
 					}
@@ -575,6 +603,8 @@ namespace game {
 			}
 		}
 
+		// Standard Source AngleMatrix (QAngle pitch/yaw/roll, degrees) + uniform
+		// scale, applied as world = origin + R * (scale * local).
 		struct entity_transform
 		{
 			foundation::vec3 origin{};
@@ -720,7 +750,8 @@ namespace game {
 			const std::string& map_name, const surface_ctx& sctx,
 			std::uint64_t known_state_hash, std::uint64_t& state_hash )
 		{
-
+			// pak01 has 132k entries; open it once and reuse across refreshes. Only the
+			// parse worker calls this, so a function-static is single-threaded here.
 			static chams::vpk_archive pak{};
 			static bool pak_tried = false;
 			if ( !pak_tried )
@@ -958,10 +989,11 @@ namespace game {
 			return true;
 		}
 
-	}
+	} // namespace
 
-	bool collision_world::build_from_map_file( const std::string& map_name_raw )
+	bool collision_world::build_from_map_file( const std::string& map_name_raw, const std::stop_token stop )
 	{
+		if ( stop.stop_requested( ) ) return false;
 		const auto map = base_map_name( map_name_raw );
 		if ( map.empty( ) )
 		{
@@ -989,6 +1021,8 @@ namespace game {
 			return false;
 		}
 
+		if ( stop.stop_requested( ) ) return false;
+
 		chams::resource resource{};
 		if ( !resource.parse( vpk.read( *entry ) ) )
 		{
@@ -1013,6 +1047,10 @@ namespace game {
 			return false;
 		}
 
+		if ( stop.stop_requested( ) ) return false;
+
+		// Both hash->handle and bullet material fields come from the VPK catalog.
+		// This keeps static map collision independent of client.dll signatures.
 		const auto& catalog = surface_catalog( );
 		const surface_ctx sctx{ &catalog.hash_index, &catalog.table, &catalog.densities };
 		if ( catalog.hash_index.empty( ) || catalog.table.empty( ) )
@@ -1022,9 +1060,10 @@ namespace game {
 		}
 
 		std::vector<triangle> fresh{};
-		fresh.reserve( 1u << 20 );
+	    fresh.reserve(1u << 14);
 
-		extract_phys( doc.root, sctx, fresh );
+	    extract_phys( doc.root, sctx, fresh );
+		if ( stop.stop_requested( ) ) return false;
 
 		if ( fresh.empty( ) )
 		{
@@ -1038,6 +1077,7 @@ namespace game {
 		std::uint64_t entity_hash{};
 		(void)append_entity_geometry(
 			entity_geometry, map, sctx, 0, entity_hash );
+		if ( stop.stop_requested( ) ) return false;
 
 		app::context().diagnostics.info( "[bvh] map geometry for {}: {} world + {} entity = {} triangles",
 			map, world_tris, entity_geometry.size( ), world_tris + entity_geometry.size( ) );
@@ -1050,6 +1090,7 @@ namespace game {
 		entities->m_triangles = std::move( entity_geometry );
 		entities->m_world_triangle_count = entities->m_triangles.size( );
 		entities->rebuild_accel( );
+		if ( stop.stop_requested( ) ) return false;
 		{
 			std::unique_lock lock( this->m_mutex );
 			this->m_world_triangle_count = world_tris;
@@ -1071,16 +1112,18 @@ namespace game {
 		return true;
 	}
 
-	void collision_world::refresh_map_entities( )
-	{
-		std::string map{};
+    void collision_world::refresh_map_entities(std::stop_token stop)
+    {
+	    if (stop.stop_requested())
+		    return;
+	    std::string map{};
 		std::uint64_t previous_hash{};
 		{
 			std::shared_lock lock( this->m_mutex );
 			if ( this->m_world_triangle_count == 0
 				|| this->m_world_triangle_count != this->m_triangles.size( ) )
 			{
-				return;
+				return; // no file build yet
 			}
 			map = this->m_map_name;
 			previous_hash = this->m_entity_state_hash;
@@ -1102,7 +1145,9 @@ namespace game {
 		built->m_world_triangle_count = built->m_triangles.size( );
 		built->rebuild_accel( );
 
-		std::unique_lock lock( this->m_mutex );
+	    if (stop.stop_requested())
+		    return;
+	    std::unique_lock lock( this->m_mutex );
 		if ( this->m_map_name != map )
 		{
 			return;
@@ -1110,7 +1155,8 @@ namespace game {
 		app::context().diagnostics.info( "[bvh] entity refresh for {}: {} entity triangles ({} total)",
 			map, built->m_triangles.size( ), this->m_triangles.size( ) + built->m_triangles.size( ) );
 		this->m_entity_triangle_count = built->m_triangles.size( );
-
+		// The compiled map is immutable. Preserve its already-uploaded renderer
+		// identity and publish only the small late-spawned entity mesh.
 		this->m_entity_render = built->m_world_render;
 		this->m_entity_collision = built->m_triangles.empty( ) ? nullptr : built;
 		this->m_entity_state_hash = entity_hash;
@@ -1118,4 +1164,4 @@ namespace game {
 		this->m_geometry_revision.fetch_add( 1, std::memory_order_release );
 	}
 
-}
+} // namespace game

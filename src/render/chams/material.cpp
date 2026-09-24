@@ -50,7 +50,7 @@ namespace chams {
 			}
 			else if ( count == 2 )
 			{
-
+				// Stored as a float4 even when only xy is meaningful.
 				if ( value->as_float4( raw ) )
 				{
 					out[ 0 ] = raw[ 0 ];
@@ -59,7 +59,7 @@ namespace chams {
 			}
 		}
 
-	}
+	} // namespace
 
 	material_data load_material( vpk_archive& vpk, const std::string& archive_path )
 	{
@@ -119,4 +119,4 @@ namespace chams {
 		}
 	}
 
-}
+} // namespace chams

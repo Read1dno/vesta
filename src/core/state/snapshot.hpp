@@ -104,4 +104,4 @@ private:
 	std::unordered_map<std::uintptr_t, cached_player_bones> m_last_valid_bones{};
 };
 
-}
+} // namespace game

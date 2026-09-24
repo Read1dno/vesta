@@ -1,10 +1,12 @@
 #include <stdafx.hpp>
 #include <features/visuals/visuals.hpp>
+#include <core/memory/compatibility.hpp>
 
 namespace {
 	[[nodiscard]] bool radar_active( )
 	{
-		return config::visual_settings.m_radar.active( );
+	const auto runtime_settings = config::get_runtime_snapshot();
+		return runtime_settings->visual.m_radar.active( );
 	}
 
 	struct rect_t
@@ -27,11 +29,13 @@ namespace {
 		std::uintptr_t ui{};
 		rect_t image{};
 		rect_t viewport{};
+		float scale_x{}, scale_y{};
 	};
 
 	struct overview_info
 	{
 		std::uintptr_t object{};
+		std::uintptr_t vtable{};
 		panel_info panel{};
 		foundation::vec2 map_origin{};
 		float map_scale{};
@@ -84,57 +88,10 @@ namespace {
 		return value >= 0x10000 && value <= 0x00007fffffffffffULL;
 	}
 
-	std::uintptr_t hud_radar( )
-	{
-		static std::uintptr_t hud_global{};
-		static std::uintptr_t cached_radar{};
-		static std::uintptr_t cached_vtable{};
-		if ( cached_radar && app::context().process.load<std::uintptr_t>( cached_radar ) == cached_vtable )
-		{
-			return cached_radar;
-		}
-
-		if ( !hud_global )
-		{
-			const auto find_hud = app::context().process.scan_signature( app::context().modules.client,
-				"40 53 48 83 EC 20 48 8B 05 ? ? ? ? 48 8B D9 48 85 C0 74 ? 48 89 5C 24 ? 48 8D 88 58 02 00 00" );
-			if ( !find_hud )
-			{
-				return 0;
-			}
-			hud_global = app::context().process.decode_rip( find_hud + 6 );
-		}
-
-		const auto root = app::context().process.load<std::uintptr_t>( hud_global );
-		if ( !readable_pointer( root ) )
-		{
-			return 0;
-		}
-
-		const auto table = root + 0x258;
-		const auto capacity = app::context().process.load<std::uint32_t>( table + 0xc ) & 0x7fffffffu;
-		const auto data = capacity ? app::context().process.load<std::uintptr_t>( table + 0x10 ) : 0;
-		if ( !readable_pointer( data ) || capacity > 1024 )
-		{
-			return 0;
-		}
-
-		for ( std::uint32_t index = 0; index < capacity; ++index )
-		{
-			const auto entry = data + static_cast<std::uintptr_t>( index ) * 0x20;
-			const auto name = app::context().process.load<std::uintptr_t>( entry + 0x10 );
-			const auto value = app::context().process.load<std::uintptr_t>( entry + 0x18 );
-			if ( readable_pointer( name ) && readable_pointer( value ) &&
-				app::context().process.load_text( name, 32 ) == "CCSGO_HudRadar" )
-			{
-				cached_radar = value;
-				cached_vtable = app::context().process.load<std::uintptr_t>( value );
-				return value;
-			}
-		}
-
-		return 0;
-	}
+	std::uintptr_t hud_radar()
+    {
+        return game::compatibility::hud_element("CCSGO_HudRadar");
+    }
 
 	[[nodiscard]] bool read_panel_chain( std::uintptr_t ui,
 		float display_w, float display_h, panel_chain& out )
@@ -149,8 +106,10 @@ namespace {
 		for ( ; out.count < out.nodes.size( ) && readable_pointer( current ); )
 		{
 
-			constexpr std::uintptr_t fields_begin{ 0x11d };
-			constexpr std::uintptr_t fields_end{ 0x1c8 };
+			const auto layout = game::compatibility::panel(current);
+            if (!layout) return false;
+            constexpr std::uintptr_t fields_begin{ 0x100 };
+			constexpr std::uintptr_t fields_end{ 0x810 };
 			std::array<std::byte, fields_end - fields_begin> fields{};
 			if ( !app::context().process.copy( current + fields_begin,
 				fields.data( ), fields.size( ) ) )
@@ -164,28 +123,31 @@ namespace {
 					sizeof( value ) );
 				return value;
 			};
-			const auto ox = field.template operator()<float>( 0x1b0 );
-			const auto oy = field.template operator()<float>( 0x1b4 );
+			const auto ox = field.template operator()<float>( layout.x );
+			const auto oy = field.template operator()<float>( layout.y );
 			if ( !std::isfinite( ox ) || !std::isfinite( oy ) || std::abs( ox ) > 20000.0f || std::abs( oy ) > 20000.0f )
 			{
 				return false;
 			}
 
-			const auto visibility = field.template operator()<std::uint8_t>( 0x11d );
+			const auto visibility = field.template operator()<std::uint8_t>( layout.visible );
 			if ( ( visibility & 0x08 ) == 0 )
 			{
 				return false;
 			}
 			out.nodes[ out.count++ ] = {
 				current, ox, oy,
-				field.template operator()<float>( 0x1c0 ),
-				field.template operator()<float>( 0x1c4 ) };
+				field.template operator()<float>( layout.width ),
+				field.template operator()<float>( layout.height ) };
 
 			const auto parent = app::context().process.load<std::uintptr_t>( current + 0x18 );
 			if ( !readable_pointer( parent ) || parent == current )
 			{
 				break;
 			}
+            for (std::size_t i=0; i<out.count; ++i)
+                if (out.nodes[i].ui==parent) return false;
+            if (out.count==out.nodes.size()) return false;
 			current = parent;
 		}
 
@@ -237,12 +199,15 @@ namespace {
 		panel_chain chain{};
 		if ( !read_panel_chain( result.ui, display_w, display_h, chain ) )
 			return {};
+		result.scale_x = chain.scale_x;
+		result.scale_y = chain.scale_y;
 		result.image = chain_rect( chain, 0 );
 		if ( !result.image.valid( display_w, display_h ) )
 		{
 			return {};
 		}
 
+		// The first square ancestor smaller than the map image is its clipping radar viewport.
 		for ( std::size_t depth = 0; depth < std::min<std::size_t>( 24, chain.count ); ++depth )
 		{
 			const auto candidate = chain_rect( chain, depth );
@@ -288,8 +253,10 @@ namespace {
 			}
 
 			auto panel = inspect_panel( wrapper, display_w, display_h );
-			const auto raw_width = app::context().process.load<float>( panel.ui + 0x1c0 );
-			const auto raw_height = app::context().process.load<float>( panel.ui + 0x1c4 );
+			const auto layout = game::compatibility::panel(panel.ui);
+            if (!layout) continue;
+            const auto raw_width = app::context().process.load<float>(panel.ui + layout.width);
+            const auto raw_height = app::context().process.load<float>(panel.ui + layout.height);
 			const auto size_error = std::abs( raw_width - expected_size ) + std::abs( raw_height - expected_size );
 			if ( panel.viewport.valid( display_w, display_h ) && std::isfinite( size_error ) && size_error < best_size_error )
 			{
@@ -300,18 +267,55 @@ namespace {
 		return best;
 	}
 
-	[[nodiscard]] rect_t marker_space_rect( std::uintptr_t object, float display_w, float display_h )
-	{
 
-		const auto marker_panel = app::context().process.load<std::uintptr_t>( object + 0x230 );
-		const auto marker_ui = readable_pointer( marker_panel )
-			? app::context().process.load<std::uintptr_t>( marker_panel + 0x8 )
-			: 0;
-		const auto parent = readable_pointer( marker_ui )
-			? app::context().process.load<std::uintptr_t>( marker_ui + 0x18 )
-			: 0;
-		return panel_rect( parent, display_w, display_h );
-	}
+    [[nodiscard]] rect_t marker_space_rect(std::uintptr_t ui, float display_w, float display_h)
+    {
+        panel_chain chain{};
+        if (!read_panel_chain(ui, display_w, display_h, chain)) return {};
+        for (std::size_t i=0; i<chain.count; ++i) {
+            const auto& node=chain.nodes[i];
+            if (std::abs(node.width-300.0f)<1.0f && std::abs(node.height-300.0f)<1.0f)
+                return chain_rect(chain,i);
+        }
+        return {};
+    }
+
+    bool read_transform(overview_info& overview)
+    {
+        const auto layout=game::compatibility::radar();
+        if (!layout || app::context().process.load<std::uintptr_t>(overview.object)!=overview.vtable)
+            return false;
+        std::array<std::byte,0x50> data{};
+        if (!app::context().process.copy(overview.object+layout->origin,data.data(),data.size()))
+            return false;
+        const auto read=[&]<typename T>(std::size_t off) {
+            T result{}; std::memcpy(&result,data.data()+off,sizeof(result)); return result;
+        };
+        overview.map_origin=read.template operator()<foundation::vec2>(0);
+        const auto inverse=read.template operator()<float>(0x20);
+        overview.map_scale=inverse>0.0001f ? 1.0f/inverse : 0.0f;
+        overview.map_size=read.template operator()<float>(0x18);
+        overview.canvas_size=read.template operator()<float>(0x0c);
+        overview.viewport_size=read.template operator()<float>(0x10);
+        overview.world_to_pixels=read.template operator()<float>(0x24);
+        overview.map_center=read.template operator()<foundation::vec2>(0x40);
+        overview.radar_angle=read.template operator()<float>(0x4c);
+        std::uint8_t mode{};
+        if (!app::context().process.copy(overview.object+0x40,&mode,sizeof(mode))
+            || !app::context().process.copy(overview.object+layout->alternate_scale,
+                &overview.alternate_scale,sizeof(float))) return false;
+        overview.alternate_transform=mode!=0;
+        return std::isfinite(overview.map_origin.x) && std::isfinite(overview.map_origin.y)
+            && std::isfinite(inverse) && overview.map_scale>=0.01f && overview.map_scale<=100
+            && std::isfinite(overview.map_size) && overview.map_size>=128 && overview.map_size<=8192
+            && std::isfinite(overview.canvas_size) && overview.canvas_size>=64 && overview.canvas_size<=4096
+            && std::isfinite(overview.viewport_size) && overview.viewport_size>=64 && overview.viewport_size<=4096
+            && std::isfinite(overview.world_to_pixels) && overview.world_to_pixels>=0.001f && overview.world_to_pixels<=10
+            && std::isfinite(overview.map_center.x) && std::isfinite(overview.map_center.y)
+            && std::isfinite(overview.radar_angle)
+            && (!overview.alternate_transform || (std::isfinite(overview.alternate_scale)
+                && overview.alternate_scale>0.001f && overview.alternate_scale<=10));
+    }
 
 	std::vector<overview_info> discover_overviews( float display_w, float display_h )
 	{
@@ -324,34 +328,11 @@ namespace {
 
 		overview_info overview{};
 		overview.object = object;
-
-		overview.map_origin = app::context().process.load<foundation::vec2>( object + 0x170 );
-		const auto inverse_scale = app::context().process.load<float>( object + 0x190 );
-		overview.map_scale = std::isfinite( inverse_scale ) && inverse_scale > 0.0001f
-			? 1.0f / inverse_scale
-			: 0.0f;
-		overview.map_size = app::context().process.load<float>( object + 0x188 );
-		overview.canvas_size = app::context().process.load<float>( object + 0x17c );
-		overview.viewport_size = app::context().process.load<float>( object + 0x180 );
-		overview.world_to_pixels = app::context().process.load<float>( object + 0x194 );
-		overview.map_center = app::context().process.load<foundation::vec2>( object + 0x1b0 );
-		overview.radar_angle = app::context().process.load<float>( object + 0x1bc );
-		overview.alternate_transform = app::context().process.load<std::uint8_t>( object + 0x40 ) != 0;
-		overview.alternate_scale = app::context().process.load<float>( object + 0x17f6c );
-		if ( !std::isfinite( overview.map_origin.x ) || !std::isfinite( overview.map_origin.y ) ||
-			!std::isfinite( overview.map_scale ) || overview.map_scale < 0.01f || overview.map_scale > 100.0f ||
-			!std::isfinite( overview.map_size ) || overview.map_size < 128.0f || overview.map_size > 8192.0f ||
-			!std::isfinite( overview.canvas_size ) || overview.canvas_size < 64.0f || overview.canvas_size > 4096.0f ||
-			!std::isfinite( overview.viewport_size ) || overview.viewport_size < 64.0f || overview.viewport_size > 4096.0f ||
-			!std::isfinite( overview.world_to_pixels ) || overview.world_to_pixels < 0.001f || overview.world_to_pixels > 10.0f ||
-			!std::isfinite( overview.map_center.x ) || !std::isfinite( overview.map_center.y ) ||
-			!std::isfinite( overview.radar_angle ) )
-		{
-			return result;
-		}
+		overview.vtable=app::context().process.load<std::uintptr_t>(object);
+        if (!read_transform(overview)) return result;
 
 		overview.panel = find_radar_panel( object, std::max( overview.viewport_size, 290.0f ), display_w, display_h );
-		overview.marker_space = marker_space_rect( object, display_w, display_h );
+		overview.marker_space = marker_space_rect( overview.panel.ui, display_w, display_h );
 		overview.layout_width = display_w;
 		overview.layout_height = display_h;
 
@@ -389,52 +370,16 @@ namespace {
 		auto any_active = false;
 		for ( auto& overview : overviews )
 		{
-			std::array<std::byte, 0x50> dynamic{};
-			const auto dynamic_ok = app::context().process.copy(
-				overview.object + 0x170, dynamic.data( ), dynamic.size( ) );
-			const auto read_dynamic = [ & ]<typename T>( std::size_t offset ) -> T
-				{
-					T value{};
-					std::memcpy( &value, dynamic.data( ) + offset, sizeof( T ) );
-					return value;
-				};
-
-			overview.map_origin = dynamic_ok
-				? read_dynamic.template operator()<foundation::vec2>( 0x00 )
-				: app::context().process.load<foundation::vec2>( overview.object + 0x170 );
-			const auto inverse_scale = dynamic_ok
-				? read_dynamic.template operator()<float>( 0x20 )
-				: app::context().process.load<float>( overview.object + 0x190 );
-			overview.map_scale = std::isfinite( inverse_scale ) && inverse_scale > 0.0001f
-				? 1.0f / inverse_scale : 0.0f;
-			overview.map_size = dynamic_ok
-				? read_dynamic.template operator()<float>( 0x18 )
-				: app::context().process.load<float>( overview.object + 0x188 );
-			overview.canvas_size = dynamic_ok
-				? read_dynamic.template operator()<float>( 0x0c )
-				: app::context().process.load<float>( overview.object + 0x17c );
-			overview.viewport_size = dynamic_ok
-				? read_dynamic.template operator()<float>( 0x10 )
-				: app::context().process.load<float>( overview.object + 0x180 );
-			overview.world_to_pixels = dynamic_ok
-				? read_dynamic.template operator()<float>( 0x24 )
-				: app::context().process.load<float>( overview.object + 0x194 );
-			overview.map_center = dynamic_ok
-				? read_dynamic.template operator()<foundation::vec2>( 0x40 )
-				: app::context().process.load<foundation::vec2>( overview.object + 0x1b0 );
-			overview.radar_angle = dynamic_ok
-				? read_dynamic.template operator()<float>( 0x4c )
-				: app::context().process.load<float>( overview.object + 0x1bc );
-			overview.alternate_transform =
-				app::context().process.load<std::uint8_t>( overview.object + 0x40 ) != 0;
-			overview.alternate_scale =
-				app::context().process.load<float>( overview.object + 0x17f6c );
+            if (!read_transform(overview)) {
+                overview.object=0;
+                continue;
+            }
 
 			if ( refresh_layout )
 			{
 				const auto expected_panel_size = std::max( overview.viewport_size, 290.0f );
-				const auto current_raw_width =
-					app::context().process.load<float>( overview.panel.ui + 0x1c0 );
+				const auto layout=game::compatibility::panel(overview.panel.ui);
+                const auto current_raw_width=layout ? app::context().process.load<float>(overview.panel.ui+layout.width) : 0.0f;
 				if ( !std::isfinite( current_raw_width )
 					|| std::abs( current_raw_width - expected_panel_size ) > 2.0f )
 				{
@@ -447,7 +392,7 @@ namespace {
 						overview.panel.wrapper, display_width, display_height );
 				}
 				overview.marker_space =
-					marker_space_rect( overview.object, display_width, display_height );
+					marker_space_rect( overview.panel.ui, display_width, display_height );
 				overview.layout_width = display_width;
 				overview.layout_height = display_height;
 			}
@@ -459,6 +404,7 @@ namespace {
 				&& viewport.x <= display_width && viewport.y <= display_height;
 		}
 
+        std::erase_if(overviews, [](const auto& o){return !o.object;});
 		if ( !any_active )
 		{
 			overviews.clear( );
@@ -480,9 +426,23 @@ namespace {
 		return nx * nx + ny * ny <= 1.0f;
 	}
 
-}
+} // namespace
 
 namespace features::visuals {
+
+    bool radar_t::diagnose(float width,float height,std::ostream& out)
+    {
+        const auto overviews=discover_overviews(width,height);
+        out<<"radar.overviews="<<overviews.size()<<'\n';
+        for(const auto& o:overviews) {
+            out<<"radar.viewport="<<o.panel.viewport.x<<','<<o.panel.viewport.y<<','
+                <<o.panel.viewport.w<<','<<o.panel.viewport.h<<'\n';
+            out<<"radar.marker-space="<<o.marker_space.x<<','<<o.marker_space.y<<','
+                <<o.marker_space.w<<','<<o.marker_space.h<<'\n';
+            out<<"radar.scale="<<o.panel.scale_x<<','<<o.panel.scale_y<<'\n';
+        }
+        return !overviews.empty();
+    }
 
 	void radar_t::tick( )
 	{
@@ -520,11 +480,12 @@ namespace features::visuals {
 
 	void radar_t::on_render( zdraw::draw_list& draw_list )
 	{
+	const auto runtime_settings = config::get_runtime_snapshot();
 		if ( !radar_active( ) || !draw_list.m_im_draw_list )
 		{
 			return;
 		}
-		if ( config::visual_settings.m_player.spectator_sync
+		if ( runtime_settings->visual.m_player.spectator_sync
 			&& game::world( ).local_spectated( ) ) return;
 
 		const auto [ display_width_i, display_height_i ] = zdraw::get_display_size( );
@@ -568,14 +529,9 @@ namespace features::visuals {
 		const auto marker_space = scale_layout_rect(
 			active->marker_space, *active, display_width, display_height );
 		const auto marker_space_valid = marker_space.valid( display_width, display_height );
-		const auto ui_scale_x = marker_space_valid
-			? marker_space.w / 300.0f
-			: scale_layout_rect( active->panel.image, *active,
-				display_width, display_height ).w / 290.0f;
-		const auto ui_scale_y = marker_space_valid
-			? marker_space.h / 300.0f
-			: scale_layout_rect( active->panel.image, *active,
-				display_width, display_height ).h / 290.0f;
+        const auto ui_scale_x=active->panel.scale_x * display_width/active->layout_width;
+        const auto ui_scale_y=active->panel.scale_y * display_height/active->layout_height;
+
 		const auto icon_scale = std::min( ui_scale_x, ui_scale_y );
 		const auto marker_center_x = marker_space_valid
 			? marker_space.x + marker_space.w * 0.5f
@@ -594,7 +550,8 @@ namespace features::visuals {
 		const auto sine = std::sin( rotation );
 		const auto transform = [ & ]( const foundation::vec3& world )
 			{
-
+				// This is the transform used by CCSGO_HudRadar itself: project into map
+				// space, subtract the HUD's live centre, then apply its live rotation.
 				const auto map_x = ( world.x - active->map_origin.x ) * world_to_radar;
 				const auto map_y = ( active->map_origin.y - world.y ) * world_to_radar;
 				const auto dx = map_x - active->map_center.x;
@@ -606,7 +563,7 @@ namespace features::visuals {
 				return point;
 			};
 		draw_list.m_im_draw_list->PushClipRect( { viewport.x, viewport.y }, { viewport.x + viewport.w, viewport.y + viewport.h }, true );
-		const auto& radar_cfg = config::visual_settings.m_radar;
+		const auto& radar_cfg = runtime_settings->visual.m_radar;
 		const auto packed = []( const zdraw::rgba& color )
 			{ return zdraw::draw_list::to_im_color( color ); };
 		const auto enemy_marker_color = packed( radar_cfg.enemy_color );
@@ -696,7 +653,8 @@ namespace features::visuals {
 					cached.initial_position = launch_position;
 					cached.initial_velocity = launch_velocity;
 					cached.weapon = data.weapon;
-
+					// The route is the launch solution. Current origin/velocity are used only
+					// by the moving marker and must not bend the predicted path in flight.
 					cached.path = trajectory.predict( launch_position, launch_velocity,
 						data.weapon, -1.0f );
 				}
@@ -722,7 +680,8 @@ namespace features::visuals {
 					? projectile.smoke_detonation_pos : projectile.origin;
 				const auto point = transform( display_origin );
 				if ( !inside_viewport( point, viewport, square, 3.0f ) ) continue;
-
+				// HE and flash are instantaneous events, not persistent danger volumes.
+				// Draw only the two effects that actually occupy space after detonation.
 				if ( radar_cfg.show_grenade_zones && ( projectile.smoke_active
 					|| projectile.subtype == game::projectile_kind::molotov_fire ) )
 				{
@@ -828,7 +787,8 @@ namespace features::visuals {
 				}
 				else
 				{
-
+					// In stretched 4:3 the HUD's physical X/Y radii differ. Intersect the
+					// direction with that ellipse instead of assuming a square pixel scale.
 					const auto normalized_x = edge_dx / std::max( max_x, 1.0f );
 					const auto normalized_y = edge_dy / std::max( max_y, 1.0f );
 					edge_scale = 1.0f / std::sqrt( normalized_x * normalized_x + normalized_y * normalized_y );
@@ -957,4 +917,4 @@ namespace features::visuals {
 		draw_list.m_im_draw_list->PopClipRect( );
 	}
 
-}
+} // namespace features::visuals

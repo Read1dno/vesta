@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include <nlohmann/json.hpp>
+#include <external/json.hpp>
 
 namespace config {
 
@@ -22,4 +22,4 @@ namespace config {
 		void set_active_path( const std::string& full_path );
 	};
 
-}
+} // namespace config

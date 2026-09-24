@@ -16,4 +16,4 @@ namespace foundation {
 		std::uint32_t m_rate{};
 	};
 
-}
+} // namespace foundation

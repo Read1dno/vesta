@@ -12,19 +12,27 @@ namespace game {
 			return std::sqrt( dx * dx + dy * dy + dz * dz );
 		}
 
-	}
+	} // namespace detail_bd
 
-	void blast_model::clear( )
-	{
-		std::unique_lock lock( this->m_mutex );
-		this->m_sites.clear( );
-		this->m_points.clear( );
-		this->m_damage_values.clear( );
-		this->m_cells.clear( );
-		this->m_bounds = {};
-	}
+    void blast_model::replace_with(blast_model &built)
+    {
+	    if (this == &built)
+		    return;
+	    std::scoped_lock lock(m_mutex, built.m_mutex);
+	    std::swap(m_sites, built.m_sites);
+	    std::swap(m_points, built.m_points);
+	    std::swap(m_damage_values, built.m_damage_values);
+	    std::swap(m_cells, built.m_cells);
+	    std::swap(m_bounds, built.m_bounds);
+    }
 
-	bool blast_model::valid( ) const
+    void blast_model::clear()
+    {
+	    blast_model retired;
+	    replace_with(retired);
+    }
+
+    bool blast_model::valid( ) const
 	{
 		std::shared_lock lock( this->m_mutex );
 		return !this->m_points.empty( ) && !this->m_sites.empty( );
@@ -259,7 +267,7 @@ namespace game {
 		return true;
 	}
 
-#if 0
+#if 0 // Replaced by the position-independent 3D quad reconstruction below.
 	bool blast_model::sample_grid_surfaces( const std::int32_t min_x,
 		const std::int32_t min_y, const int width, const int height,
 		const std::int32_t site, const foundation::vec3& reference_position,
@@ -275,7 +283,7 @@ namespace game {
 		}
 		return true;
 
-#if 0
+#if 0 // Superseded sparse connected-component reconstruction; retained for audit.
 		std::shared_lock lock( this->m_mutex );
 		const auto count = this->m_points.size( );
 		if ( count == 0 || width <= 0 || height <= 0 || site < 0
@@ -535,6 +543,8 @@ namespace game {
 				const auto i3 = closest_to( *c3, z0 );
 				if ( i1 == invalid_index || i3 == invalid_index ) continue;
 
+				// The diagonal corner must agree with both adjacent edges. This keeps A,
+				// vents and B independent even where their baked points overlap in XY.
 				auto i2 = invalid_index;
 				auto best_error = std::numeric_limits<float>::max( );
 				const auto z1 = static_cast<float>( this->m_points[ i1 ].z );
@@ -658,7 +668,8 @@ namespace game {
 
 	std::int32_t blast_model::calculate_sample_damage_worst_case( const grid_sample& sample )
 	{
-
+		// facing == 0 selects amount 0.53, the maximum-damage endpoint of
+		// client.dll's orientation Bias. Standing is also worse than ducked.
 		const foundation::vec3 opposite_wave{
 			-sample.wave_forward.x,
 			-sample.wave_forward.y,
@@ -673,6 +684,7 @@ namespace game {
 		foundation::vec3 player_forward{};
 		eye_angles.to_directions( &player_forward, nullptr, nullptr );
 
+		// The packed bytes are passed to QAngle as (pitch=byte3, yaw=byte2).
 		const foundation::vec3 wave_angles{
 			static_cast< float >( value.pitch ) / 255.0f * 360.0f,
 			static_cast< float >( value.yaw ) / 255.0f * 360.0f,
@@ -684,4 +696,4 @@ namespace game {
 		return calculate_sample_damage( sample, player_forward, ducked );
 	}
 
-}
+} // namespace game

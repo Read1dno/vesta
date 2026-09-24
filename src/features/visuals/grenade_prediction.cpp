@@ -44,11 +44,53 @@ namespace {
 		output.add_rect_filled( center.x - half, center.y - half, size, size, color );
 	}
 
+} // namespace
+
+void grenade_prediction_t::reset()
+{
+	m_render_snapshot.store({}, std::memory_order_release);
+	m_render_pool.clear();
+	m_in_flight.clear();
+	m_preview = {};
+	m_display_preview = {};
+	m_was_holding = false;
+	m_last_preview_blend = {};
+	m_snapshot_active = false;
+	m_weapon_vdata = 0;
+	m_weapon_id = 0;
+	m_last_flight_update = {};
+	m_last_preview_update = {};
+	m_last_throw_time = {};
 }
 
-	void grenade_prediction_t::on_render( zdraw::draw_list& draw_list )
+    void grenade_prediction_t::tick()
+    {
+	    const auto config = config::get_runtime_snapshot();
+	    if (!config || !config->general.m_grenades.enabled || !game::local_player().valid())
+	    {
+		    if (m_snapshot_active)
+		    {
+			    reset();
+		    }
+		    return;
+	    }
+	    m_snapshot_active = true;
+	    update_state();
+	    auto frame = m_render_pool.acquire();
+	    frame->config = m_config_snapshot;
+        frame->flights = m_in_flight;
+        frame->preview = m_display_preview;
+        m_render_snapshot.store(std::move(frame), std::memory_order_release);
+    }
+
+	void grenade_prediction_t::update_state( )
 	{
-		const auto& settings = config::general_settings.m_grenades;
+		auto snapshot = config::get_runtime_snapshot( );
+		if ( !snapshot )
+			return;
+
+		this->m_config_snapshot = std::move( snapshot );
+		const auto& settings = this->m_config_snapshot->general.m_grenades;
 		if ( !settings.enabled )
 			return;
 
@@ -77,12 +119,6 @@ namespace {
 				flight.detonated = true;
 				flight.detonate_time = now;
 			}
-
-			const auto opacity = flight.detonated
-				? std::clamp( 1.0f - seconds_since( flight.detonate_time, now ) / 0.5f, 0.0f, 1.0f )
-				: 1.0f;
-			if ( opacity > 0.0f )
-				draw_path( draw_list, flight.traj, opacity );
 		}
 
 		const auto weapon = sample_held_grenade( );
@@ -138,15 +174,43 @@ namespace {
 				m_display_preview.valid = true;
 			}
 			m_last_preview_blend = now;
-			draw_path( draw_list, m_display_preview, 1.0f );
 		}
+	}
+
+	void grenade_prediction_t::on_render( zdraw::draw_list& draw_list )
+	{
+		const auto frame = m_render_snapshot.load(std::memory_order_acquire);
+        if (!frame) return;
+		if ( !frame->config )
+			return;
+
+		const auto& settings = frame->config->general.m_grenades;
+		if ( !settings.enabled )
+			return;
+
+		const auto now = steady_clock::now( );
+		for ( const auto& flight : frame->flights )
+		{
+			if ( !flight.traj.valid )
+				continue;
+
+			const auto opacity = flight.detonated
+				? std::clamp( 1.0f - seconds_since( flight.detonate_time, now ) / 0.5f, 0.0f, 1.0f )
+				: 1.0f;
+			if ( opacity > 0.0f )
+				draw_path( draw_list, flight.traj, opacity, settings );
+		}
+
+		if ( frame->preview.valid )
+			draw_path( draw_list, frame->preview, 1.0f, settings );
 	}
 
 	grenade_prediction_t::held_grenade_snapshot grenade_prediction_t::sample_held_grenade( )
 	{
 		held_grenade_snapshot result{};
-		result.weapon = game::local_player().weapon( );
-		result.weapon_vdata = game::local_player().weapon_vdata( );
+		const auto local = game::local_player().snapshot( );
+		result.weapon = local->weapon;
+		result.weapon_vdata = local->weapon_vdata;
 		if ( !result.weapon || !result.weapon_vdata )
 			return result;
 
@@ -155,8 +219,8 @@ namespace {
 			+ SCHEMA( "C_AttributeContainer", "m_Item"_id )
 			+ SCHEMA( "C_EconItemView", "m_iItemDefinitionIndex"_id ) );
 		result.valid = weapon_id_for_item_definition( result.item_definition ) != 0
-			&& game::local_player().weapon( ) == result.weapon
-			&& game::local_player().weapon_vdata( ) == result.weapon_vdata;
+			&& local->weapon == result.weapon
+			&& local->weapon_vdata == result.weapon_vdata;
 		return result;
 	}
 
@@ -232,19 +296,20 @@ namespace {
 			eye, eye + forward * 22.0f, simulation::grenade_collision_half_extents );
 		origin = obstruction.hit ? obstruction.end_pos - forward * 6.0f : eye + forward * 16.0f;
 
+		const auto local = game::local_player().snapshot( );
 		const auto pawn_velocity = app::context().process.load<foundation::vec3>(
-			game::local_player().pawn() + SCHEMA( "C_BaseEntity", "m_vecAbsVelocity"_id ) );
+			local->pawn + SCHEMA( "C_BaseEntity", "m_vecAbsVelocity"_id ) );
 		const auto base_speed = std::clamp( m_throw_velocity * 0.9f, 15.0f, 750.0f );
 		velocity = forward * ( ( strength * 0.7f + 0.3f ) * base_speed ) + pawn_velocity * 1.25f;
 	}
 
 	void grenade_prediction_t::reconcile_live_projectiles( )
 	{
-		const auto local_handle = game::local_player().pawn_handle( );
+		const auto local_handle = game::local_player().snapshot()->pawn_handle;
 		if ( !local_handle )
 			return;
 
-		const auto& settings = config::general_settings.m_grenades;
+		const auto& settings = this->m_config_snapshot->general.m_grenades;
 		const auto projectiles = game::world().projectiles( );
 		const auto now = steady_clock::now( );
 		static thread_local std::vector<std::uintptr_t> observed{};
@@ -319,12 +384,11 @@ namespace {
 	}
 
 	void grenade_prediction_t::draw_path( zdraw::draw_list& draw_list,
-		const grenade_path& path, float opacity ) const
+		const grenade_path& path, float opacity, const config::general_profile::grenades& settings ) const
 	{
 		if ( !path.valid || path.points.size( ) < 2 )
 			return;
 
-		const auto& settings = config::general_settings.m_grenades;
 		const auto& color = settings.color;
 		for ( std::size_t index = 1; index < path.points.size( ); ++index )
 		{
@@ -377,4 +441,4 @@ namespace {
 		}
 	}
 
-}
+} // namespace features::visuals

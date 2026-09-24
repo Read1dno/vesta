@@ -1,6 +1,7 @@
 #pragma once
 
 #include <render/chams/mesh.hpp>
+#include <render/depth_bounds.hpp>
 #include <core/assets/vpk.hpp>
 #include <config/settings.hpp>
 #include <core/state/pose.hpp>
@@ -43,6 +44,7 @@ namespace chams {
 			bool vpk_ready{};
 			std::string init_error{};
 
+			// Refreshed every render_frame() call.
 			int players_seen{};
 			int players_enemy{};
 			int players_model_resolved{};
@@ -53,6 +55,8 @@ namespace chams {
 
 		[[nodiscard]] const diagnostics& diag( ) const { return this->m_diag; }
 
+		// The editor preview reads models out of the same archive rather than
+		// opening a second handle to a ~40 GB pak.
 		[[nodiscard]] vpk_archive& vpk( ) { return this->m_vpk; }
 		[[nodiscard]] bool vpk_ready( ) const { return this->m_vpk_ready; }
 		[[nodiscard]] bool ensure_vpk( );
@@ -62,7 +66,7 @@ namespace chams {
 			const std::vector<bone_matrix>& skin_matrices,
 			const float view_projection[ 4 ][ 4 ], const foundation::vec3& eye );
 
-		static constexpr int k_max_bones{ 128 };
+		static constexpr int k_max_bones{ 128 }; // matches game::skeleton_reader::data's per-entity bone slot count
 
 	private:
 		struct gpu_mesh
@@ -102,13 +106,16 @@ namespace chams {
 			std::uint32_t index_count{};
 			std::uint64_t revision{};
 			std::vector<world_chunk> chunks{};
-		};
+		    render::depth_projection_cache depth_projection{};
+	    };
 
 		bool create_shaders( );
 		bool create_constant_buffers( );
 		bool create_pipeline_states( );
 		void release_gpu_meshes( );
 
+		// Uploads (once) and returns the GPU buffers for a CPU-side skinned_mesh.
+		// Cached by model path; nullptr on any D3D11 failure.
 		[[nodiscard]] const gpu_mesh* get_or_upload( const std::string& model_path, const skinned_mesh& mesh );
 
 		[[nodiscard]] static std::string resolve_model_path( std::uintptr_t game_scene_node );
@@ -125,6 +132,8 @@ namespace chams {
 			float shell_expand = 0.0f );
 		[[nodiscard]] bool ensure_frame_bone_buffers( std::size_t count );
 
+		// Creates (or resizes) the pass's own depth buffer to match whatever
+		// render target is currently bound.
 		[[nodiscard]] bool ensure_depth_buffer( UINT width, UINT height );
 		void release_depth_buffer( );
 		[[nodiscard]] bool ensure_world_depth_buffer( UINT width, UINT height );
@@ -184,6 +193,8 @@ namespace chams {
 		ID3D11DepthStencilState* m_depth_state_disabled{};
 		ID3D11DepthStencilState* m_world_depth_state{};
 
+		// The overlay's swapchain has no depth buffer, so the chams pass carries
+		// its own -- without it the mesh self-occludes wrongly once shaded.
 		ID3D11Texture2D* m_depth_texture{};
 		ID3D11DepthStencilView* m_dsv{};
 		UINT m_depth_width{};
@@ -210,7 +221,8 @@ namespace chams {
 		ID3D11Texture2D* m_bloom_b{};
 		ID3D11RenderTargetView* m_bloom_b_rtv{};
 		ID3D11ShaderResourceView* m_bloom_b_srv{};
-
+		// Preserve the unblurred coverage. Composite samples blur and source together
+		// and emits only the outside halo instead of painting a foggy copy over UI/chams.
 		ID3D11Texture2D* m_bloom_source{};
 		ID3D11RenderTargetView* m_bloom_source_rtv{};
 		ID3D11ShaderResourceView* m_bloom_source_srv{};
@@ -231,10 +243,14 @@ namespace chams {
 		std::size_t m_bloom_2d_vertex_capacity{};
 		float m_bloom_2d_radius{};
 
+		// World depth pre-pass. Geometry revisions keep map changes and moving
+		// collision entities from leaving a stale GPU vertex buffer behind.
 		ID3D11VertexShader* m_world_vertex_shader{};
 		ID3D11PixelShader* m_world_pixel_shader{};
 		ID3D11InputLayout* m_world_input_layout{};
 
+		// LESS_EQUAL with depth writes: redraw the nearest surface established by
+		// the model depth pre-pass without allowing back faces to punch through.
 		ID3D11DepthStencilState* m_depth_state_equal{};
 		world_geometry m_static_world{};
 		world_geometry m_dynamic_world{};
@@ -269,4 +285,4 @@ namespace chams {
 
 	inline renderer g_renderer{};
 
-}
+} // namespace chams

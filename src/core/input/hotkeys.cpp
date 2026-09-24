@@ -141,7 +141,7 @@ namespace platform::windows {
 			return result;
 		}
 
-	}
+	} // namespace
 
 	const lifecycle_key_bindings& lifecycle_keys( )
 	{
@@ -156,4 +156,4 @@ namespace platform::windows {
 			|| virtual_key == keys.exit;
 	}
 
-}
+} // namespace platform::windows

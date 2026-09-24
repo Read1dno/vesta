@@ -135,7 +135,10 @@ namespace {
 		{
 			return key > 0 && ( ::GetAsyncKeyState( key ) & 0x8000 ) != 0;
 		};
-		const auto combat = config::combat_settings.get(
+		const auto snapshot = config::get_runtime_snapshot( );
+		if ( !snapshot )
+			return {};
+		const auto combat = snapshot->combat.get(
 			game::local_player().weapon_type( ) );
 		const auto independent_seed = combat.triggerbot.seed_type
 			!= config::combat_profile::seed_mode::none;
@@ -146,43 +149,43 @@ namespace {
 			|| ( combat.triggerbot.enabled && !independent_seed
 				&& config::combat_profile::activation_active(
 					combat.triggerbot.activation_mode, combat.triggerbot.key ) )
-			|| ( config::combat_settings.global.grenade_aim.enabled
-				&& key_down( config::combat_settings.global.grenade_aim.key ) );
-		const auto& radar_cfg = config::visual_settings.m_radar;
+			|| ( snapshot->combat.global.grenade_aim.enabled
+				&& key_down( snapshot->combat.global.grenade_aim.key ) );
+		const auto& radar_cfg = snapshot->visual.m_radar;
 		const auto radar_active = radar_cfg.active( );
 
 		const auto players = game::world().script_demand(
 			game::script_data_demand::players ) || app::context().menu.is_open( )
-			|| config::visual_settings.m_player.active( )
-			|| config::visual_settings.m_chams.enabled
+			|| snapshot->visual.m_player.active( )
+			|| snapshot->visual.m_chams.enabled
 			|| radar_active
-			|| config::visual_settings.m_sound.enabled
-			|| config::general_settings.m_bullet_tracers.enabled
-			|| config::general_settings.m_hitmarker.enabled
-			|| config::general_settings.m_hitsound.enabled
-			|| config::general_settings.m_hitsound.show_damage
+			|| snapshot->visual.m_sound.enabled
+			|| snapshot->general.m_bullet_tracers.enabled
+			|| snapshot->general.m_hitmarker.enabled
+			|| snapshot->general.m_hitsound.enabled
+			|| snapshot->general.m_hitsound.show_damage
 			|| combat_players;
 		const auto items = game::world().script_demand(
-			game::script_data_demand::items ) || config::visual_settings.m_item.enabled;
+			game::script_data_demand::items ) || snapshot->visual.m_item.enabled;
 		const auto projectiles = game::world().script_demand(
-			game::script_data_demand::projectiles ) || config::visual_settings.m_projectile.enabled
-			|| config::visual_settings.m_no_smoke.enabled
+			game::script_data_demand::projectiles ) || snapshot->visual.m_projectile.enabled
+			|| snapshot->visual.m_no_smoke.enabled
 			|| ( radar_active
-				&& ( config::visual_settings.m_radar.show_projectiles
-					|| config::visual_settings.m_radar.show_trajectories
-					|| config::visual_settings.m_radar.show_grenade_zones ) )
-			|| config::general_settings.m_grenades.enabled
-			|| ( config::visual_settings.m_player.active( )
-				&& config::visual_settings.m_player.m_legit_sync.enabled
-				&& config::visual_settings.m_player.m_legit_sync.direct_visible )
+				&& ( snapshot->visual.m_radar.show_projectiles
+					|| snapshot->visual.m_radar.show_trajectories
+					|| snapshot->visual.m_radar.show_grenade_zones ) )
+			|| snapshot->general.m_grenades.enabled
+			|| ( snapshot->visual.m_player.active( )
+				&& snapshot->visual.m_player.m_legit_sync.enabled
+				&& snapshot->visual.m_player.m_legit_sync.direct_visible )
 			|| ( combat.aimbot.enabled && combat.aimbot.checks.smoke )
 			|| ( combat.triggerbot.enabled && combat.triggerbot.checks.smoke );
 		const auto spectators = game::world().script_demand(
 			game::script_data_demand::spectators ) ||
-			config::general_settings.m_spectator_list.enabled
-			|| config::visual_settings.m_player.spectator_sync;
+			snapshot->general.m_spectator_list.enabled
+			|| snapshot->visual.m_player.spectator_sync;
 		const auto directory = players || items || projectiles || spectators
-			|| config::visual_settings.m_bomb.enabled;
+			|| snapshot->visual.m_bomb.enabled;
 		return { players, items, projectiles, spectators, directory };
 	}
 
@@ -406,7 +409,8 @@ namespace {
 
 		auto [ it, inserted ] = cache.try_emplace( weapon_vdata );
 		auto& metadata = it->second;
-
+		// A vdata address can be recycled after a map/client lifetime transition.
+		// Never return metadata proven for a different item definition.
 		if ( item_definition && metadata.item_definition
 			&& metadata.item_definition != item_definition )
 		{
@@ -478,7 +482,10 @@ void world_sampler::run( )
 
 	static auto next_spectator_update = std::chrono::steady_clock::time_point{};
 	const auto now = std::chrono::steady_clock::now( );
-	const auto spectator_sync = config::visual_settings.m_player.spectator_sync;
+	const auto snapshot = config::get_runtime_snapshot( );
+	if ( !snapshot )
+		return;
+	const auto spectator_sync = snapshot->visual.m_player.spectator_sync;
 	const auto spectators_requested =
 		demand.spectators
 		&& ( spectator_sync || now >= next_spectator_update );
@@ -522,114 +529,6 @@ std::vector<player_snapshot> world_sampler::seed_players(
 	return fresh;
 }
 
-void world_sampler::seed_players_into(
-	std::vector<player_snapshot>& fresh,
-	std::uintptr_t local_pawn, std::uintptr_t local_controller,
-	int local_team, bool free_for_all, std::uintptr_t only_pawn ) const
-{
-
-	static const auto controller_pawn =
-		SCHEMA( "CCSPlayerController", "m_hPlayerPawn"_id );
-	static const auto controller_helmet =
-		SCHEMA( "CCSPlayerController", "m_bPawnHasHelmet"_id );
-	static const auto pawn_health =
-		SCHEMA( "C_BaseEntity", "m_iHealth"_id );
-	static const auto pawn_team =
-		SCHEMA( "C_BaseEntity", "m_iTeamNum"_id );
-	static const auto pawn_scene =
-		SCHEMA( "C_BaseEntity", "m_pGameSceneNode"_id );
-	static const auto pawn_immunity =
-		SCHEMA( "C_CSPlayerPawn", "m_bGunGameImmunity"_id );
-	static const auto pawn_armor =
-		SCHEMA( "C_CSPlayerPawn", "m_ArmorValue"_id );
-	static const auto scene_origin =
-		SCHEMA( "CGameSceneNode", "m_vecAbsOrigin"_id );
-	static const auto scene_model_state =
-		SCHEMA( "CSkeletonInstance", "m_modelState"_id );
-
-	fresh.clear( );
-	if ( fresh.capacity( ) < 64 ) fresh.reserve( 64 );
-
-	for ( std::uint32_t index = 1; index <= 64; ++index )
-	{
-
-		const auto controller = game::entity_index().lookup_index( index );
-		if ( !controller || controller == local_controller )
-		{
-			continue;
-		}
-
-		const auto pawn_handle =
-			app::context().process.load<std::uint32_t>( controller + controller_pawn );
-		const auto pawn = game::entity_index().lookup( pawn_handle );
-		if ( !pawn || pawn == local_pawn )
-		{
-			continue;
-		}
-		if ( only_pawn && pawn != only_pawn )
-		{
-			continue;
-		}
-		player_snapshot value{};
-		value.controller = controller;
-		value.pawn = pawn;
-		value.health = app::context().process.load<std::int32_t>( pawn + pawn_health );
-		value.team = app::context().process.load<std::int32_t>( pawn + pawn_team );
-		value.invulnerable = app::context().process.load<bool>( pawn + pawn_immunity );
-		if ( value.health <= 0 || value.health > 100
-			|| ( value.team != 2 && value.team != 3 )
-			|| ( !free_for_all && value.team == local_team )
-			|| value.invulnerable )
-		{
-			continue;
-		}
-
-		value.armor = app::context().process.load<std::int32_t>( pawn + pawn_armor );
-		value.game_scene_node =
-			app::context().process.load<std::uintptr_t>( pawn + pawn_scene );
-		if ( !value.game_scene_node )
-		{
-			continue;
-		}
-
-		value.origin = app::context().process.load<foundation::vec3>(
-			value.game_scene_node + scene_origin );
-		value.velocity = app::context().process.load<foundation::vec3>( pawn
-			+ SCHEMA( "C_BaseEntity", "m_vecAbsVelocity"_id ) );
-		value.simulation_tick = app::context().process.load<std::int32_t>( pawn
-			+ SCHEMA( "C_BaseEntity", "m_nSimulationTick"_id ) );
-		value.simulation_time = app::context().process.load<float>( pawn
-			+ SCHEMA( "C_BaseEntity", "m_flSimulationTime"_id ) );
-		if ( !std::isfinite( value.origin.x ) || !std::isfinite( value.origin.y )
-			|| !std::isfinite( value.origin.z ) )
-		{
-			continue;
-		}
-
-		value.bone_cache = app::context().process.load<std::uintptr_t>(
-			value.game_scene_node + scene_model_state + 0x80 );
-		if ( !value.bone_cache )
-		{
-			continue;
-		}
-		value.bones = game::skeletons().get( value.bone_cache );
-		if ( !value.bones.is_valid( ) )
-		{
-			continue;
-		}
-
-		value.has_helmet =
-			app::context().process.load<bool>( controller + controller_helmet );
-		value.hitboxes = game::hitbox_data().query(
-			value.game_scene_node, false );
-		if ( value.hitboxes.count < 3 )
-		{
-			continue;
-		}
-		fresh.push_back( std::move( value ) );
-		if ( only_pawn ) break;
-	}
-}
 
 std::shared_ptr<const std::vector<world_item_snapshot>> world_sampler::items( ) const
 {
@@ -648,6 +547,7 @@ std::shared_ptr<const std::vector<spectator_snapshot>> world_sampler::spectators
 
 void world_sampler::collect_players( const std::vector<entity_directory::cached>& raw )
 {
+	const auto runtime_settings = config::get_runtime_snapshot();
 	auto view_origin = game::camera().origin( );
 	auto unused_angles = foundation::vec3{};
 	static_cast<void>( game::camera().sample( view_origin, unused_angles ) );
@@ -875,11 +775,12 @@ void world_sampler::collect_players( const std::vector<entity_directory::cached>
 		}
 
 		p.game_scene_node = game_scene_node;
-		if ( config::visual_settings.m_chams.enabled )
+		if ( runtime_settings->visual.m_chams.enabled )
 		{
 			p.model_path = cached_player_model_path( game_scene_node );
 		}
 
+		// Animgraph 2 model state owns the live bone cache.
 		p.bone_cache = scene_fields.get<std::uintptr_t>( game_scene_node, bone_cache_offset );
 		p.origin = scene_fields.get<foundation::vec3>( game_scene_node, o.scene_abs_origin );
 		p.velocity = app::context().process.load<foundation::vec3>( player_pawn
@@ -893,6 +794,8 @@ void world_sampler::collect_players( const std::vector<entity_directory::cached>
 			continue;
 		}
 
+		// Native bomb prediction samples WorldSpaceCenter(): abs origin plus the
+		// midpoint of the current standing/crouched collision hull.
 		const auto collision_mins = pawn_base.get<foundation::vec3>( player_pawn, collision_mins_offset );
 		const auto collision_maxs = pawn_base.get<foundation::vec3>( player_pawn, collision_maxs_offset );
 		p.collision_center = p.origin + ( collision_mins + collision_maxs ) * 0.5f;
@@ -924,7 +827,7 @@ void world_sampler::collect_players( const std::vector<entity_directory::cached>
 		const auto head = p.bones.get_position( 7 );
 		p.is_visible = p.bones.is_valid( ) && game::collision().valid( )
 			&& !game::collision().trace_ray( view_origin, head ).hit;
-		const auto& legit = config::visual_settings.m_player.m_legit_sync;
+		const auto& legit = runtime_settings->visual.m_player.m_legit_sync;
 		const auto emit = this->m_last_emit_sound.find( p.pawn );
 		if ( emit == this->m_last_emit_sound.end( ) )
 		{
@@ -973,7 +876,8 @@ void world_sampler::collect_players( const std::vector<entity_directory::cached>
 						p.weapon.ptr + SCHEMA( "C_EconEntity", "m_AttributeManager"_id )
 						+ SCHEMA( "C_AttributeContainer", "m_Item"_id )
 						+ SCHEMA( "C_EconItemView", "m_iItemDefinitionIndex"_id ) );
-
+					// A composite snapshot is valid only if the owner still advertises the
+					// same full handle after resolving instance, vdata and item identity.
 					const auto stable_before_metadata = p.weapon.vdata
 						&& p.weapon.item_definition > 0
 						&& app::context().process.load<std::uint32_t>(
@@ -1090,7 +994,7 @@ void world_sampler::collect_players( const std::vector<entity_directory::cached>
 		if ( !game::local_player().is_enemy( player.team ) )
 			add_controller_bit( player.controller_index );
 
-	const auto& legit = config::visual_settings.m_player.m_legit_sync;
+	const auto& legit = runtime_settings->visual.m_player.m_legit_sync;
 	const auto recently = [ & ]( const auto& events, const std::uintptr_t pawn,
 		const float seconds )
 	{
@@ -1132,7 +1036,7 @@ void world_sampler::collect_players( const std::vector<entity_directory::cached>
 		}
 		player.is_spotted = fresh_radar_edge || teammate_spotted;
 		if ( player.is_spotted ) this->m_last_radar_seen[ player.pawn ] = sync_now;
-		const auto spectator_blocked = config::visual_settings.m_player.spectator_sync
+		const auto spectator_blocked = runtime_settings->visual.m_player.spectator_sync
 			&& this->local_spectated( );
 		const auto direct_signal = !spectator_blocked && legit.direct_visible
 			&& player.is_visible && !line_through_active_smoke(
@@ -1566,7 +1470,8 @@ void world_sampler::collect_spectators( const std::vector<entity_directory::cach
 			}
 
 			const remote_span controller( entry.ptr, controller_first, controller_last );
-
+			// Observer handles survive a round transition briefly. Once the controller
+			// owns a live pawn it is no longer a spectator, regardless of stale fields.
 			if ( controller.get<bool>( entry.ptr, alive_offset ) ) continue;
 			const auto observer_pawn_handle = controller.get<std::uint32_t>(
 				entry.ptr, observer_pawn_offset );

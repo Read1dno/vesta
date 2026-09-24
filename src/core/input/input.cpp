@@ -1,5 +1,7 @@
 #include <stdafx.hpp>
 #include <core/input/hotkeys.hpp>
+#include <core/input/key_encoding.hpp>
+#include <system/runtime_events.hpp>
 
 namespace platform::windows {
 
@@ -37,15 +39,14 @@ namespace platform::windows {
 	bool input_gateway::connect( ) noexcept
 	{
 		const auto library = ::GetModuleHandleW( L"win32u.dll" );
-		if ( !library )
-			return false;
 
 		m_pointer_injector = reinterpret_cast<inject_pointer_fn>(
-			::GetProcAddress( library, "NtUserInjectMouseInput" ) );
+			library ? ::GetProcAddress( library, "NtUserInjectMouseInput" ) : nullptr );
 		m_key_injector = reinterpret_cast<inject_key_fn>(
-			::GetProcAddress( library, "NtUserInjectKeyboardInput" ) );
-		if ( !m_pointer_injector || !m_key_injector )
-			return false;
+			library ? ::GetProcAddress( library, "NtUserInjectKeyboardInput" ) : nullptr );
+
+        runtime_event("input", std::format("native_keyboard={} native_pointer={} fallback=SendInput",
+            m_key_injector != nullptr, m_pointer_injector != nullptr));
 
 		input_gateway* expected{};
 		if ( !s_gate_owner.compare_exchange_strong(
@@ -83,8 +84,6 @@ namespace platform::windows {
 	bool input_gateway::pointer( int dx, int dy,
 		pointer_action actions ) const noexcept
 	{
-		if ( !m_pointer_injector )
-			return false;
 
 		pointer_packet packet{};
 		packet.point = { dx, dy };
@@ -109,7 +108,14 @@ namespace platform::windows {
 			if ( contains( actions, pointer_action::auxiliary2_down ) ) packet.flags |= MOUSEEVENTF_XDOWN;
 			if ( contains( actions, pointer_action::auxiliary2_up ) ) packet.flags |= MOUSEEVENTF_XUP;
 		}
-		const auto injected = m_pointer_injector( &packet, 1 ) != FALSE;
+        auto injected = m_pointer_injector && m_pointer_injector(&packet, 1) != FALSE;
+        if (!injected)
+        {
+            INPUT event{};
+            event.type = INPUT_MOUSE;
+            event.mi = {dx, dy, packet.mouse_data, packet.flags, 0, 0};
+            injected = ::SendInput(1, &event, sizeof(INPUT)) == 1;
+        }
 		if ( injected )
 		{
 			if ( contains( actions, pointer_action::primary_down ) )
@@ -130,7 +136,7 @@ namespace platform::windows {
 	bool input_gateway::keys(
 		std::span<const key_transition> transitions ) const noexcept
 	{
-		if ( !m_key_injector || transitions.empty( ) || transitions.size( ) > 8 )
+		if ( transitions.empty( ) || transitions.size( ) > 8 )
 			return false;
 
 		std::array<key_packet, 8> packets{};
@@ -138,13 +144,39 @@ namespace platform::windows {
 		{
 			const auto transition = transitions[index];
 			auto& packet = packets[index];
-			packet.virtual_key = transition.virtual_key;
-			packet.scan_code = static_cast<std::uint16_t>(
-				::MapVirtualKeyW( transition.virtual_key, MAPVK_VK_TO_VSC ) );
-			packet.flags = transition.pressed ? 0u : KEYEVENTF_KEYUP;
-		}
-		const auto injected = m_key_injector( packets.data( ),
-			static_cast<int>( transitions.size( ) ) ) != FALSE;
+            if (!transition.virtual_key || transition.virtual_key >= 256) return false;
+            const auto encoded = encode_key(transition.virtual_key, transition.pressed);
+            packet.virtual_key = encoded.wVk;
+            packet.scan_code = encoded.wScan;
+            packet.flags = encoded.dwFlags;
+        }
+        auto injected = m_key_injector && m_key_injector(packets.data(),
+            static_cast<int>(transitions.size())) != FALSE;
+        if (!injected)
+        {
+            std::array<INPUT, 8> events{};
+            for (std::size_t i = 0; i < transitions.size(); ++i)
+            {
+                events[i].type = INPUT_KEYBOARD;
+                events[i].ki = encode_key(transitions[i].virtual_key, transitions[i].pressed);
+            }
+            const auto count = ::SendInput(static_cast<UINT>(transitions.size()), events.data(), sizeof(INPUT));
+            for (std::size_t i = 0; i < count; ++i)
+                m_injected_down[transitions[i].virtual_key].store(transitions[i].pressed, std::memory_order_release);
+            injected = count == transitions.size();
+            if (!injected)
+            {
+                // Release a partially accepted batch so no failed tap leaves a key held.
+                for (std::size_t i = 0; i < count; ++i)
+                {
+                    if (!transitions[i].pressed) continue;
+                    auto release = events[i];
+                    release.ki.dwFlags |= KEYEVENTF_KEYUP;
+                    if (::SendInput(1, &release, sizeof(INPUT)) == 1)
+                        m_injected_down[transitions[i].virtual_key].store(false, std::memory_order_release);
+                }
+            }
+        }
 		if ( injected )
 		{
 			for ( const auto& transition : transitions )
@@ -222,7 +254,8 @@ namespace platform::windows {
 			}
 			else if ( was )
 			{
-
+				// Resume a still-held physical binding after synthetic counter movement
+				// is gone; the swallowed down transition cannot otherwise reach the game.
 				const auto physical = m_movement_physical_down[ key ].exchange(
 					false, std::memory_order_acq_rel );
 				if ( physical ) this->key( key, true );
@@ -299,6 +332,7 @@ namespace platform::windows {
 			{
 				m_gate_hook = ::SetWindowsHookExW(
 					WH_KEYBOARD_LL, gate_proc, ::GetModuleHandleW( nullptr ), 0 );
+                if (!m_gate_hook) runtime_event("input", std::format("keyboard_hook_failed error={}", ::GetLastError()));
 			}
 			else if ( !requested && m_gate_hook )
 			{
@@ -356,4 +390,4 @@ namespace platform::windows {
 			expected, nullptr, std::memory_order_acq_rel );
 	}
 
-}
+} // namespace platform::windows

@@ -27,4 +27,4 @@ namespace app {
 		return instance;
 	}
 
-}
+} // namespace app

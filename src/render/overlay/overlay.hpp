@@ -6,6 +6,7 @@
 #include <dcomp.h>
 #include <render/draw.hpp>
 #include <render/overlay/window.hpp>
+#include <render/overlay/recovery.hpp>
 #include <render/overlay/input.hpp>
 #include <thread>
 #include <chrono>
@@ -67,7 +68,7 @@ public:
 	void request_lua_import( );
 
 private:
-	void run( );
+	bool run( );
 	void shutdown( ) noexcept;
 	void synchronize_menu_focus( );
 	void set_menu_hit_testing( bool enabled );
@@ -141,7 +142,8 @@ private:
 	bool m_allow_tearing{};
 	bool m_present_tearing_enabled{};
 	bool m_resize_pending{};
-	bool m_frame_latency_recovery_pending{};
+	bool m_frame_latency_unreliable{};
+	render::presentation_retry m_presentation_retry{};
 	std::uint64_t m_presentation_generation{};
 	ID3D11Texture2D* m_back_buffer{};
 	ID3D11RenderTargetView* m_rtv{};

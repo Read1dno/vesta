@@ -1,10 +1,12 @@
 #pragma once
 
+// windows
 #include <windows.h>
 #include <tlhelp32.h>
 #include <dwmapi.h>
 #include <windowsx.h>
 
+// standard
 #include <array>
 #include <atomic>
 #include <bit>
@@ -43,8 +45,10 @@
 #include <string_view>
 #include <type_traits>
 
-#include <xorstr.hpp>
+// external
+#include <external/xorstr.hpp>
 
+// shared project primitives
 #include <core/math/interpolation.hpp>
 #include <core/math/vector.hpp>
 #include <core/memory/addresses.hpp>
@@ -54,6 +58,7 @@
 #include <core/memory/symbol.hpp>
 #include <core/math/random.hpp>
 
+// platform
 #include <core/memory/process.hpp>
 #include <core/memory/modules.hpp>
 #include <core/input/input.hpp>
@@ -64,3 +69,6 @@
 #include <config/settings.hpp>
 #include <core/state/services.hpp>
 #include <app/context.hpp>
+
+// Project state layouts are consumed transitively by the precompiled header.
+// Keep the PCH dependency stamp explicit when snapshot layouts evolve.

@@ -127,4 +127,4 @@ namespace platform::windows {
 		HHOOK m_gate_hook{};
 	};
 
-}
+} // namespace platform::windows

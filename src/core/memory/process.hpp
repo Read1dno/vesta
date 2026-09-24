@@ -52,6 +52,8 @@ namespace platform::windows {
 			std::string_view signature ) const;
 		[[nodiscard]] std::uintptr_t scan_code_signature( std::uintptr_t module,
 			std::string_view signature ) const;
+		[[nodiscard]] std::uintptr_t scan_unique_code_signature(std::uintptr_t module,
+			std::string_view signature, std::size_t& matches) const;
 		[[nodiscard]] std::size_t module_image_size( std::uintptr_t module ) const;
 		[[nodiscard]] std::uintptr_t locate_vtable( std::uintptr_t module,
 			std::string_view class_name ) const;
@@ -77,4 +79,4 @@ namespace platform::windows {
 		void* m_process{};
 	};
 
-}
+} // namespace platform::windows

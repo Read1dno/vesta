@@ -31,6 +31,7 @@ namespace config {
 			float scale{ 1.0f };
 			int version{ 1 };
 
+			// Read only while migrating configs that stored absolute position_x/y.
 			float legacy_position_x{ 40.0f };
 			float legacy_position_y{ 40.0f };
 		};
@@ -65,7 +66,7 @@ namespace config {
 		struct hitsound
 		{
 			bool enabled{ true };
-			int style{ 4 };
+			int style{ 4 }; // 0 soft, 1 glass, 2 pluck, 3 crisp, 4 flesh
 			float volume{ 0.55f };
 			bool show_damage{ true };
 			zdraw::rgba damage_color{ 255, 108, 112, 255 };
@@ -98,7 +99,8 @@ namespace config {
 			float draw_distance{ 800.0f };
 			float stand_distance{ 220.0f };
 			float stand_radius{ 22.0f };
-
+			// Broad radius keeps the marker easy to acquire; automatic execution uses
+			// the tighter horizontal/vertical tolerances below.
 			float release_radius{ 6.0f };
 			float height_tolerance{ 8.0f };
 
@@ -116,7 +118,8 @@ namespace config {
 			bool auto_release{ true };
 			int aim_key{ VK_XBUTTON2 };
 			int aim_smoothing{ 18 };
-
+			// Angular error (degrees) at which the aim counts as converged and the
+			// marker switches from "aim here" to "throw now".
 			float aim_threshold{ 0.35f };
 			int lock_time_ms{ 45 };
 		} m_nade_helper{};
@@ -132,6 +135,8 @@ namespace config {
 			bool show_fps{ true };
 		} m_watermark{};
 
+		// Movable panel (like the watermark) listing the players currently
+		// spectating the local player, with their observer mode.
 		struct spectator_list
 		{
 			bool enabled{ false };
@@ -205,10 +210,11 @@ namespace config {
 
 		bool auto_accept{ true };
 		bool obs_bypass{ false };
-
+		// Lua runtime is local-only. The production binary exposes no network API;
+		// scripts may explicitly launch an external helper through the OS library.
 		bool lua_enabled{ true };
 		bool limit_fps{ true };
 		int fps_limit{ 240 };
 	};
 
-}
+} // namespace config

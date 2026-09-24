@@ -1,5 +1,7 @@
 #pragma once
 
+// Generated from the CC0 sources listed in LICENSE.md.
+// See src/resources/sounds/LICENSE.md.
 namespace resources::sounds {
 inline constexpr unsigned char soft[] = {
     0x52, 0x49, 0x46, 0x46, 0xC6, 0x65, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6D, 0x74, 0x20,
@@ -8521,4 +8523,4 @@ inline constexpr unsigned char flesh[] = {
 };
 inline constexpr unsigned int flesh_size = sizeof(flesh);
 
-}
+} // namespace resources::sounds

@@ -1,0 +1,19 @@
+{
+  "imgui.cpp": "cfa54699d17f740c0b47bc1112e2a3cc7015be8dd66767668320f5bc58e40232",
+  "imgui_draw.cpp": "6bb6fac44b6c9a89b06c30668481923675fc7e180f433f1a8a55d771ea4afc86",
+  "imgui_tables.cpp": "48b05491945bf72907ccb7172d35f7b5150edd81246d1cf40ff3f4a0edc29af8",
+  "imgui_widgets.cpp": "258926db8bbe5818397f4138c7095d1e454a21a33e8e30bb666a565bf16e8995",
+  "imgui.h": "9aaaf8558d72c88d742881b360c720acc62208f987cb2fbbf848bde2d2cf6965",
+  "imgui_internal.h": "f28f12b7f2439f0166ce1a9f784195190959fe8bf5415c62461c7f17978b6654",
+  "imconfig.h": "c6b68b02b98223d6d5ea26c9cf5dcbf7bc7075a77268d2538a3def6dd32e1979",
+  "imstb_rectpack.h": "bb53504995e983d54b1ae06ea727f0b39647e5e205b4bf7da01343953974951c",
+  "imstb_textedit.h": "be4613effd5422fbbfc5a838f212ec1733c9f7472cd936c4ccaf1cb938808dd5",
+  "imstb_truetype.h": "37aa1d602706262bf94da2f83efaa8175ebc2202ede13da96b692fbcf8b4427b",
+  "LICENSE.txt": "55e058cc5899e6077a819ad1005d6d1f4528f65ae100795c9692f9fa6525a8ce",
+  "backends/imgui_impl_dx11.cpp": "a29563433d7bd3a1d23847c837f5575134be77ff9e58c516bf89d3cd8bbcc8f9",
+  "backends/imgui_impl_dx11.h": "418e61566a9c945064514d9514e6a892387554bdc073ee9440fef2be03c00bdc",
+  "backends/imgui_impl_win32.cpp": "3bf9af02d5828e80b46ddbec5e873a472ae798122052c9c3515838646776a715",
+  "backends/imgui_impl_win32.h": "65c7546a1b85ea300075eee58ef3fa7eb83f450a7af497b6eb2e569be0c140ee",
+  "misc/freetype/imgui_freetype.cpp": "f6d466dc184e66ef6358ff37259c01d42fb54a6cd4393e69bed9f5c8c7ef72d3",
+  "misc/freetype/imgui_freetype.h": "c8509cf3ecaf1cc3dbff88bac29bc79228778d1fd8607e380ae28be14226f568"
+}

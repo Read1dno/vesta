@@ -9,13 +9,15 @@ namespace chams {
 
 	struct material_data
 	{
-		std::string shader{};
+		std::string shader{}; // e.g. "csgo_character.vfx"
 
+		// Archive paths of the texture slots, as referenced by the material.
+		// These end in ".vtex"; load_texture normalizes that to ".vtex_c".
 		std::string color{};
 		std::string normal{};
 		std::string metalness{};
 		std::string ambient_occlusion{};
-		std::string gloss{};
+		std::string gloss{}; // g_tAnisoGloss -- drives roughness
 
 		float uv_scale[ 2 ]{ 1.0f, 1.0f };
 		float uv_offset[ 2 ]{ 0.0f, 0.0f };
@@ -27,4 +29,4 @@ namespace chams {
 
 	[[nodiscard]] material_data load_material( vpk_archive& vpk, const std::string& archive_path );
 
-}
+} // namespace chams

@@ -164,4 +164,4 @@ namespace foundation {
 		return value + twice_cross * orientation.w + axis.cross( twice_cross );
 	}
 
-}
+} // namespace foundation

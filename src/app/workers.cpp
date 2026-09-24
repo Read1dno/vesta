@@ -1,16 +1,23 @@
 #include <stdafx.hpp>
 #include <app/context.hpp>
 #include <app/workers.hpp>
+#include <system/runtime_events.hpp>
+#include <app/map_loader.hpp>
+#include <core/input/bindings.hpp>
 #include <features/aimbot/aimbot.hpp>
 #include <features/misc/misc.hpp>
 #include <features/misc/auto_stop.hpp>
 #include <features/trigger/seed_trigger.hpp>
+#include <simulation/shot_state.hpp>
+#include <simulation/seed_schedule.hpp>
 #include <features/visuals/visuals.hpp>
 
 namespace app::workers {
 
 	namespace {
 
+		// Progress markers for the watchdog: the game loop stamps which stage it is
+		// about to run, so if it ever stops advancing we can see exactly where.
 		constexpr const char* k_step_names[ ]{
 			"local.update", "auto_accept.tick", "entities.refresh", "collector.run",
 			"map-name read", "parse dispatch", "bomb_damage.parse", "heartbeat", "sleep",
@@ -19,6 +26,8 @@ namespace app::workers {
 		std::atomic<int> g_game_step{ -1 };
 		std::atomic<std::uint64_t> g_game_iter{ 0 };
 
+		// Published for features that key off the level (the nade helper filters its
+		// lineup table by it). The game loop is the only writer.
 		std::atomic<std::shared_ptr<const std::string>> g_current_map{
 			std::make_shared<const std::string>( ) };
 
@@ -28,8 +37,11 @@ namespace app::workers {
 			{
 				return key > 0 && ( ::GetAsyncKeyState( key ) & 0x8000 ) != 0;
 			};
-			const auto& visuals = config::visual_settings;
-			const auto& misc = config::general_settings;
+			const auto snapshot = config::get_runtime_snapshot( );
+			if ( !snapshot )
+				return false;
+			const auto& visuals = snapshot->visual;
+			const auto& misc = snapshot->general;
 			if ( misc.m_bullet_tracers.enabled || misc.m_hitmarker.enabled || misc.m_hitsound.enabled
 				|| misc.m_hitsound.show_damage || misc.m_grenades.enabled
 				|| ( visuals.m_crosshair.enabled
@@ -39,7 +51,7 @@ namespace app::workers {
 				return true;
 			}
 
-			const auto config = config::combat_settings.get(
+			const auto config = snapshot->combat.get(
 				game::local_player().weapon_type( ) );
 			bool rcs_requested{};
 			if ( config.aimbot.rcs.enabled )
@@ -66,11 +78,11 @@ namespace app::workers {
 				return true;
 			}
 			const auto& grenade =
-				config::combat_settings.global.grenade_aim;
+				snapshot->combat.global.grenade_aim;
 			return grenade.enabled && key_down( grenade.key );
 		}
 
-	}
+	} // namespace
 
 	std::shared_ptr<const std::string> current_map( )
 	{
@@ -111,13 +123,18 @@ namespace app::workers {
 					has_separator |= ( c == '_' || c == '/' );
 				}
 
+				// All real map identifiers contain '_' or a path separator; plain words
+				// are far more likely to be an unrelated string field.
 				return has_separator ? value : std::string{};
 			};
 
 			if ( cached_offset )
 			{
-				return try_read( global_vars + cached_offset );
-			}
+		        const auto value = try_read(global_vars + cached_offset);
+		        if (!value.empty())
+			        return value;
+		        cached_offset = 0;
+	        }
 
 			const auto now = std::chrono::steady_clock::now( );
 			if ( now - last_probe < std::chrono::seconds( 1 ) )
@@ -173,7 +190,7 @@ namespace app::workers {
 			}
 		}
 
-	}
+	} // namespace
 
 	void game( )
 	{
@@ -183,9 +200,9 @@ namespace app::workers {
 		auto next_map_probe = std::chrono::steady_clock::time_point{};
 		std::string last_map{};
 
-		std::jthread parse_worker{};
+	    app::map_loader map_loader;
 
-		std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
+	    std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
 
 		std::uint64_t iterations{ 0 };
 #if defined( VESTA_ENABLE_CONSOLE ) && VESTA_ENABLE_CONSOLE
@@ -196,8 +213,9 @@ namespace app::workers {
 		{
 			std::optional<platform::performance::scope> game_profile{};
 			game_profile.emplace( platform::performance::zone::game_loop );
-			++iterations;
-			g_game_iter.store( iterations, std::memory_order_relaxed );
+		    platform::performance::flush_if_due();
+		    ++iterations;
+		    g_game_iter.store( iterations, std::memory_order_relaxed );
 
 			g_game_step.store( 0, std::memory_order_relaxed );
 			{
@@ -205,7 +223,34 @@ namespace app::workers {
 				game::local_player().update( );
 			}
 
-			g_game_step.store( 1, std::memory_order_relaxed );
+#if defined(VESTA_WINDOWED_PROFILE) && VESTA_WINDOWED_PROFILE
+		    static auto next_profile_state = std::chrono::steady_clock::time_point{};
+		    if (std::chrono::steady_clock::now() >= next_profile_state)
+		    {
+			    next_profile_state = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+			    const auto &process = app::context().process;
+			    const auto controller =
+			        process.load<std::uintptr_t>(app::context().addresses.local_player_controller);
+			    const auto handle = controller
+			                            ? process.load<std::uint32_t>(
+			                                  controller + SCHEMA("CCSPlayerController", "m_hPlayerPawn"_id))
+			                            : 0;
+			    const auto raw_pawn = handle ? game::entity_index().lookup(handle) : 0;
+			    platform::windows::runtime_event(
+			        "profile_scene",
+			        std::format(
+			            "valid={} health={} players={} controller_slot={:#x} controller={:#x} handle={:#x} "
+			            "raw_pawn={:#x} pawn={:#x} raw_health={} raw_team={}",
+			            game::local_player().valid(), game::local_player().health(),
+			            game::world().players()->size(), app::context().addresses.local_player_controller,
+			            controller, handle, raw_pawn, game::local_player().pawn(),
+			            raw_pawn ? process.load<int>(raw_pawn + SCHEMA("C_BaseEntity", "m_iHealth"_id)) : -1,
+			            raw_pawn ? process.load<int>(raw_pawn + SCHEMA("C_BaseEntity", "m_iTeamNum"_id))
+			                     : -1));
+		    }
+#endif
+
+		    g_game_step.store( 1, std::memory_order_relaxed );
 			{
 				VESTA_PERF_SCOPE( auto_accept );
 				features::misc::auto_accept().tick( );
@@ -216,6 +261,7 @@ namespace app::workers {
 
 			if ( game::local_player().valid( ) )
 			{
+                game::input_bindings().refresh();
 				const auto loop_now = std::chrono::steady_clock::now( );
 				const auto directory_requested =
 					game::world().entity_directory_requested( );
@@ -233,6 +279,14 @@ namespace app::workers {
 				{
 					VESTA_PERF_SCOPE( world_update );
 					game::world().run( );
+				}
+				{
+					VESTA_PERF_SCOPE( grenade_prediction_tick );
+					features::visuals::grenade_prediction().tick( );
+				}
+				{
+					VESTA_PERF_SCOPE( bullet_feedback_tick );
+					features::visuals::bullet_impacts().tick( );
 				}
 				{
 					VESTA_PERF_SCOPE( bomb_update );
@@ -263,56 +317,10 @@ namespace app::workers {
 
 						g_game_step.store( 5, std::memory_order_relaxed );
 
-						if ( parse_worker.joinable( ) )
-						{
-							parse_worker.request_stop( );
-							parse_worker.join( );
-						}
-
-						game::collision().clear( );
-						game::blast_damage().clear( );
-
-						parse_worker = std::jthread( [ map = current_map ]( std::stop_token stop )
-						{
-
-							const auto background_mode = ::SetThreadPriority(
-								::GetCurrentThread( ), THREAD_MODE_BACKGROUND_BEGIN ) != FALSE;
-							if ( !background_mode )
-							{
-								::SetThreadPriority( ::GetCurrentThread( ), THREAD_PRIORITY_BELOW_NORMAL );
-							}
-							app::context().diagnostics.info( "parsing bvh for {}...", map );
-
-							const auto from_file = game::collision().build_from_map_file( map );
-							if ( !from_file )
-							{
-								app::context().diagnostics.warning( "bvh: file geometry unavailable, using live physics." );
-								game::collision().parse( );
-							}
-							app::context().diagnostics.success( "bvh parsed." );
-							game::blast_damage().parse( );
-
-							if ( from_file )
-							{
-								while ( !stop.stop_requested( ) )
-								{
-									const auto deadline = std::chrono::steady_clock::now( )
-										+ std::chrono::milliseconds( 100 );
-									while ( !stop.stop_requested( )
-										&& std::chrono::steady_clock::now( ) < deadline )
-									{
-										std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) );
-									}
-									if ( stop.stop_requested( ) ) break;
-									game::collision().refresh_map_entities( );
-								}
-							}
-							if ( background_mode )
-							{
-								::SetThreadPriority( ::GetCurrentThread( ), THREAD_MODE_BACKGROUND_END );
-							}
-						} );
-						}
+						features::visuals::grenade_prediction().reset();
+						features::visuals::bullet_impacts().reset();
+						map_loader.request(current_map);
+					    }
 					}
 				}
 			}
@@ -324,15 +332,10 @@ namespace app::workers {
 					g_current_map.store(
 						std::make_shared<const std::string>( ),
 						std::memory_order_release );
-
-					if ( parse_worker.joinable( ) )
-					{
-						parse_worker.request_stop( );
-						parse_worker.join( );
-					}
-					game::collision().clear( );
-					game::blast_damage().clear( );
-				}
+				    features::visuals::grenade_prediction().reset();
+				    features::visuals::bullet_impacts().reset();
+				    map_loader.request({});
+			    }
 			}
 
 			g_game_step.store( 7, std::memory_order_relaxed );
@@ -347,6 +350,8 @@ namespace app::workers {
 					game::entity_index().raw_entity_list_for_diag( ), game::entity_index().all( )->size( ),
 					game::world().players( )->size( ), global_vars, current_map, game::collision().valid( ), game::blast_damage().point_count( ) );
 
+				// In-game but the map probe found nothing: dump the region once so the
+				// correct slot can be identified from the log.
 				if ( game::local_player().valid( ) && global_vars && current_map.empty( ) && last_map.empty( ) )
 				{
 					dump_global_vars_once( global_vars );
@@ -396,7 +401,7 @@ namespace app::workers {
 
 	void combat( )
 	{
-
+		// 250 Hz: чтобы seed-trigger успевал реагировать в течение одного server-tick (15.625мс @ 64Hz MM).
 		constexpr auto target_tps{ 250 };
 		constexpr auto tick_interval = std::chrono::nanoseconds( 1'000'000'000 / target_tps );
 		auto next_tick = std::chrono::steady_clock::now( );
@@ -449,9 +454,11 @@ namespace app::workers {
 
 	void movement( )
 	{
-
-		constexpr auto interval = std::chrono::milliseconds( 1 );
-		::SetThreadPriority( ::GetCurrentThread( ), THREAD_PRIORITY_ABOVE_NORMAL );
+		// Movement tricks are command-timing features. Keep their memory reads and
+		// input independent from the much heavier aim/ballistics pass.
+		constexpr auto active_interval = std::chrono::milliseconds( 1 );
+		constexpr auto idle_interval = std::chrono::milliseconds( 4 );
+		::SetThreadPriority( ::GetCurrentThread( ), THREAD_PRIORITY_NORMAL );
 
 		while ( true )
 		{
@@ -466,7 +473,12 @@ namespace app::workers {
 					features::misc::auto_stop( ).tick( );
 				}
 			}
-			std::this_thread::sleep_for( interval );
+			const auto snapshot = config::get_runtime_snapshot( );
+			const auto active = snapshot && ( snapshot->general.m_bunny_hop.enabled
+				|| snapshot->general.m_edge_jump.enabled
+				|| snapshot->general.m_auto_stop.enabled
+				|| features::misc::auto_stop( ).active( ) );
+			std::this_thread::sleep_for( active ? active_interval : idle_interval );
 		}
 	}
 
@@ -475,7 +487,7 @@ namespace app::workers {
 
 		constexpr auto active_interval = std::chrono::milliseconds( 1 );
 		constexpr auto idle_interval = std::chrono::milliseconds( 8 );
-		::SetThreadPriority( ::GetCurrentThread( ), THREAD_PRIORITY_ABOVE_NORMAL );
+		::SetThreadPriority( ::GetCurrentThread( ), THREAD_PRIORITY_NORMAL );
 
 		while ( true )
 		{
@@ -483,8 +495,9 @@ namespace app::workers {
 				VESTA_PERF_SCOPE( nade_helper_tick );
 				features::misc::nade_helper().tick( );
 			}
+			const auto snapshot = config::get_runtime_snapshot( );
 			std::this_thread::sleep_for(
-				config::general_settings.m_nade_helper.enabled
+				snapshot && snapshot->general.m_nade_helper.enabled
 					? active_interval : idle_interval );
 		}
 	}
@@ -526,13 +539,11 @@ namespace app::workers {
 				? static_cast<DWORD>( duration.count( ) / 1000 ) : 0 );
 		};
 
-		int previous_tick{ -1 };
-		auto previous_boundary = std::chrono::steady_clock::time_point{};
-		auto command_period = std::chrono::microseconds( 15625 );
 
 		while ( true )
 		{
 			auto& runtime = features::trigger::seed_trigger( );
+			const auto snapshot = config::get_runtime_snapshot( );
 			bool can_run{};
 			bool configured{};
 			bool latency_requested{};
@@ -540,7 +551,7 @@ namespace app::workers {
 				VESTA_PERF_SCOPE( seed_trigger_tick );
 				can_run = app::context().overlay.combat_input_ready( )
 					&& !app::context().menu.is_open( );
-				configured = config::combat_settings.seed_trigger_configured( );
+				configured = snapshot && snapshot->combat.seed_trigger_configured( );
 				if ( !can_run ) runtime.reset( );
 
 				if ( can_run && configured )
@@ -549,29 +560,7 @@ namespace app::workers {
 					const auto controller = app::context().process.load<std::uintptr_t>(
 						app::context().addresses.local_player_controller );
 					const auto binding = game::resolve_local_pawn( controller );
-					const auto simulation_tick = binding.pawn
-						? app::context().process.load<int>( binding.pawn
-							+ SCHEMA( "C_BaseEntity", "m_nSimulationTick"_id ) )
-						: -1;
-					const auto tick = simulation_tick >= 0 ? simulation_tick + 1 : -1;
-					if ( tick > 0 && tick != previous_tick )
-					{
-						if ( previous_tick > 0 && previous_boundary
-							!= std::chrono::steady_clock::time_point{} )
-						{
-							const auto measured = std::chrono::duration_cast<
-								std::chrono::microseconds>( observed_at - previous_boundary );
-							if ( tick == previous_tick + 1
-								&& measured >= std::chrono::microseconds( 12000 )
-								&& measured <= std::chrono::microseconds( 20000 ) )
-							{
-								command_period = std::chrono::microseconds(
-									( command_period.count( ) * 7 + measured.count( ) ) / 8 );
-							}
-						}
-						previous_tick = tick;
-						previous_boundary = observed_at;
-					}
+                    const auto tick = simulation::read_seed_tick(controller, binding.pawn);
 					runtime.sync_phase( tick, observed_at );
 				}
 				latency_requested = can_run ? runtime.poll( ) : false;
@@ -583,37 +572,10 @@ namespace app::workers {
 				}
 			}
 
-			if ( !configured || !can_run )
-			{
-				precise_wait( std::chrono::milliseconds( 2 ) );
-				continue;
-			}
-			if ( runtime.input_pending( ) )
-			{
-
-				precise_wait( std::chrono::microseconds( 500 ) );
-				continue;
-			}
-
-			if ( previous_boundary == std::chrono::steady_clock::time_point{} )
-			{
-				precise_wait( std::chrono::microseconds( 500 ) );
-				continue;
-			}
-			const auto now = std::chrono::steady_clock::now( );
-			const auto prewake = previous_boundary + command_period
-				- std::chrono::microseconds( 750 );
-			if ( now < prewake )
-			{
-				precise_wait( std::chrono::duration_cast<
-					std::chrono::microseconds>( prewake - now ) );
-			}
-			else
-			{
-
-				precise_wait( std::chrono::microseconds( 100 ) );
-			}
+            precise_wait(simulation::seed_schedule::poll_interval(
+                can_run && runtime.input_pending(),
+                can_run && configured && latency_requested));
 		}
 	}
 
-}
+} // namespace app::workers

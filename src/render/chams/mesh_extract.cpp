@@ -108,11 +108,13 @@ namespace chams {
 			std::uint32_t stride{};
 			bool meshopt{};
 
+			// Byte offsets within one vertex, read from the buffer's own input
+			// layout. -1 means the buffer does not carry that attribute.
 			int position_offset{ -1 };
 			int blend_indices_offset{ -1 };
 			int blend_weights_offset{ -1 };
 			int uv_offset{ -1 };
-			int uv_format{ -1 };
+			int uv_format{ -1 }; // DXGI enum, as stored in m_Format
 		};
 
 		constexpr int k_format_r16g16_float{ 34 };
@@ -128,7 +130,7 @@ namespace chams {
 			std::uint32_t bits{};
 			if ( exponent == 0 )
 			{
-
+				// Zero or subnormal: renormalize into a float32 exponent.
 				if ( mantissa != 0 )
 				{
 					auto e = -1;
@@ -143,7 +145,7 @@ namespace chams {
 			}
 			else if ( exponent == 0x1F )
 			{
-				bits = sign | 0x7F800000u | ( mantissa << 13 );
+				bits = sign | 0x7F800000u | ( mantissa << 13 ); // inf / nan
 			}
 			else
 			{
@@ -157,7 +159,8 @@ namespace chams {
 
 		[[nodiscard]] bool semantic_is( std::string_view name, std::string_view wanted )
 		{
-
+			// Valve is inconsistent about case ("blendweight0" and "BLENDWEIGHT0"
+			// both occur inside a single model), so this cannot be a plain compare.
 			if ( name.size( ) != wanted.size( ) )
 			{
 				return false;
@@ -193,6 +196,8 @@ namespace chams {
 						continue;
 					}
 
+					// The semantic is a fixed-size char array, so it can carry
+					// trailing NULs that must not become part of the name.
 					auto name = name_kv->as_string( );
 					if ( const auto nul = name.find( '\0' ); nul != std::string::npos )
 					{
@@ -209,7 +214,8 @@ namespace chams {
 					else if ( semantic_is( name, "BLENDWEIGHT" ) ) d.blend_weights_offset = offset;
 					else if ( semantic_is( name, "TEXCOORD" ) && semantic_index == 0 )
 					{
-
+						// TEXCOORD1 is a second UV set (blood/decal masks); only the
+						// first one drives the albedo lookup.
 						d.uv_offset = offset;
 						d.uv_format = format_kv ? static_cast< int >( format_kv->as_int( ) ) : -1;
 					}
@@ -260,6 +266,8 @@ namespace chams {
 				return false;
 			}
 
+			// UVs are optional: a buffer without them still skins and shades, it
+			// just cannot be textured.
 			const auto uv_size = desc.uv_format == k_format_r32g32_float ? 8u : 4u;
 			const auto has_uv = desc.uv_format >= 0 && fits( desc.uv_offset, uv_size );
 
@@ -297,7 +305,7 @@ namespace chams {
 						std::memcpy( sv.uv, uv, 8 );
 						break;
 					default:
-						break;
+						break; // unknown encoding -- leave at 0 rather than invent one
 					}
 				}
 
@@ -400,6 +408,8 @@ namespace chams {
 					mesh.vertices[ vi ].normal[ 2 ] += n[ 2 ];
 				}
 
+				// Tangent aligned with increasing U. Degenerate UVs (a zero-area
+				// triangle in texture space) contribute nothing rather than a NaN.
 				const auto* uv_a = mesh.vertices[ idx[ 0 ] ].uv;
 				const auto* uv_b = mesh.vertices[ idx[ 1 ] ].uv;
 				const auto* uv_c = mesh.vertices[ idx[ 2 ] ].uv;
@@ -436,10 +446,13 @@ namespace chams {
 				}
 				else
 				{
-
+					// Isolated or degenerate vertex -- any unit vector beats a zero
+					// normal, which would blow up every normalize() in the shader.
 					n[ 0 ] = 0.0f; n[ 1 ] = 0.0f; n[ 2 ] = 1.0f;
 				}
 
+				// Gram-Schmidt the accumulated tangent against the final normal so
+				// the two are orthogonal, which is what the shader's TBN assumes.
 				const auto index = static_cast< std::size_t >( &vert - mesh.vertices.data( ) );
 				float t[ 3 ]{
 					tangent_accum[ index * 3 + 0 ],
@@ -460,18 +473,19 @@ namespace chams {
 				}
 				else
 				{
-
+					// No usable UV gradient here: pick any vector perpendicular to
+					// the normal so the frame stays well formed.
 					const float axis[ 3 ]{ std::abs( n[ 0 ] ) < 0.9f ? 1.0f : 0.0f, std::abs( n[ 0 ] ) < 0.9f ? 0.0f : 1.0f, 0.0f };
 					vert.tangent[ 0 ] = axis[ 1 ] * n[ 2 ] - axis[ 2 ] * n[ 1 ];
 					vert.tangent[ 1 ] = axis[ 2 ] * n[ 0 ] - axis[ 0 ] * n[ 2 ];
 					vert.tangent[ 2 ] = axis[ 0 ] * n[ 1 ] - axis[ 1 ] * n[ 0 ];
 				}
 
-				vert.tangent[ 3 ] = 1.0f;
+				vert.tangent[ 3 ] = 1.0f; // handedness; bitangent = cross(N, T) * w
 			}
 		}
 
-	}
+	} // namespace
 
 	skinned_mesh extract_mesh( vpk_archive& vpk, const std::string& model_path )
 	{
@@ -545,6 +559,8 @@ namespace chams {
 				const auto* mesh_entry = embedded->at( mesh_i );
 				const auto name = mesh_entry->find( "m_Name" )->as_string( );
 
+				// First-person arm/viewmodel variants are never what an external
+				// chams overlay wants to draw on another player.
 				if ( contains_ci( name, "firstperson" ) )
 				{
 					continue;
@@ -581,7 +597,7 @@ namespace chams {
 				}
 				catch ( const std::exception& )
 				{
-					continue;
+					continue; // one malformed mesh group should not sink the whole model
 				}
 
 				const auto* scene_objects = mdat_doc.root.find( "m_sceneObjects" );
@@ -695,4 +711,4 @@ namespace chams {
 		return result;
 	}
 
-}
+} // namespace chams

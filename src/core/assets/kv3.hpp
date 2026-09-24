@@ -9,22 +9,24 @@
 
 namespace chams::kv3 {
 
-	class object;
+	class object; // forward decl, values may nest objects/arrays
 
 	using array = std::vector<object>;
-	using dict = std::map<std::string, object>;
+	using dict = std::map<std::string, object>; // insertion order not required for lookup use
 
+	// A KV3 value. NULL_VALUE is distinct from "key absent" -- callers doing
+	// dict lookups should check both.
 	class object
 	{
 	public:
 		using value_t = std::variant<
-			std::monostate,
+			std::monostate, // NULL_VALUE
 			bool,
 			std::int64_t,
 			std::uint64_t,
 			double,
 			std::string,
-			std::vector<std::uint8_t>,
+			std::vector<std::uint8_t>, // BINARY_BLOB
 			array,
 			dict
 		>;
@@ -64,4 +66,4 @@ namespace chams::kv3 {
 		return decode( data.data( ), data.size( ) );
 	}
 
-}
+} // namespace chams::kv3

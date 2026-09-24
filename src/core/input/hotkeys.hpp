@@ -13,4 +13,4 @@ namespace platform::windows {
 	[[nodiscard]] const lifecycle_key_bindings& lifecycle_keys( );
 	[[nodiscard]] bool is_lifecycle_key( std::uint16_t virtual_key );
 
-}
+} // namespace platform::windows

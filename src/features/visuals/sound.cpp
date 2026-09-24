@@ -20,7 +20,8 @@ namespace features::visuals {
 
 		if ( cfg.local_sync != this->m_last_local_sync )
 		{
-
+			// Events created under the other policy do not carry enough information
+			// to decide whether they were audible at their original timestamp.
 			this->m_events.clear( );
 			this->m_last_local_sync = cfg.local_sync;
 		}
@@ -70,6 +71,8 @@ namespace features::visuals {
 			it->second = player.emit_sound_time;
 		}
 
+		// A whole session of reconnects would otherwise let the map grow unbounded;
+		// pawn pointers are reused, so clearing it just re-seeds on the next frame.
 		if ( this->m_last_emit.size( ) > 256 )
 		{
 			this->m_last_emit.clear( );
@@ -78,6 +81,7 @@ namespace features::visuals {
 
 		const float duration = std::max( 0.2f, cfg.duration );
 
+		// Expire finished rings first, then draw the survivors.
 		std::erase_if( this->m_events, [ & ]( const event& e )
 			{
 				return std::chrono::duration<float>( now - e.spawn ).count( ) >= duration;
@@ -87,8 +91,8 @@ namespace features::visuals {
 		{
 			const float age = std::chrono::duration<float>( now - e.spawn ).count( );
 			const float t = std::clamp( age / duration, 0.0f, 1.0f );
-			const float fade = 1.0f - t;
-			const float ring_radius = cfg.radius * ( 0.35f + 0.65f * t );
+			const float fade = 1.0f - t;                          // 1 -> 0 over the life
+			const float ring_radius = cfg.radius * ( 0.35f + 0.65f * t ); // expands outward
 			this->draw_ring( draw_list, e.position, ring_radius, cfg.color, fade );
 		}
 	}
@@ -110,7 +114,8 @@ namespace features::visuals {
 			const auto screen = game::camera().project( world );
 			if ( !game::camera().projection_valid( screen ) )
 			{
-
+				// Any point behind the near plane makes the ring's projection nonsense;
+				// skip the whole ring rather than draw a wild streak across the screen.
 				return;
 			}
 			points[ i ] = screen;
@@ -128,4 +133,4 @@ namespace features::visuals {
 		}
 	}
 
-}
+} // namespace features::visuals

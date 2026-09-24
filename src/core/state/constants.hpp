@@ -80,4 +80,4 @@ namespace game::rules {
 		in_lookatweapon = 1ULL << 35
 	};
 
-}
+} // namespace game::rules

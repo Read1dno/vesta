@@ -211,7 +211,7 @@ namespace platform::windows {
 				} );
 		}
 
-	}
+	} // namespace
 
 	process_session::~process_session( )
 	{
@@ -423,6 +423,33 @@ namespace platform::windows {
 		return 0;
 	}
 
+
+    std::uintptr_t process_session::scan_unique_code_signature(
+        std::uintptr_t module, std::string_view signature, std::size_t& matches) const
+    {
+        matches = 0;
+        const auto pattern = decode_signature(signature);
+        if (!module || pattern.empty()) return 0;
+        std::uintptr_t result{};
+        for (const auto& section : image_sections(*this, module)) {
+            if (!(section.attributes & IMAGE_SCN_MEM_EXECUTE)
+                || !(section.attributes & IMAGE_SCN_MEM_READ)) continue;
+            if (section.length > 128 * 1024 * 1024) return 0;
+            std::vector<std::byte> bytes(section.length);
+            if (!copy(section.begin, bytes.data(), bytes.size())) return 0;
+            for (std::size_t offset{}; offset + pattern.size() <= bytes.size(); ++offset) {
+                bool matched = true;
+                for (std::size_t i{}; i < pattern.size(); ++i)
+                    if (!pattern[i].wildcard && std::to_integer<std::uint8_t>(bytes[offset+i]) != pattern[i].value)
+                        { matched = false; break; }
+                if (!matched) continue;
+                result = section.begin + offset;
+                if (++matches > 1) return 0;
+            }
+        }
+        return matches == 1 ? result : 0;
+    }
+
 	std::size_t process_session::module_image_size(
 		std::uintptr_t module ) const
 	{
@@ -516,4 +543,4 @@ namespace platform::windows {
 			module, table, IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE ) : 0;
 	}
 
-}
+} // namespace platform::windows

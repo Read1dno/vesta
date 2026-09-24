@@ -218,7 +218,7 @@ float4 ps_main(vertex_out input) : SV_TARGET { return image_texture.Sample(image
 			return true;
 		}
 
-	}
+	} // namespace
 
 	overview export_overview( const std::string& map_name,
 		const std::filesystem::path& output_directory, const std::string& output_stem )
@@ -310,4 +310,4 @@ float4 ps_main(vertex_out input) : SV_TARGET { return image_texture.Sample(image
 		}
 	}
 
-}
+} // namespace scripting::radar_asset

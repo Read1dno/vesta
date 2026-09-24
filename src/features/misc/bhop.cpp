@@ -1,5 +1,7 @@
 #include <stdafx.hpp>
 #include <core/input/bindings.hpp>
+#include <core/input/keyboard_binding.hpp>
+#include <system/runtime_events.hpp>
 #include <features/misc/misc.hpp>
 
 namespace features::misc {
@@ -17,14 +19,17 @@ namespace features::misc {
 
 	void bhop_t::tick( )
 	{
-		auto& bunny_cfg = config::general_settings.m_bunny_hop;
-		auto& edge_cfg = config::general_settings.m_edge_jump;
+		const auto snapshot = config::get_runtime_snapshot( );
+		if ( !snapshot )
+			return;
+		const auto& bunny_cfg = snapshot->general.m_bunny_hop;
+		const auto& edge_cfg = snapshot->general.m_edge_jump;
 		const auto now = std::chrono::steady_clock::now( );
 		const auto release = [ this, now ]( )
 		{
-			if ( this->m_jump_down )
+			if ( this->m_jump_down
+				&& app::context().input.key( this->m_owned_jump_key, false ) )
 			{
-				app::context().input.key( this->m_owned_jump_key, false );
 				this->m_jump_down = false;
 				this->m_owned_jump_key = 0;
 				this->m_last_transition = now;
@@ -60,15 +65,25 @@ namespace features::misc {
 		{
 			this->m_activation_key = activation_key;
 			this->m_next_binding_refresh = now + std::chrono::seconds( 1 );
-			const auto binding = game::input_bindings().resolve(
-				game::input_action::jump, activation_key );
-			const auto resolved_key = binding.device == game::input_device::keyboard
-				? binding.virtual_key : std::uint16_t{};
-			if ( this->m_jump_key != resolved_key )
-			{
+		    const auto candidates = game::input_bindings().candidates(game::input_action::jump);
+		    const auto binding = game::keyboard_binding(candidates, activation_key);
+		    const auto resolved_key =
+		        binding.device == game::input_device::keyboard ? binding.virtual_key : std::uint16_t{};
+		    if (m_reported_jump_key != resolved_key)
+		    {
+			    m_reported_jump_key = resolved_key;
+			    platform::windows::runtime_event(
+			        "bhop", resolved_key ? std::format("keyboard_jump={} candidates={}", resolved_key,
+			                                           candidates.size())
+			                             : std::format("no_keyboard_jump candidates={}", candidates.size()));
+		    }
+		    if (this->m_jump_key != resolved_key)
+		    {
 				app::context().input.set_key_gate( 0, false );
 				release( );
 				this->m_jump_key = resolved_key;
+				this->m_gate_requested = false;
+				this->m_last_bunny_simulation_time = -1.0f;
 			}
 		}
 
@@ -156,19 +171,16 @@ namespace features::misc {
 				platform::windows::input_gateway::key_transition{ jump_key, true },
 				platform::windows::input_gateway::key_transition{ jump_key, false },
 			};
-			app::context().input.keys( tap );
-			this->m_last_bunny_simulation_time = simulation_time;
-			this->m_last_bunny_tap = now;
+            if (app::context().input.keys(tap))
+            {
+                this->m_last_bunny_simulation_time = simulation_time;
+                this->m_last_bunny_tap = now;
+            }
 			return;
 		}
 
 		if ( this->m_jump_down && since_transition >= k_airborne_min_hold )
-		{
-			app::context().input.key( this->m_owned_jump_key, false );
-			this->m_jump_down = false;
-			this->m_owned_jump_key = 0;
-			this->m_last_transition = now;
-		}
+			release( );
 
 		if ( on_ground && !this->m_edge_was_on_ground )
 			this->m_edge_armed = true;
@@ -281,4 +293,4 @@ namespace features::misc {
 		return true;
 	}
 
-}
+} // namespace features::misc

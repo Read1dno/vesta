@@ -25,7 +25,7 @@ jobs:
         with:
           name: vesta-windows-x64
           path: |
-            build/release/bin/vesta.exe
+            build/bin/vesta.exe
             LICENSE
             NOTICE
             THIRD_PARTY_NOTICES.md

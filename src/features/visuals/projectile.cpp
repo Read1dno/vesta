@@ -318,7 +318,7 @@ namespace {
 		}
 	}
 
-}
+} // namespace
 
 	void projectile_t::on_render( zdraw::draw_list& draw_list )
 	{
@@ -432,9 +432,11 @@ namespace {
 				settings.color_molotov, settings.inferno_gradient_width,
 				settings.inferno_gradient_opacity );
 
+		// A broad low-alpha halo softens the edge, while the final 1.5px stroke keeps
+		// the actual action boundary crisp. There is no opaque fill across the zone.
 		draw_list.add_polyline( polygon, alpha_scaled( settings.color_molotov, 0.10f ), true, 7.0f );
 		draw_list.add_polyline( polygon, alpha_scaled( settings.color_molotov, 0.26f ), true, 3.5f );
 		draw_list.add_polyline( polygon, settings.color_molotov, true, 1.5f );
 	}
 
-}
+} // namespace features::visuals

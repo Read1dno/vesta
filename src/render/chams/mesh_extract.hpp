@@ -9,4 +9,4 @@ namespace chams {
 
 	[[nodiscard]] skinned_mesh extract_mesh( vpk_archive& vpk, const std::string& model_path );
 
-}
+} // namespace chams

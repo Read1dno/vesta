@@ -15,4 +15,4 @@ namespace platform::windows::runtime_storage {
 		return base.empty( ) ? std::filesystem::path{} : base / name;
 	}
 
-}
+} // namespace platform::windows::runtime_storage

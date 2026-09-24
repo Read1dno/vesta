@@ -86,7 +86,7 @@ constexpr std::array sounds{
 	embedded_sound{ resources::sounds::flesh, resources::sounds::flesh_size }
 };
 
-}
+} // namespace
 
 struct hitsound_player::implementation
 {
@@ -223,4 +223,4 @@ void hitsound_player::play( int style, float volume )
 	this->m_impl->enqueue( style, std::clamp( volume, 0.0f, 1.0f ) );
 }
 
-}
+} // namespace features::visuals

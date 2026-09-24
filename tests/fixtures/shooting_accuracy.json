@@ -1,0 +1,14 @@
+{
+  "client_sha256": "40bce8206f51b92ee05d6121c6e42c717bf3fa0cc0edeeb6698744b1c4799feb",
+  "fixture_sha256": "be728ab38e977be3ed60d5e262a0350f53feac1d0e0e12d7014158fca9a3c134",
+  "cases": 8192,
+  "random_seed": 24092026,
+  "native_rva": "0x80c300",
+  "tolerance_absolute": 2e-06,
+  "format": "velocity[3] view_angles[3] max_speed move penalty turning jump_initial jump_apex air_scale jump_impulse forcespread strafe_bias strafe_scale walking grounded nospread strafing expected_total",
+  "limitations": [
+    "Synthetic inputs in a private process, no live shot correlation",
+    "Eye-angle interpolation disabled in the fixture",
+    "Not a proof of command timing, actual server seed, origin or hit registration"
+  ]
+}

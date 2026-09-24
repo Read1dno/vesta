@@ -41,12 +41,19 @@ restart Vesta.
 > render mode and set model, texture, shader, and particle detail to Low in CS2.
 
 > [!WARNING]
-> **VAC / VAC Live — observed on 21 August 2026.** There are no confirmed reports
-> of Vesta causing a permanent client-side VAC ban. For Premier, use `fps_max 86`,
-> keep Aimbot disabled, and avoid repeated impossible multi-kill rounds. Seed
-> Trigger jump and no-scope shots were usable in current testing, but anti-cheat
-> behavior can change and this is not a permanent guarantee.
+> **VACnet / VAC Live — 24 September 2026.** Current reports indicate that
+> Aimbot, RCS and Triggerbot use can be detected and can cause a cooldown.
+> No FPS setting, play style or feature configuration guarantees protection.
+> The reliable way to avoid a cheat-related cooldown is not to play with cheats.
+> Vesta does not promise immunity from cooldowns or bans.
 
+## v1.1.7 — 24 September 2026
+
+- Updated Auto Accept for the current Panorama panel layout. It was confirmed
+  working in-game after the geometry fix.
+- Refreshed the public source and build files for the current game update.
+- Updated the detection notice above; no FPS setting or play style is presented
+  as protection from VACnet / VAC Live.
 ## Features
 
 Open a section only when you need its settings.
@@ -178,8 +185,7 @@ cmake --build --preset release --parallel
 ctest --test-dir build/release -C Release --output-on-failure
 ```
 
-The executable is written to `build/release/bin/vesta.exe`. CMake downloads the
-pinned third-party dependencies during the first configure.
+The executable is written to `build/bin/vesta.exe`. CMake downloads the pinned third-party dependencies during the first configure.
 
 </details>
 

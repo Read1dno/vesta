@@ -28,4 +28,4 @@ namespace chams {
 
 	inline mesh_cache g_mesh_cache{};
 
-}
+} // namespace chams

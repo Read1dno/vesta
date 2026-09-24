@@ -72,4 +72,4 @@ namespace platform::windows {
 		void* m_output{};
 	};
 
-}
+} // namespace platform::windows

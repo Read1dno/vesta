@@ -11,6 +11,8 @@ namespace resources::icons {
 	};
 	struct glyph_path_contour { std::uint16_t first{}, count{}; };
 
+	// Generated from SegoeIcons.ttf U+E701 (uniE701)
+	// by scripts/extract_ttf_glyph.py; do not hand-edit.
 	inline constexpr std::array<glyph_path_command, 113> watermark_loss_commands{{
 		{ glyph_path_op::move, 0.50000000f, 0.21093750f, 0.00000000f, 0.00000000f, 0.00000000f, 0.00000000f },
 		{ glyph_path_op::quadratic, 0.44726562f, 0.21093750f, 0.39575195f, 0.22143555f, 0.00000000f, 0.00000000f },
@@ -132,4 +134,4 @@ namespace resources::icons {
 		{ 65, 31 },
 		{ 96, 17 },
 	}};
-}
+} // namespace resources::icons

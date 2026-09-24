@@ -14,4 +14,4 @@ namespace features::trigger {
 		m_controller.reset_seed( );
 	}
 
-}
+} // namespace features::trigger

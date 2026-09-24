@@ -161,4 +161,4 @@ namespace simulation {
 		return path;
 	}
 
-}
+} // namespace simulation

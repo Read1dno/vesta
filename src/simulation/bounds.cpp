@@ -62,4 +62,4 @@ namespace game {
 		return { extent.low, extent.high };
 	}
 
-}
+} // namespace game

@@ -12,4 +12,4 @@ namespace dword_table {
 	inline constexpr std::uintptr_t global_vars{ 0x2090D60 };
 	inline constexpr std::uintptr_t view_matrix{ 0x23AA340 };
 
-}
+} // namespace dword_table

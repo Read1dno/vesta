@@ -7,6 +7,8 @@ namespace chams {
 
 	namespace {
 
+		// foundation::rotation declares its four-argument constructor constexpr but
+		// defines it out of line, so it cannot actually be called from here.
 		[[nodiscard]] foundation::rotation make_quat( float x, float y, float z, float w )
 		{
 			foundation::rotation q{};
@@ -24,11 +26,12 @@ namespace chams {
 			const auto swap_b = ( b[ 3 ] & 128 ) != 0;
 			const auto negate = ( b[ 5 ] & 128 ) != 0;
 
-			constexpr auto scale = 0.70710678f / 16384.0f;
+			constexpr auto scale = 0.70710678f / 16384.0f; // sin(pi/4) / 16384
 			const auto x = scale * static_cast< float >( i1 - 16384 );
 			const auto y = scale * static_cast< float >( i2 - 16384 );
 			const auto z = scale * static_cast< float >( i3 - 16384 );
 
+			// The dropped component is the largest one, recovered from unit length.
 			auto w = std::sqrt( std::max( 0.0f, 1.0f - x * x - y * y - z * z ) );
 			if ( negate )
 			{
@@ -65,14 +68,15 @@ namespace chams {
 			auto dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
 			if ( dot < 0.0f )
 			{
-
+				// Shortest arc: quaternions double-cover, so flip one side.
 				b = make_quat( -b.x, -b.y, -b.z, -b.w );
 				dot = -dot;
 			}
 
 			if ( dot > 0.9995f )
 			{
-
+				// Nearly parallel -- lerp and renormalize, slerp is numerically
+				// unstable here and visually identical.
 				auto out = make_quat(
 					a.x + ( b.x - a.x ) * t, a.y + ( b.y - a.y ) * t,
 					a.z + ( b.z - a.z ) * t, a.w + ( b.w - a.w ) * t );
@@ -107,7 +111,7 @@ namespace chams {
 			auto full = path;
 			if ( !full.ends_with( "_c" ) )
 			{
-				full += "_c";
+				full += "_c"; // the reference is to the source asset, the VPK holds the compiled one
 			}
 
 			const auto* entry = vpk.find( full );
@@ -126,7 +130,7 @@ namespace chams {
 			return true;
 		}
 
-	}
+	} // namespace
 
 	nm_skeleton load_nm_skeleton( vpk_archive& vpk, const std::string& archive_path )
 	{
@@ -214,11 +218,15 @@ namespace chams {
 				out.additive = additive->as_bool( );
 			}
 
+			// Additive clips are deltas meant to be layered on a base pose; using
+			// one on its own produces a mangled figure.
 			if ( out.additive || out.frame_count == 0 )
 			{
 				return {};
 			}
 
+			// kv3::object exposes no blob accessor, so read the alternative
+			// straight out of the variant.
 			const auto* blob = std::get_if<std::vector<std::uint8_t>>( &pose_data->m_value );
 			if ( !blob || blob->size( ) < 2 )
 			{
@@ -308,6 +316,8 @@ namespace chams {
 			return;
 		}
 
+		// Loop, blending the two neighbouring frames so playback is smooth rather
+		// than stepping at the clip's authored rate.
 		const auto duration = clip.duration > 0.001f ? clip.duration : 1.0f;
 		auto phase = std::fmod( time, duration ) / duration;
 		if ( phase < 0.0f ) phase += 1.0f;
@@ -339,6 +349,8 @@ namespace chams {
 					cursor += 3;
 				}
 
+				// Static translations come from the skeleton's rest pose; only the
+				// bones that actually move store per-frame values.
 				translation = skeleton.rest_positions[ index ];
 				if ( !track.translation_static && cursor + 3 <= clip.words.size( ) )
 				{
@@ -349,6 +361,8 @@ namespace chams {
 				}
 			};
 
+		// Compose the clip's own hierarchy. Its parents are stored
+		// parent-before-child, so a single forward pass suffices.
 		std::vector<bone_matrix> clip_world( track_count, bone_matrix::identity( ) );
 		for ( std::size_t i = 0; i < track_count; ++i )
 		{
@@ -368,6 +382,8 @@ namespace chams {
 				: clip_world[ static_cast< std::size_t >( parent ) ] * local;
 		}
 
+		// The composed transforms are already in the model's space, so the
+		// skinning matrix is the plain world * inverse bind with no retarget.
 		for ( std::size_t i = 0; i < track_count && i < track_to_bone.size( ); ++i )
 		{
 			const auto bone = track_to_bone[ i ];
@@ -415,4 +431,4 @@ namespace chams {
 		}
 	}
 
-}
+} // namespace chams

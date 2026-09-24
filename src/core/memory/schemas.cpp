@@ -121,7 +121,7 @@ namespace game {
 			return name == "client.dll" || name == "client";
 		}
 
-	}
+	} // namespace
 
 	bool field_catalog::initialize( )
 	{
@@ -288,4 +288,4 @@ namespace game {
 		return 0;
 	}
 
-}
+} // namespace game

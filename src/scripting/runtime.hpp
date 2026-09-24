@@ -113,4 +113,4 @@ namespace scripting {
 		return value;
 	}
 
-}
+} // namespace scripting

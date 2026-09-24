@@ -25,4 +25,4 @@ inline hitsound_player& hitsounds( )
 	return value;
 }
 
-}
+} // namespace features::visuals

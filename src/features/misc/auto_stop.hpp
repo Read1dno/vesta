@@ -66,4 +66,4 @@ namespace features::misc {
 		return value;
 	}
 
-}
+} // namespace features::misc

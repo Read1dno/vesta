@@ -24,12 +24,12 @@ jobs:
       - name: Create checksum
         shell: pwsh
         run: |
-          $hash = (Get-FileHash build/release/bin/vesta.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $hash = (Get-FileHash build/bin/vesta.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  vesta.exe" | Set-Content -Encoding ascii SHA256SUMS.txt
       - name: Attest GitHub Actions build
         uses: actions/attest@v4
         with:
-          subject-path: build/release/bin/vesta.exe
+          subject-path: build/bin/vesta.exe
       - name: Publish immutable GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -37,7 +37,7 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
           $assets = @(
-            "build/release/bin/vesta.exe"
+            "build/bin/vesta.exe"
             "SHA256SUMS.txt"
             "LICENSE"
             "NOTICE"

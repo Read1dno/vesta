@@ -70,4 +70,4 @@ namespace features::visuals {
 		return value;
 	}
 
-}
+} // namespace features::visuals

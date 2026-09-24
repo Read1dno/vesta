@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <shared_mutex>
 
 #include <core/math/vector.hpp>
@@ -29,12 +30,36 @@ struct local_pawn_binding
 	[[nodiscard]] explicit operator bool( ) const { return pawn != 0; }
 };
 
+struct local_snapshot
+{
+	std::uintptr_t controller{};
+	std::uintptr_t pawn{};
+	std::uint32_t pawn_handle{};
+	std::uintptr_t observer_pawn{};
+	std::int32_t team{};
+	std::int32_t view_team{};
+	std::int32_t crosshair_id{};
+	bool alive{};
+	bool team_mode{ true };
+	std::uintptr_t weapon{};
+	std::uintptr_t weapon_vdata{};
+	std::uint32_t weapon_type{};
+	std::uint32_t tick_base{};
+	std::int32_t health{};
+	float game_time{};
+	float flash_alpha{};
+};
+
+// Resolve the pawn which currently receives local input. During a bot takeover
+// this is not necessarily CCSPlayerController::m_hPlayerPawn.
 [[nodiscard]] local_pawn_binding resolve_local_pawn( std::uintptr_t controller );
 
 class local_state
 {
 public:
 	void update( );
+
+	[[nodiscard]] std::shared_ptr<const local_snapshot> snapshot( ) const;
 
 	[[nodiscard]] std::uintptr_t controller( ) const { return m_controller.load( ); }
 	[[nodiscard]] std::uintptr_t pawn( ) const { return m_pawn.load( ); }
@@ -84,6 +109,8 @@ private:
 	std::atomic<std::int32_t> m_health{};
 	std::atomic<float> m_game_time{};
 	std::atomic<float> m_flash_alpha{};
+	std::shared_ptr<const local_snapshot> m_snapshot{
+		std::make_shared<const local_snapshot>( )};
 };
 
 class camera_state
@@ -134,4 +161,4 @@ private:
 	std::atomic<float> m_presentation_horizon_seconds{};
 };
 
-}
+} // namespace game

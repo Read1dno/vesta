@@ -13,6 +13,7 @@ namespace app::workers {
 	void seed_trigger( );
 	void watchdog( );
 
+	// Level currently loaded in the game ("de_mirage"), empty when not in one.
 	[[nodiscard]] std::shared_ptr<const std::string> current_map( );
 
-}
+} // namespace app::workers

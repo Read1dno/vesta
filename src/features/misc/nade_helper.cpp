@@ -13,6 +13,8 @@ namespace features::misc {
 
 		namespace nd = resources::nades;
 
+		// The map-name probe can return anything from a bare identifier to a full
+		// vpk path, so reduce whatever it found to the plain level name.
 		[[nodiscard]] std::string_view normalize_map( std::string_view raw )
 		{
 			if ( const auto slash = raw.find_last_of( "/\\" ); slash != std::string_view::npos )
@@ -41,6 +43,7 @@ namespace features::misc {
 			return nullptr;
 		}
 
+		// Angular distance between the current view and a lineup's stored angles.
 		[[nodiscard]] float angle_error( const foundation::vec3& view_angles, float pitch, float yaw )
 		{
 			const auto dx = pitch - view_angles.x;
@@ -145,7 +148,7 @@ namespace features::misc {
 					+ SCHEMA( "C_GameRules", "m_bGamePaused"_id ) );
 		}
 
-	}
+	} // namespace
 
 	std::uint8_t nade_helper_t::resolve_kind( std::uintptr_t weapon_vdata )
 	{
@@ -213,6 +216,8 @@ namespace features::misc {
 			append( "Jump" );
 		}
 
+		// vformat, not format: the format string is a translation looked up at
+		// runtime, so it cannot be a compile-time checked literal.
 		const std::string button{ button_name( lineup.throw_strength ) };
 
 		if ( keys.empty( ) )
@@ -225,6 +230,7 @@ namespace features::misc {
 
 	bool nade_helper_t::collect( const foundation::vec3& player_pos, std::vector<lineup_view>& out ) const
 	{
+	const auto runtime_settings = config::get_runtime_snapshot();
 		out.clear( );
 
 		const auto kind = resolve_kind( game::local_player().weapon_vdata( ) );
@@ -242,7 +248,7 @@ namespace features::misc {
 			return false;
 		}
 
-		const auto& cfg = config::general_settings.m_nade_helper;
+		const auto& cfg = runtime_settings->general.m_nade_helper;
 		const auto max_distance_sqr = cfg.draw_distance * cfg.draw_distance;
 
 		for ( std::uint32_t i = 0; i < map->count; ++i )
@@ -275,6 +281,7 @@ namespace features::misc {
 			} );
 		}
 
+		// Nearest last: painters order, so the closest plaque ends up on top.
 		std::sort( out.begin( ), out.end( ), [ ]( const lineup_view& a, const lineup_view& b )
 			{
 				return a.distance > b.distance;
@@ -285,7 +292,8 @@ namespace features::misc {
 
 	int nade_helper_t::select_armed( const std::vector<lineup_view>& lineups, const foundation::vec3& view_angles ) const
 	{
-		const auto& cfg = config::general_settings.m_nade_helper;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		const auto& cfg = runtime_settings->general.m_nade_helper;
 
 		auto best_index{ -1 };
 		auto best_error = std::numeric_limits<float>::max( );
@@ -312,7 +320,8 @@ namespace features::misc {
 	bool nade_helper_t::execution_position_ready( const lineup_view& lineup,
 		const foundation::vec3& player_pos ) const
 	{
-		const auto& cfg = config::general_settings.m_nade_helper;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		const auto& cfg = runtime_settings->general.m_nade_helper;
 		const auto dx = lineup.position.x - player_pos.x;
 		const auto dy = lineup.position.y - player_pos.y;
 		return dx * dx + dy * dy <= cfg.release_radius * cfg.release_radius
@@ -330,7 +339,8 @@ namespace features::misc {
 
 	void nade_helper_t::on_render( zdraw::draw_list& draw_list )
 	{
-		const auto& cfg = config::general_settings.m_nade_helper;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		const auto& cfg = runtime_settings->general.m_nade_helper;
 		if ( !cfg.enabled || !game::local_player().alive( ) )
 		{
 			return;
@@ -354,6 +364,8 @@ namespace features::misc {
 		static_cast<void>( game::camera().sample( unused_origin, view_angles ) );
 		const auto armed_index = this->select_armed( this->m_render_scratch, view_angles );
 
+		// Once the player is standing on a spot, everything else on the map is
+		// noise -- they have already chosen. Draw only what belongs to this spot.
 		const auto occupied = armed_index >= 0;
 
 		for ( std::size_t i = 0; i < this->m_render_scratch.size( ); ++i )
@@ -393,7 +405,8 @@ namespace features::misc {
 	void nade_helper_t::draw_text_plaque( zdraw::draw_list& draw_list, float center_x, float top_y,
 		std::string_view title, std::string_view subtitle, const zdraw::rgba& accent, float alpha ) const
 	{
-		const auto& cfg = config::general_settings.m_nade_helper;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		const auto& cfg = runtime_settings->general.m_nade_helper;
 		const auto& fonts = app::context().overlay.fonts( );
 		const auto* title_font = fonts.menu_semibold_13;
 		const auto* sub_font = fonts.menu_regular_12;
@@ -435,6 +448,7 @@ namespace features::misc {
 			im->AddRectFilled( { x, y }, { x + box_w, y + box_h },
 				zdraw::draw_list::to_im_color( scale_alpha( cfg.plaque_background ) ), 4.0f );
 
+			// A thin accent edge keeps the plaque readable against bright walls.
 			im->AddLine( { x, y + 3.0f }, { x, y + box_h - 3.0f },
 				zdraw::draw_list::to_im_color( scale_alpha( accent ) ), 2.0f );
 		}
@@ -451,7 +465,8 @@ namespace features::misc {
 
 	void nade_helper_t::draw_plaque( zdraw::draw_list& draw_list, const lineup_view& lineup, const foundation::vec2& screen ) const
 	{
-		const auto& cfg = config::general_settings.m_nade_helper;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		const auto& cfg = runtime_settings->general.m_nade_helper;
 
 		std::string subtitle{};
 		if ( cfg.show_action )
@@ -466,14 +481,18 @@ namespace features::misc {
 				subtitle += "  ";
 			}
 
+			// 52 units to the metre. The unit suffix is translated; the number is not.
 			subtitle += std::format( "{:.0f}{}", lineup.distance / 52.0f, render::localization::tr( "m" ) );
 		}
 
+		// Fade out over the last third of the draw range so distant spots do not
+		// pile up into an unreadable wall of text.
 		const auto fade_start = cfg.draw_distance * 0.66f;
 		const auto fade = lineup.distance <= fade_start
 			? 1.0f
 			: std::clamp( 1.0f - ( lineup.distance - fade_start ) / std::max( cfg.draw_distance - fade_start, 1.0f ), 0.0f, 1.0f );
 
+		// The world point is the anchor's bottom, so lift the box above it.
 		const auto [ _, title_h ] = zdraw::measure_text( lineup.name, app::context().overlay.fonts( ).menu_semibold_13 );
 		this->draw_text_plaque( draw_list, screen.x, screen.y - ( title_h + 26.0f ),
 			lineup.name, subtitle, cfg.plaque_accent, fade );
@@ -481,7 +500,8 @@ namespace features::misc {
 
 	void nade_helper_t::draw_stand_marker( zdraw::draw_list& draw_list, const lineup_view& lineup, bool standing ) const
 	{
-		const auto& cfg = config::general_settings.m_nade_helper;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		const auto& cfg = runtime_settings->general.m_nade_helper;
 		const auto color = standing ? cfg.stand_marker_active : cfg.stand_marker;
 
 		constexpr auto segments{ 28 };
@@ -519,7 +539,8 @@ namespace features::misc {
 	void nade_helper_t::draw_aim_guidance( zdraw::draw_list& draw_list, const lineup_view& lineup,
 		const foundation::vec3& eye_pos, bool selected, bool converged ) const
 	{
-		const auto& cfg = config::general_settings.m_nade_helper;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		const auto& cfg = runtime_settings->general.m_nade_helper;
 
 		foundation::vec3 forward{};
 		const foundation::vec3 angles{ lineup.pitch, lineup.yaw, 0.0f };
@@ -531,6 +552,8 @@ namespace features::misc {
 			return;
 		}
 
+		// Alternatives sharing this stand point stay as a bare dot: enough to show
+		// another lineup exists, not enough to compete with the chosen one.
 		if ( !selected )
 		{
 			draw_list.add_circle( screen.x, screen.y, 4.0f, cfg.aim_marker, 16, 1.0f );
@@ -567,6 +590,8 @@ namespace features::misc {
 			return;
 		}
 
+		// On target: the plaque has done its job and would only cover the very spot
+		// being aimed at, so drop back to a plain label under the marker.
 		const auto* font = app::context().overlay.fonts( ).menu_regular_12;
 		if ( !font )
 		{
@@ -586,7 +611,8 @@ namespace features::misc {
 
 	void nade_helper_t::tick( )
 	{
-		const auto& cfg = config::general_settings.m_nade_helper;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		const auto& cfg = runtime_settings->general.m_nade_helper;
 		if ( !cfg.enabled )
 		{
 			const auto owns_input = this->m_throw_phase != throw_phase::idle
@@ -1082,7 +1108,8 @@ namespace features::misc {
 
 			if ( after_jump == 0 )
 			{
-
+				// A distinct worker iteration is the ordering barrier for the classic
+				// same-tick jump throw.  No artificial gameplay delay is introduced.
 				if ( now > this->m_phase_started )
 					this->finish_throw( tick );
 				return;
@@ -1105,7 +1132,8 @@ namespace features::misc {
 			return;
 		}
 		case throw_phase::complete:
-
+			// Keep +jump asserted through one complete simulation sample after the
+			// grenade release. An immediate down/up pair can fall between usercmd polls.
 			if ( tick != this->m_phase_tick )
 				this->cancel_throw( true );
 			return;
@@ -1116,7 +1144,8 @@ namespace features::misc {
 
 	void nade_helper_t::aim_at( const lineup_view& lineup, const foundation::vec3& view_angles, float& out_error )
 	{
-		const auto& cfg = config::general_settings.m_nade_helper;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		const auto& cfg = runtime_settings->general.m_nade_helper;
 		const auto now = std::chrono::steady_clock::now( );
 
 		constexpr auto m_yaw{ 0.022f };
@@ -1167,6 +1196,8 @@ namespace features::misc {
 		}
 		this->m_last_aim_update = now;
 
+		// Sub-pixel remainder is carried between ticks, otherwise the truncation
+		// below would stall the aim short of the target on low smoothing values.
 		this->m_aim_error.x += -delta_y / deg_per_pixel;
 		this->m_aim_error.y += delta_x / deg_per_pixel;
 
@@ -1182,4 +1213,4 @@ namespace features::misc {
 		}
 	}
 
-}
+} // namespace features::misc

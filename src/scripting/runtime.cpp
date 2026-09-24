@@ -7,7 +7,7 @@
 #include <core/input/bindings.hpp>
 #include <features/visuals/visuals.hpp>
 #include <simulation/grenade.hpp>
-#include <nlohmann/json.hpp>
+#include <external/json.hpp>
 #include <resources/fonts/weapons.hpp>
 
 #include <charconv>
@@ -264,7 +264,7 @@ namespace scripting {
 
 		std::uint64_t projectile_id( const game::projectile_snapshot& projectile )
 		{
-
+			// Stable opaque identity without exposing the entity pointer to scripts.
 			const auto spawn = static_cast<std::uint64_t>( std::llround(
 				static_cast<double>( projectile.spawn_time ) * 1000.0 ) );
 			auto value = spawn ^ ( static_cast<std::uint64_t>( projectile.thrower_handle ) << 24 )
@@ -332,7 +332,7 @@ namespace scripting {
 			return cached_name;
 		}
 
-	}
+	} // namespace
 
 	struct runtime_t::implementation
 	{
@@ -584,7 +584,8 @@ namespace scripting {
 		void* userdata, void* pointer, const size_t old_size, const size_t new_size )
 	{
 		auto* script = static_cast<script_instance*>( userdata );
-
+		// Lua passes a type tag in `osize` for a brand-new allocation. It is not a
+		// byte count and must not be subtracted from the tracked heap.
 		const auto previous_size = pointer ? old_size : 0u;
 		if ( new_size == 0 )
 		{
@@ -800,6 +801,8 @@ namespace scripting {
 		if ( !lua ) { set_error( "unable to create Lua state", script_state::over_budget ); return false; }
 		*static_cast<script_instance**>( lua_getextraspace( lua ) ) = this;
 
+		// Deliberately open only source-code libraries. package.loadlib and C searchers
+		// are removed below: a network/native DLL must never become part of vesta.exe.
 		const luaL_Reg libraries[]{
 			{ LUA_GNAME, luaopen_base }, { LUA_LOADLIBNAME, luaopen_package },
 			{ LUA_COLIBNAME, luaopen_coroutine }, { LUA_TABLIBNAME, luaopen_table },
@@ -1292,7 +1295,7 @@ namespace scripting {
 			lua_setfield( state, -2, "bomb" );
 		}
 
-	}
+	} // namespace
 
 	void runtime_t::implementation::script_instance::dispatch_frame(
 		const std::shared_ptr<const frame>& value )
@@ -1492,7 +1495,7 @@ namespace scripting {
 			return game::input_action::count;
 		}
 
-	}
+	} // namespace
 
 	void runtime_t::implementation::script_instance::register_api( )
 	{
@@ -2024,7 +2027,7 @@ namespace scripting {
 			return result;
 		}
 
-	}
+	} // namespace
 
 	int runtime_t::implementation::script_instance::api_ui_text( lua_State* state )
 	{
@@ -2460,7 +2463,7 @@ namespace scripting {
 			cleanup( );
 		}
 
-	}
+	} // namespace
 
 	runtime_t::runtime_t( ) : m_impl( std::make_unique<implementation>( ) ) {}
 	runtime_t::~runtime_t( ) { shutdown( ); }
@@ -2642,7 +2645,7 @@ namespace scripting {
 			return found == runtime.instances.end( ) ? nullptr : *found;
 		}
 
-	}
+	} // namespace
 
 	void runtime_t::set_enabled( const std::string_view id, const bool enabled )
 	{
@@ -2882,4 +2885,4 @@ namespace scripting {
 		}
 	}
 
-}
+} // namespace scripting

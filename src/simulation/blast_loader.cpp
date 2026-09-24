@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include <system/chunked_read.hpp>
 
 namespace game {
 
@@ -52,13 +53,15 @@ namespace game {
 				&& site.scale > 64.0f && site.scale < 100000.0f;
 		}
 
-	}
+	} // namespace detail_bd_runtime
 
-	void blast_model::parse( )
-	{
+    void blast_model::parse(std::stop_token stop)
+    {
 		using namespace detail_bd_runtime;
+	    if (stop.stop_requested())
+		    return;
 
-		const auto started = std::chrono::steady_clock::now( );
+	    const auto started = std::chrono::steady_clock::now( );
 		const auto signature = app::context().process.scan_signature( app::context().modules.client,
 			"48 8B D0 48 8D 0D ? ? ? ? E8 ? ? ? ? 33 D2 48 8D 4C 24 ?" );
 
@@ -68,6 +71,7 @@ namespace game {
 			return;
 		}
 
+		// This LEA targets the persistent object filled by the game's KV3 parser.
 		const auto object = app::context().process.decode_rip( signature + 3 );
 		const auto slot_count = app::context().process.load<std::uint32_t>( object + 0x0c ) & 0x7fffffffu;
 		const auto entries_address = app::context().process.load<std::uintptr_t>( object + 0x10 );
@@ -93,58 +97,70 @@ namespace game {
 			return;
 		}
 
-		std::vector<runtime_entry> entries( slot_count );
-		if ( !app::context().process.copy( entries_address, entries.data( ), entries.size( ) * sizeof( runtime_entry ) ) )
-		{
-			app::context().diagnostics.warning( "[bomb_dmg] failed to read {} spatial-hash slots at {:#x}", slot_count, entries_address );
-			return;
-		}
 
 		std::vector<point> points;
 		std::vector<damage_ref> damage_refs;
 		points.reserve( point_count );
 		damage_refs.reserve( point_count );
 
-		for ( const auto& entry : entries )
-		{
-			if ( ( entry.metadata & 0x80000000u ) != 0 )
-			{
-				continue;
-			}
+	    const auto slots_read = platform::read_chunks<runtime_entry>(
+	        entries_address, slot_count,
+	        [&](std::uintptr_t address, void *destination, std::size_t bytes) {
+		        return app::context().process.copy(address, destination, bytes);
+	        },
+	        [&](std::span<const runtime_entry> entries) {
+		        for (const auto &entry : entries)
+		        {
+			        if ((entry.metadata & 0x80000000u) != 0)
+			        {
+				        continue;
+			        }
 
-			if ( entry.damage_count != site_count || !entry.damage )
-			{
-				app::context().diagnostics.warning( "[bomb_dmg] invalid active hash slot (damage={:#x}, count={})",
-					entry.damage, entry.damage_count );
-				return;
-			}
+			        if (entry.damage_count != site_count || !entry.damage)
+			        {
+				        app::context().diagnostics.warning(
+				            "[bomb_dmg] invalid active hash slot (damage={:#x}, count={})", entry.damage,
+				            entry.damage_count);
+				        return false;
+			        }
 
-			const auto x = std::lround( entry.position[ 0 ] );
-			const auto y = std::lround( entry.position[ 1 ] );
-			const auto z = std::lround( entry.position[ 2 ] );
-			constexpr auto min_coord = std::numeric_limits<std::int16_t>::min( );
-			constexpr auto max_coord = std::numeric_limits<std::int16_t>::max( );
+			        if (points.size() >= point_count || std::ranges::any_of(entry.position, [](float value) {
+				            return !std::isfinite(value) || std::abs(value) > 32768.0f;
+			            }))
+				        return false;
+			        const auto x = std::lround(entry.position[0]);
+			        const auto y = std::lround(entry.position[1]);
+			        const auto z = std::lround(entry.position[2]);
+			        constexpr auto min_coord = std::numeric_limits<std::int16_t>::min();
+			        constexpr auto max_coord = std::numeric_limits<std::int16_t>::max();
 
-			if ( x < min_coord || x > max_coord || y < min_coord || y > max_coord || z < min_coord || z > max_coord )
-			{
-				app::context().diagnostics.warning( "[bomb_dmg] invalid grid position ({}, {}, {})", x, y, z );
-				return;
-			}
+			        if (x < min_coord || x > max_coord || y < min_coord || y > max_coord || z < min_coord ||
+			            z > max_coord)
+			        {
+				        app::context().diagnostics.warning("[bomb_dmg] invalid grid position ({}, {}, {})", x,
+				                                           y, z);
+				        return false;
+			        }
 
-			points.push_back( {
-				static_cast<std::int16_t>( x ),
-				static_cast<std::int16_t>( y ),
-				static_cast<std::int16_t>( z ) } );
-			damage_refs.push_back( { entry.damage, static_cast<std::uint32_t>( points.size( ) - 1 ) } );
-		}
+			        points.push_back({static_cast<std::int16_t>(x), static_cast<std::int16_t>(y),
+			                          static_cast<std::int16_t>(z)});
+			        damage_refs.push_back({entry.damage, static_cast<std::uint32_t>(points.size() - 1)});
+		        }
+		        return true;
+	        },
+	        stop);
+	    if (!slots_read)
+		    return;
 
-		if ( points.size( ) != point_count )
+	    if ( points.size( ) != point_count )
 		{
 			app::context().diagnostics.warning( "[bomb_dmg] active-slot count mismatch (header={}, table={})", point_count, points.size( ) );
 			return;
 		}
 
-		std::ranges::sort( damage_refs, { }, &damage_ref::address );
+	    if (stop.stop_requested())
+		    return;
+	    std::ranges::sort( damage_refs, { }, &damage_ref::address );
 		std::vector<damage_value> damage_values( static_cast<std::size_t>( site_count ) * point_count );
 		std::array<std::uint8_t, k_page_size> page{};
 		std::vector<std::uint32_t> raw( site_count );
@@ -152,7 +168,9 @@ namespace game {
 
 		for ( std::size_t first = 0; first < damage_refs.size( ); )
 		{
-			const auto page_address = damage_refs[ first ].address & ~( static_cast<std::uintptr_t>( k_page_size ) - 1 );
+		    if (stop.stop_requested())
+			    return;
+		    const auto page_address = damage_refs[ first ].address & ~( static_cast<std::uintptr_t>( k_page_size ) - 1 );
 			auto last = first + 1;
 			while ( last < damage_refs.size( )
 				&& ( damage_refs[ last ].address & ~( static_cast<std::uintptr_t>( k_page_size ) - 1 ) ) == page_address )
@@ -193,12 +211,14 @@ namespace game {
 		}
 
 		std::unordered_map<std::uint64_t, cell> cells;
-		cells.reserve( point_count );
-		std::size_t vertical_overflow{};
+	    cells.reserve(std::min<std::size_t>(point_count, 65536));
+	    std::size_t vertical_overflow{};
 
 		for ( std::size_t i = 0; i < points.size( ); ++i )
 		{
-			const auto cx = ( static_cast<std::int32_t>( points[ i ].x ) - 5 ) / 10;
+		    if ((i & 1023u) == 0 && stop.stop_requested())
+			    return;
+		    const auto cx = ( static_cast<std::int32_t>( points[ i ].x ) - 5 ) / 10;
 			const auto cy = ( static_cast<std::int32_t>( points[ i ].y ) - 5 ) / 10;
 			auto& cell = cells[ cell_key( cx, cy ) ];
 
@@ -229,19 +249,24 @@ namespace game {
 			bounds.valid = true;
 		}
 
-		{
-			std::unique_lock lock( this->m_mutex );
-			this->m_sites = std::move( sites );
+	    if (stop.stop_requested() ||
+	        app::context().process.load<std::uintptr_t>(object + 0x10) != entries_address ||
+	        app::context().process.load<std::uint32_t>(object + 0x28) != point_count ||
+	        app::context().process.load<std::uintptr_t>(object + 0xa0) != sites_address)
+		    return;
+	    {
+		    std::unique_lock lock(this->m_mutex);
+		    this->m_sites = std::move( sites );
 			this->m_points = std::move( points );
 			this->m_damage_values = std::move( damage_values );
 			this->m_cells = std::move( cells );
 			this->m_bounds = bounds;
-		}
+	    }
 
-		const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+	    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
 			std::chrono::steady_clock::now( ) - started ).count( );
 		app::context().diagnostics.success( "[bomb_dmg] loaded runtime object {:#x}: points={}, sites={}, slots={}, pages={}, z-overflow={}, {} ms",
 			object, point_count, site_count, slot_count, page_reads, vertical_overflow, elapsed );
 	}
 
-}
+} // namespace game

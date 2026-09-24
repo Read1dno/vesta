@@ -6,12 +6,13 @@ namespace features::visuals {
 
 	void bomb_t::tick( )
 	{
-		const auto& cfg = config::visual_settings.m_bomb;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		const auto& cfg = runtime_settings->visual.m_bomb;
 		bomb_data planted{};
 		active_bomb_data active{};
 		const auto current_time = game::local_player().game_time( );
 		const auto local_health = game::local_player().health( );
-		const auto& player_cfg = config::visual_settings.m_player;
+		const auto& player_cfg = runtime_settings->visual.m_player;
 		const auto player_damage_requested = player_cfg.enabled
 			&& player_cfg.m_info_flags.enabled
 			&& player_cfg.m_info_flags.has(
@@ -112,7 +113,8 @@ namespace features::visuals {
 
 	void bomb_t::on_render( zdraw::draw_list& draw_list )
 	{
-		const auto& cfg = config::visual_settings.m_bomb;
+	const auto runtime_settings = config::get_runtime_snapshot();
+		const auto& cfg = runtime_settings->visual.m_bomb;
 		if ( !cfg.enabled )
 		{
 			return;
@@ -288,6 +290,8 @@ namespace features::visuals {
 			return;
 		}
 
+		// World-space C4 stays deliberately as small as grenade ESP. Detailed
+		// timing belongs to the independently positioned Bomb Info screen panel.
 		{
 			auto* draw = draw_list.m_im_draw_list;
 			auto* icon_base = app::context().overlay.fonts( ).weapons_15;
@@ -564,7 +568,7 @@ namespace features::visuals {
 		this->m_zone_bands = bands;
 		this->m_zone_step = band_step;
 
-#if 0
+#if 0 // Replaced by direct 3D baked-quad contouring below.
 
 		const auto grid = game::blast_damage().bounds( );
 		if ( !grid.valid )
@@ -574,7 +578,8 @@ namespace features::visuals {
 		}
 		const auto grid_width = static_cast< int >( grid.max_x - grid.min_x + 1 );
 		const auto grid_height = static_cast< int >( grid.max_y - grid.min_y + 1 );
-
+		// Surface extraction and packed wave-angle conversion are independent from
+		// HP. Retain the connected floor grids for the whole plant.
 		const auto refresh_samples = this->m_zone_surfaces.empty( )
 			|| this->m_zone_site != site
 			|| this->m_zone_grid_min_x != grid.min_x
@@ -601,6 +606,8 @@ namespace features::visuals {
 			this->m_zone_grid_height = grid_height;
 		}
 
+		// Углы квадрата: c0=(ix,iy) c1=(ix+1,iy) c2=(ix+1,iy+1) c3=(ix,iy+1);
+		// рёбра: 0=c0c1, 1=c1c2, 2=c2c3, 3=c3c0. Пары рёбер на маску (−1 — конец).
 		static constexpr std::int8_t k_cases[ 16 ][ 4 ]{
 			{ -1, -1, -1, -1 }, { 3, 0, -1, -1 }, { 0, 1, -1, -1 }, { 3, 1, -1, -1 },
 			{ 1, 2, -1, -1 },   { 3, 2, 0, 1 },   { 0, 2, -1, -1 }, { 3, 2, -1, -1 },
@@ -712,7 +719,8 @@ namespace features::visuals {
 								const auto b = k_edge_corners[ edge ][ 1 ];
 								return std::abs( cz[ a ] - cz[ b ] ) <= 96.0f;
 							};
-
+						// Reject only an edge that truly jumps between floors. A single bad
+						// corner must not delete the valid connector/ramp segment in this cell.
 						if ( !edge_is_continuous( edge_a ) || !edge_is_continuous( edge_b ) ) continue;
 						this->m_zone_segments.push_back( {
 							edge_point( edge_a ), edge_point( edge_b ),
@@ -901,6 +909,7 @@ namespace features::visuals {
 					}
 				};
 
+			// Open contours first, then the remaining closed loops.
 			for ( std::size_t i = 0; i < this->m_zone_segments.size( ); ++i )
 			{
 				const auto& segment = this->m_zone_segments[ i ];
@@ -940,4 +949,4 @@ namespace features::visuals {
 		);
 	}
 
-}
+} // namespace features::visuals
