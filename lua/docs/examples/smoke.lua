@@ -1,4 +1,4 @@
-
+-- This file is also used by the repository's manual runtime smoke test.
 assert(vesta.api.major == 1)
 assert(debug == nil)
 

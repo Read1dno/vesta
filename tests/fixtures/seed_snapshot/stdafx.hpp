@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <vector>
 #include <core/math/vector.hpp>
+#include <simulation/seed_window.hpp>
 constexpr std::string_view operator ""_id(const char* p, std::size_t n) { return {p,n}; }
 inline int schema(std::string_view name) {
     if(name=="m_AttributeManager")return 0x2000;
@@ -63,6 +64,16 @@ struct reader {
 };
 struct context_t { reader process; };
 inline context_t& context() {static context_t c;return c;}
+}
+namespace simulation {
+inline std::optional<seed_window::recoil_pair> read_recoil_state(std::uintptr_t pawn) {
+    auto& process=app::context().process;
+    std::uintptr_t services{};
+    seed_window::recoil_pair value{};
+    if(!process.copy(pawn+schema("m_pAimPunchServices"),&services,sizeof(services)) || !services
+        || !process.copy(services,&value,sizeof(value))) return std::nullopt;
+    return value;
+}
 }
 namespace game {
 struct player_snapshot;

@@ -38,6 +38,7 @@ public:
 		std::string_view display_name = {} );
 
 	bool launch( );
+	[[nodiscard]] bool gpu_effects_enabled( ) const noexcept;
 	void request_shutdown( ) noexcept
 	{
 		this->m_shutdown_requested.store( true, std::memory_order_release );
@@ -68,6 +69,8 @@ public:
 	void request_lua_import( );
 
 private:
+	friend struct menu_render_test_access;
+	void ensure_gpu_effects();
 	bool run( );
 	void shutdown( ) noexcept;
 	void synchronize_menu_focus( );
@@ -143,6 +146,8 @@ private:
 	bool m_present_tearing_enabled{};
 	bool m_resize_pending{};
 	bool m_frame_latency_unreliable{};
+	bool m_nonwaitable_stall_reported{};
+	bool m_use_gpu{ true };
 	render::presentation_retry m_presentation_retry{};
 	std::uint64_t m_presentation_generation{};
 	ID3D11Texture2D* m_back_buffer{};

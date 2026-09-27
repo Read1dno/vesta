@@ -75,7 +75,7 @@ void menu_t::poll_hotkey()
     if (!this->m_open_pending || this->m_open.load(std::memory_order_relaxed))
         return;
 
-    std::vector<std::uint16_t> movement_keys{'W', 'A', 'S', 'D'};
+    std::vector<std::uint16_t> movement_keys{};
     constexpr std::array movement_actions{
         game::input_action::forward,
         game::input_action::back,

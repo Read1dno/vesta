@@ -11,6 +11,9 @@
 
 #include <core/state/entities.hpp>
 #include <core/state/runtime.hpp>
+#include <core/state/pose_freshness.hpp>
+#include <core/state/pose_schedule.hpp>
+#include <system/snapshot_pool.hpp>
 
 namespace game {
 
@@ -27,6 +30,8 @@ struct sampled_player_pose
 struct player_pose_frame
 {
 	std::uint64_t sequence{};
+	detail::pose_identity identity{};
+	std::shared_ptr<const std::string> level{};
 	std::chrono::steady_clock::time_point timestamp{};
 	std::shared_ptr<const std::vector<player_snapshot>> world{};
 	presentation_camera_sample camera{};
@@ -36,8 +41,8 @@ struct player_pose_frame
 class player_pose_sampler
 {
 public:
-	void run( );
-	void set_presentation_state( bool active, std::uint32_t display_refresh );
+	void set_presentation_state( bool active, std::uint32_t sample_rate );
+	[[nodiscard]] std::shared_ptr<const player_pose_frame> acquire_for_presentation( );
 	[[nodiscard]] std::shared_ptr<const player_pose_frame> latest( ) const;
 
 private:
@@ -51,10 +56,13 @@ private:
 
 	void sample_once( );
 
-	std::atomic<bool> m_active{};
-	std::atomic<std::uint32_t> m_rate{ 144 };
+	std::atomic<std::uint64_t> m_presentation{};
+	detail::pose_identity m_last_identity{};
+	std::shared_ptr<const std::string> m_last_level{};
+	platform::snapshot_pool<player_pose_frame> m_frames{};
+	std::uint32_t m_rate{ 240 };
+	detail::pose_sample_schedule m_schedule{};
 	std::atomic<std::uint64_t> m_sequence{};
-	std::atomic<void*> m_wake_event{};
 	std::atomic<std::shared_ptr<const player_pose_frame>> m_latest{};
 	std::unordered_map<std::uintptr_t, cached_pose> m_last_valid{};
 };

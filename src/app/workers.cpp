@@ -3,7 +3,9 @@
 #include <app/workers.hpp>
 #include <system/runtime_events.hpp>
 #include <app/map_loader.hpp>
+#include <app/map_absence.hpp>
 #include <core/input/bindings.hpp>
+#include <core/input/action_state.hpp>
 #include <features/aimbot/aimbot.hpp>
 #include <features/misc/misc.hpp>
 #include <features/misc/auto_stop.hpp>
@@ -45,8 +47,7 @@ namespace app::workers {
 			if ( misc.m_bullet_tracers.enabled || misc.m_hitmarker.enabled || misc.m_hitsound.enabled
 				|| misc.m_hitsound.show_damage || misc.m_grenades.enabled
 				|| ( visuals.m_crosshair.enabled
-					&& ( visuals.m_crosshair.sync
-						|| visuals.m_crosshair.penetration_enabled ) ) )
+					&& visuals.m_crosshair.penetration_enabled ) )
 			{
 				return true;
 			}
@@ -55,14 +56,8 @@ namespace app::workers {
 				game::local_player().weapon_type( ) );
 			bool rcs_requested{};
 			if ( config.aimbot.rcs.enabled )
-			{
-				const auto pawn = game::local_player().pawn( );
-				const auto shots = pawn
-					? app::context().process.load<std::int32_t>( pawn
-						+ SCHEMA( "C_CSPlayerPawn", "m_iShotsFired"_id ) ) : 0;
-				rcs_requested = key_down( VK_LBUTTON )
-					|| shots >= std::max( config.aimbot.rcs.start_bullet, 1 );
-			}
+				rcs_requested = game::physical_action_down(
+					game::input_action::attack, app::context().input);
 			if ( rcs_requested || config.other.penetration_crosshair
 				|| ( config.aimbot.enabled && config::combat_profile::activation_active(
 					config.aimbot.activation_mode, config.aimbot.key ) ) )
@@ -201,6 +196,7 @@ namespace app::workers {
 		std::string last_map{};
 
 	    app::map_loader map_loader;
+    app::map_absence_guard map_absence;
 
 	    std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
 
@@ -259,9 +255,14 @@ namespace app::workers {
 			std::uintptr_t global_vars{ 0 };
 			std::string current_map{};
 
-			if ( game::local_player().valid( ) )
+			const auto local_valid = game::local_player().valid( );
+			if ( local_valid )
 			{
-                game::input_bindings().refresh();
+				map_absence.observe(true, std::chrono::steady_clock::now());
+			}
+
+			if ( local_valid )
+			{
 				const auto loop_now = std::chrono::steady_clock::now( );
 				const auto directory_requested =
 					game::world().entity_directory_requested( );
@@ -326,7 +327,8 @@ namespace app::workers {
 			}
 			else
 			{
-				if ( !last_map.empty( ) )
+				if ( !last_map.empty( )
+					&& map_absence.observe(false, std::chrono::steady_clock::now()) )
 				{
 					last_map = {};
 					g_current_map.store(
@@ -410,7 +412,7 @@ namespace app::workers {
 		{
 			std::optional<platform::performance::scope> combat_profile{};
 			combat_profile.emplace( platform::performance::zone::combat_loop );
-			if ( game::local_player().valid( ) && game::collision().valid( )
+			if ( game::local_player().valid( )
 				&& app::context().overlay.combat_input_ready( )
 				&& !app::context().menu.is_open( ) )
 			{
@@ -445,11 +447,6 @@ namespace app::workers {
 
 			std::this_thread::sleep_until( next_tick );
 		}
-	}
-
-	void pose_sampler( )
-	{
-		game::render_poses( ).run( );
 	}
 
 	void movement( )
@@ -556,11 +553,11 @@ namespace app::workers {
 
 				if ( can_run && configured )
 				{
-					const auto observed_at = std::chrono::steady_clock::now( );
 					const auto controller = app::context().process.load<std::uintptr_t>(
 						app::context().addresses.local_player_controller );
 					const auto binding = game::resolve_local_pawn( controller );
                     const auto tick = simulation::read_seed_tick(controller, binding.pawn);
+                    const auto observed_at = std::chrono::steady_clock::now();
 					runtime.sync_phase( tick, observed_at );
 				}
 				latency_requested = can_run ? runtime.poll( ) : false;

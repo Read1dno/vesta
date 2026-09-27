@@ -25,6 +25,10 @@ enum class zone : std::uint8_t
 	auto_stop_tick,
 	nade_helper_tick,
 	seed_trigger_tick,
+	seed_plan_build,
+	seed_targets_read,
+	seed_weapon_read,
+	seed_penetration,
 	render_frame,
 	wait_frame_latency,
 	chams,
@@ -43,7 +47,24 @@ enum class zone : std::uint8_t
 	imgui_render,
 	bloom_2d,
 	present,
+    map_load,
+    map_entities_refresh,
+    map_entities_scan,
+    map_entities_build,
+    map_entities_publish,
 	count
+};
+
+enum class counter : std::uint8_t
+{
+    map_entity_slots,
+    map_entities_seen,
+    map_solid_entities,
+    map_entity_instances,
+    map_scan_incomplete,
+    map_entity_changes,
+    map_geometry_published,
+    count
 };
 
 #if defined(VESTA_PERF_LOG) && VESTA_PERF_LOG
@@ -68,6 +89,7 @@ void record_rpm(std::size_t bytes, bool succeeded, std::int64_t started) noexcep
 [[nodiscard]] std::int64_t timestamp() noexcept;
 void flush_if_due(bool force = false) noexcept;
 void record_present() noexcept;
+void record_counter(counter name, std::uint64_t amount = 1) noexcept;
 #else
 class scope
 {
@@ -88,6 +110,9 @@ inline void flush_if_due(bool = false) noexcept
 {
 }
 inline void record_present() noexcept
+{
+}
+inline void record_counter(counter, std::uint64_t = 1) noexcept
 {
 }
 #endif

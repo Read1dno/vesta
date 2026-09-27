@@ -71,6 +71,8 @@ public:
 	// Resolve a plain entity index such as m_iIDEntIndex or a controller-list slot.
 	// These values intentionally have no serial bits and must not pass lookup().
 	[[nodiscard]] std::uintptr_t lookup_index( std::uint32_t index ) const;
+	[[nodiscard]] bool player_controller_slots(
+		std::array<std::uintptr_t, 65>& out ) const;
 	[[nodiscard]] std::vector<cached> by_type( type filter ) const;
 	[[nodiscard]] std::shared_ptr<const std::vector<cached>> all( ) const;
 	[[nodiscard]] std::uintptr_t raw_entity_list_for_diag( ) const { return get_entity_list( ); }

@@ -108,9 +108,11 @@ namespace platform::windows {
 			if ( contains( actions, pointer_action::auxiliary2_down ) ) packet.flags |= MOUSEEVENTF_XDOWN;
 			if ( contains( actions, pointer_action::auxiliary2_up ) ) packet.flags |= MOUSEEVENTF_XUP;
 		}
+        s_last_injection_backend = 1;
         auto injected = m_pointer_injector && m_pointer_injector(&packet, 1) != FALSE;
         if (!injected)
         {
+            s_last_injection_backend = 2;
             INPUT event{};
             event.type = INPUT_MOUSE;
             event.mi = {dx, dy, packet.mouse_data, packet.flags, 0, 0};
@@ -150,10 +152,12 @@ namespace platform::windows {
             packet.scan_code = encoded.wScan;
             packet.flags = encoded.dwFlags;
         }
+        s_last_injection_backend = 3;
         auto injected = m_key_injector && m_key_injector(packets.data(),
             static_cast<int>(transitions.size())) != FALSE;
         if (!injected)
         {
+            s_last_injection_backend = 4;
             std::array<INPUT, 8> events{};
             for (std::size_t i = 0; i < transitions.size(); ++i)
             {
@@ -300,14 +304,20 @@ namespace platform::windows {
 		const auto key = gateway->m_gate_key.load( std::memory_order_relaxed );
 		const bool enabled = gateway->m_primary_gate_enabled.load( std::memory_order_relaxed );
 		const bool injected = ( event.flags & LLKHF_INJECTED ) != 0;
+#if defined(VESTA_WINDOWED_PROFILE) && VESTA_WINDOWED_PROFILE
+		constexpr ULONG_PTR diagnostic_physical_tag{ 0x5645535441544553ull };
+		const bool physical = !injected || event.dwExtraInfo == diagnostic_physical_tag;
+#else
+		const bool physical = !injected;
+#endif
 		const bool down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
 		const bool up = message == WM_KEYUP || message == WM_SYSKEYUP;
-		if ( enabled && !injected && event.vkCode == key && ( down || up ) )
+		if ( enabled && physical && event.vkCode == key && ( down || up ) )
 		{
 			gateway->m_gate_physical_down.store( down, std::memory_order_release );
 			return 1;
 		}
-		if ( !injected && event.vkCode < 256 && ( down || up )
+		if ( physical && event.vkCode < 256 && ( down || up )
 			&& gateway->m_movement_gated[ event.vkCode ].load(
 				std::memory_order_relaxed ) )
 		{

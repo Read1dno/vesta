@@ -1,6 +1,5 @@
 #include <stdafx.hpp>
 #include <core/input/bindings.hpp>
-#include <core/input/keyboard_binding.hpp>
 #include <system/runtime_events.hpp>
 #include <features/misc/misc.hpp>
 
@@ -19,11 +18,6 @@ namespace features::misc {
 
 	void bhop_t::tick( )
 	{
-		const auto snapshot = config::get_runtime_snapshot( );
-		if ( !snapshot )
-			return;
-		const auto& bunny_cfg = snapshot->general.m_bunny_hop;
-		const auto& edge_cfg = snapshot->general.m_edge_jump;
 		const auto now = std::chrono::steady_clock::now( );
 		const auto release = [ this, now ]( )
 		{
@@ -34,7 +28,27 @@ namespace features::misc {
 				this->m_owned_jump_key = 0;
 				this->m_last_transition = now;
 			}
+			return !this->m_jump_down;
 		};
+		const auto reset_bunny_sample = [ this ]
+		{
+			this->m_last_bunny_simulation_time = -1.0f;
+			this->m_last_bunny_tap = {};
+			this->m_bunny_pawn = 0;
+		};
+		const auto snapshot = config::get_runtime_snapshot( );
+		if ( !snapshot )
+		{
+			app::context().input.set_key_gate( 0, false );
+			this->m_gate_requested = false;
+			release( );
+			this->m_edge_was_on_ground = false;
+			this->m_edge_armed = false;
+			reset_bunny_sample( );
+			return;
+		}
+		const auto& bunny_cfg = snapshot->general.m_bunny_hop;
+		const auto& edge_cfg = snapshot->general.m_edge_jump;
 		if ( !bunny_cfg.enabled && !edge_cfg.enabled )
 		{
 
@@ -48,6 +62,7 @@ namespace features::misc {
 					&& !app::context().menu.is_open( )
 					&& !game::input_bindings().text_entry_active( )
 					&& app::context().input.key_gate_held( );
+				if ( !release( ) ) return;
 				app::context().input.set_key_gate( jump_key, false );
 				if ( restore && jump_key ) app::context().input.key( jump_key, true );
 				this->m_gate_requested = false;
@@ -55,48 +70,49 @@ namespace features::misc {
 			release( );
 			this->m_edge_was_on_ground = false;
 			this->m_edge_armed = false;
+			reset_bunny_sample( );
 			return;
 		}
 
 		const auto activation_key = static_cast<std::uint16_t>( std::clamp(
 			bunny_cfg.activation_key, 0, 255 ) );
-		if ( activation_key != this->m_activation_key
-			|| now >= this->m_next_binding_refresh )
+		const auto jump_binding = game::input_bindings().resolve(game::input_action::jump);
+		const auto resolved_key = jump_binding.device == game::input_device::keyboard
+			? jump_binding.virtual_key : std::uint16_t{};
+		if (m_reported_jump_key != resolved_key)
 		{
-			this->m_activation_key = activation_key;
-			this->m_next_binding_refresh = now + std::chrono::seconds( 1 );
-		    const auto candidates = game::input_bindings().candidates(game::input_action::jump);
-		    const auto binding = game::keyboard_binding(candidates, activation_key);
-		    const auto resolved_key =
-		        binding.device == game::input_device::keyboard ? binding.virtual_key : std::uint16_t{};
-		    if (m_reported_jump_key != resolved_key)
-		    {
-			    m_reported_jump_key = resolved_key;
-			    platform::windows::runtime_event(
-			        "bhop", resolved_key ? std::format("keyboard_jump={} candidates={}", resolved_key,
-			                                           candidates.size())
-			                             : std::format("no_keyboard_jump candidates={}", candidates.size()));
-		    }
-		    if (this->m_jump_key != resolved_key)
-		    {
-				app::context().input.set_key_gate( 0, false );
-				release( );
-				this->m_jump_key = resolved_key;
-				this->m_gate_requested = false;
-				this->m_last_bunny_simulation_time = -1.0f;
-			}
+			m_reported_jump_key = resolved_key;
+			platform::windows::runtime_event("bhop",
+				resolved_key ? std::format("configured_jump={}", resolved_key)
+					: "configured_jump_unavailable");
+		}
+		if (this->m_jump_key != resolved_key)
+		{
+			if (!release()) return;
+			app::context().input.set_key_gate(0, false);
+			this->m_jump_key = resolved_key;
+			this->m_gate_requested = false;
+			this->m_last_bunny_simulation_time = -1.0f;
 		}
 
 		const auto game_active = game_has_input_focus( );
 		const auto pawn = game::local_player().pawn( );
 		const auto player_ready = pawn && game::local_player().alive( );
+		if ( pawn != this->m_bunny_pawn )
+		{
+			if ( !release( ) ) return;
+			reset_bunny_sample( );
+			this->m_bunny_pawn = pawn;
+			this->m_edge_was_on_ground = false;
+			this->m_edge_armed = false;
+		}
 		const auto menu_open = app::context().menu.is_open( );
 		const auto text_entry_active = game::input_bindings().text_entry_active( );
 		const auto jump_key = this->m_jump_key;
 		const auto activation_is_jump = activation_key != 0
 			&& activation_key == jump_key;
-		const auto activation_held = activation_key != 0
-			&& ( ::GetAsyncKeyState( activation_key ) & 0x8000 ) != 0;
+		const auto activation_held = input_lifecycle::activation_held( activation_key,
+			[]( const std::uint16_t key ) { return app::context().input.physical_key_down( key ); } );
 		const auto gate_requested = game_active && !menu_open
 			&& !text_entry_active && player_ready
 			&& bunny_cfg.enabled && jump_key != 0
@@ -105,6 +121,7 @@ namespace features::misc {
 			&& !gate_requested && game_active && !menu_open
 			&& !text_entry_active && player_ready
 			&& app::context().input.key_gate_held( );
+		if ( this->m_gate_requested && !gate_requested && !release( ) ) return;
 		app::context().input.set_key_gate( jump_key, gate_requested );
 		if ( restore_physical_jump && jump_key )
 			app::context().input.key( jump_key, true );
@@ -116,14 +133,16 @@ namespace features::misc {
 				? app::context().input.key_gate_held( ) : activation_held );
 		const auto edge_active = game_active && !menu_open
 			&& !text_entry_active && player_ready
-			&& edge_cfg.enabled && edge_cfg.activation_key > 0 && jump_key != 0
-			&& ( ::GetAsyncKeyState( edge_cfg.activation_key ) & 0x8000 );
+			&& edge_cfg.enabled && jump_key != 0
+			&& input_lifecycle::activation_held( edge_cfg.activation_key,
+				[]( const std::uint16_t key ) { return app::context().input.physical_key_down( key ); } );
 
 		if ( !player_ready || ( !bunny_active && !edge_active ) )
 		{
 			release( );
 			this->m_edge_was_on_ground = false;
 			this->m_edge_armed = false;
+			reset_bunny_sample( );
 			return;
 		}
 
@@ -149,7 +168,7 @@ namespace features::misc {
 
 		if ( bunny_active )
 		{
-			release( );
+			if ( !release( ) ) return;
 			this->m_edge_was_on_ground = on_ground;
 			this->m_edge_armed = false;
 

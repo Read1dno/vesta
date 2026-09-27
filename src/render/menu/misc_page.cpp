@@ -16,6 +16,7 @@
 #include <d3dcompiler.h>
 
 #include <render/menu/internal.hpp>
+#include <render/menu/card_metrics.hpp>
 
 using namespace render::menu::detail;
 
@@ -80,9 +81,19 @@ void menu_t::draw_misc()
         });
         card_in_column("automation", "AUTOMATION", 1, 1,
                        [&] { toggle_row("Auto Accept Match", p.auto_accept); });
-        card_in_column("engine", "ENGINE", 1, 1, [&] {
+        const auto* gpu_help = render::localization::tr(
+            "Restart to change GPU effects. The base overlay uses the display adapter; off keeps 2D ESP and the menu, while chams, no flash, no smoke and bloom are disabled.");
+        const float help_width = std::max(1.0f, g_cards_width - 40.0f);
+        const float help_height = ImGui::CalcTextSize(gpu_help, nullptr, false, help_width).y;
+        const int help_rows = render::menu::wrapped_text_rows(
+            help_height, ImGui::GetStyle().ItemSpacing.y, k_row_height);
+        card_in_column("engine", "ENGINE", 2 + help_rows, 1, [&] {
             toggle_popup_row("FPS Limiter", p.limit_fps, 1,
                              [&] { slider_row("Maximum FPS", p.fps_limit, 30, 1000); });
+            toggle_row("GPU Effects", p.use_gpu);
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + help_width);
+            ImGui::TextUnformatted(gpu_help);
+            ImGui::PopTextWrapPos();
         });
     }
     else if (this->m_misc_group == 1)
@@ -167,6 +178,24 @@ void menu_t::draw_misc()
                 slider_row("Stop Speed", p.m_auto_stop.stop_speed, 0.0f, 150.0f, " u/s", 1.0f);
                 slider_row("Shoot Speed", p.m_auto_stop.required_shoot_speed, 0.0f, 60.0f, "%", 1.0f);
             });
+        });
+        auto &keys = p.m_game_controls;
+        card_in_column("game_keyboard", "GAME KEY BINDS", 7, 0, [&] {
+            keybind_row("Forward", keys.forward, true, true);
+            keybind_row("Back", keys.back, true, true);
+            keybind_row("Left", keys.left, true, true);
+            keybind_row("Right", keys.right, true, true);
+            keybind_row("Walk", keys.walk, true, true);
+            keybind_row("Duck", keys.duck, true, true);
+            keybind_row("Jump", keys.jump, true, true);
+        });
+        card_in_column("game_attack", "GAME ATTACK BINDS", 3, 1, [&] {
+            keybind_row("Attack", keys.attack, false, true);
+            keybind_row("Secondary Attack", keys.attack2, false, true);
+            if (button_row("Reset Game Binds", "Reset", row_action_icon::none))
+                keys = {};
+            ImGui::TextWrapped("%s", render::localization::tr(
+                "Match these binds in the game; no automatic detection."));
         });
     }
     else if (this->m_misc_group == 3)

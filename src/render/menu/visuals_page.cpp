@@ -366,9 +366,8 @@ void menu_t::draw_visuals()
     else
     {
         auto &p = config::visual_settings.m_crosshair;
-        card("crosshair_settings", "CROSSHAIR SETTINGS", 5, [&] {
+        card("crosshair_settings", "CROSSHAIR SETTINGS", 4, [&] {
             toggle_row("Enable Crosshair", p.enabled);
-            toggle_row("Copy Game Crosshair", p.copy_game);
             toggle_row("Draw Dot", p.dot);
             toggle_popup_row("Draw Lines", p.lines, 3, [&] {
                 toggle_row("T-Style", p.t_style);

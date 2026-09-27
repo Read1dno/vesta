@@ -4,8 +4,10 @@
 #include <render/overlay/present_policy.hpp>
 #include <render/overlay/hud.hpp>
 #include <render/overlay/graphics_device.hpp>
+#include <render/overlay/render_policy.hpp>
 #include <scripting/runtime.hpp>
 #include <app/context.hpp>
+#include <app/workers.hpp>
 #include <core/input/hotkeys.hpp>
 #include <features/aimbot/aimbot.hpp>
 #include <features/misc/misc.hpp>
@@ -95,7 +97,7 @@ namespace
 			|| misc.m_spectator_list.enabled || misc.m_event_log.enabled
 			|| misc.m_keybind_list.enabled || misc.m_bullet_tracers.enabled || misc.m_hitmarker.enabled
 			|| misc.m_hitsound.enabled || misc.m_hitsound.show_damage
-			|| combat.aimbot_draw_fov
+			|| ( combat.aimbot_enabled && combat.aimbot_draw_fov )
 			|| combat.penetration_crosshair;
 	}
 
@@ -233,6 +235,30 @@ namespace
 
 } // namespace
 
+bool overlay_t::gpu_effects_enabled() const noexcept
+{
+    return this->m_use_gpu && config::general_settings.use_gpu
+        && this->m_chams_renderer_initialized && chams::g_renderer.ready();
+}
+
+void overlay_t::ensure_gpu_effects()
+{
+	if (!this->m_use_gpu || !config::general_settings.use_gpu
+		|| !this->m_device || !this->m_context) return;
+	if (!this->m_chams_renderer_initialized)
+	{
+		this->m_chams_renderer_initialized = true;
+		if (!chams::g_renderer.initialize(this->m_device, this->m_context))
+			app::context().diagnostics.warning("chams renderer initialization failed.");
+	}
+	if (!this->m_chams_preview_initialized)
+	{
+		this->m_chams_preview_initialized = true;
+		if (!chams::g_preview.initialize(this->m_device, this->m_context))
+			app::context().diagnostics.warning("chams preview initialization failed.");
+	}
+}
+
 bool overlay_t::launch()
 {
 	write_overlay_lifecycle_event( "launch.begin" );
@@ -261,6 +287,9 @@ bool overlay_t::launch()
 	this->m_render_width = 1;
 	this->m_render_height = 1;
 	this->m_resize_pending = false;
+	this->m_use_gpu = true;
+	this->m_frame_latency_unreliable = false;
+	this->m_nonwaitable_stall_reported = false;
 	this->m_ui_reference_width = 0;
 	this->m_ui_reference_height = 0;
 	this->m_ui_fullscreen_canvas = false;
@@ -304,21 +333,7 @@ bool overlay_t::launch()
 	}
 	write_overlay_lifecycle_event( "backend.prepared_without_source", this->m_hwnd );
 
-	const bool chams_renderer_ready =
-		chams::g_renderer.initialize(this->m_device, this->m_context);
-	this->m_chams_renderer_initialized = true;
-	if (!chams_renderer_ready)
-	{
-		app::context().diagnostics.warning("chams renderer failed to launch -- feature will be unavailable.");
-	}
-
-	const bool chams_preview_ready =
-		chams::g_preview.initialize(this->m_device, this->m_context);
-	this->m_chams_preview_initialized = true;
-	if (!chams_preview_ready)
-	{
-		app::context().diagnostics.warning("chams preview failed to launch -- the ESP editor viewport will be unavailable.");
-	}
+	this->ensure_gpu_effects();
 
 	app::context().menu.initialize(this->m_hwnd);
 
@@ -508,7 +523,7 @@ bool overlay_t::run()
 					write_overlay_lifecycle_event(
 						"presentation.frame_latency_stalled", this->m_hwnd );
 				}
-				return false;
+				return reconcile_transition( );
 			}
 			return false;
 		}
@@ -547,12 +562,15 @@ bool overlay_t::run()
 			break;
 
 		app::context().menu.poll_hotkey( );
+		this->ensure_gpu_effects();
 		this->synchronize_window_bounds( );
 		this->synchronize_content_visibility( );
-		game::render_poses( ).set_presentation_state(
-			this->m_presentation_attached
-				&& (config::visual_settings.m_player.active( ) || config::visual_settings.m_chams.enabled),
-			this->m_window_tracker.refresh_rate( ) );
+        const auto feature_plan = render::plan_features(this->m_presentation_attached,
+            config::visual_settings.m_player.active(), config::visual_settings.m_chams.enabled,
+            this->m_use_gpu, config::general_settings.use_gpu);
+        game::render_poses().set_presentation_state(feature_plan.sample_players,
+            render::pose_sample_limit(config::general_settings.limit_fps,
+                static_cast<std::uint32_t>(std::max(0, config::general_settings.fps_limit))));
 		this->synchronize_menu_focus();
 		this->apply_capture_policy();
 		if ( !this->m_overlay_visible )
@@ -598,7 +616,8 @@ bool overlay_t::run()
 
         const auto rate = config::general_settings.limit_fps && config::general_settings.fps_limit > 0
             ? static_cast<std::uint32_t>(config::general_settings.fps_limit)
-            : (m_frame_latency_unreliable ? std::max(m_window_tracker.refresh_rate(), 60u) : 0u);
+            : (m_frame_latency_unreliable
+                ? std::max(m_window_tracker.refresh_rate(), 60u) : 0u);
         frame_clock.set_rate(rate, std::chrono::steady_clock::now());
         if (m_frame_latency_waitable && !m_frame_latency_unreliable)
         {
@@ -636,7 +655,7 @@ bool overlay_t::run()
 
 		ImGui::NewFrame();
 		zdraw::draw_list draw_list{ ImGui::GetBackgroundDrawList() };
-		chams::g_renderer.begin_2d_bloom_frame( );
+		chams::g_renderer.begin_2d_bloom_frame(this->gpu_effects_enabled());
 
 		const auto spectator_suppressed =
 			config::visual_settings.m_player.spectator_sync
@@ -644,7 +663,7 @@ bool overlay_t::run()
 		if (game::local_player().valid() && !spectator_suppressed)
 		{
 			// Performance zones below are compile-time no-ops in production Release.
-			const auto pose_frame = game::render_poses( ).latest( );
+			const auto pose_frame = game::render_poses( ).acquire_for_presentation( );
             const auto& presentation_pose = pose_frame;
             game::presentation_camera_sample camera{};
             if (game::camera().sample_presentation(camera))
@@ -652,6 +671,7 @@ bool overlay_t::run()
             else if (pose_frame)
                 game::camera().begin_presentation_frame(pose_frame->camera, m_render_width, m_render_height);
 
+			if (this->m_use_gpu && config::general_settings.use_gpu)
 			{
 				VESTA_PERF_SCOPE( chams );
 				chams::g_renderer.render_world_effects(
@@ -728,7 +748,8 @@ bool overlay_t::run()
 			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 		}
 
-		if ( !app::context().menu.is_open( ) )
+		if ( this->m_use_gpu && config::general_settings.use_gpu
+			&& !app::context().menu.is_open( ) )
 		{
 			VESTA_PERF_SCOPE( bloom_2d );
 			chams::g_renderer.render_2d_bloom(
@@ -751,6 +772,7 @@ bool overlay_t::run()
 		}
 		const auto frame_transition =
 			this->m_window_tracker.transition_revision( );
+		const auto present_started = std::chrono::steady_clock::now();
 		HRESULT present_result{};
 		bool cancel_pending_frame{};
 		while ( true )
@@ -774,6 +796,20 @@ bool overlay_t::run()
 				continue;
 			}
 			break;
+		}
+		const auto present_duration = std::chrono::steady_clock::now() - present_started;
+		if (present_duration > std::chrono::milliseconds(250))
+		{
+			if (!this->m_frame_latency_unreliable)
+			{
+				this->m_frame_latency_unreliable = true;
+				write_overlay_lifecycle_event("presentation.present_stalled", this->m_hwnd);
+			}
+			else if (!this->m_nonwaitable_stall_reported)
+			{
+				this->m_nonwaitable_stall_reported = true;
+				write_overlay_lifecycle_event("presentation.nonwaitable_stalled", this->m_hwnd);
+			}
 		}
 		if ( cancel_pending_frame ) continue;
 		if ( FAILED( present_result ) )
@@ -1007,7 +1043,7 @@ void overlay_t::synchronize_window_bounds( )
 					this->m_resize_pending = true;
 					return;
 				}
-						}
+			}
 			else
 			{
 				// No HWND-bound swap chain exists while detached; the dimensions
@@ -1023,7 +1059,7 @@ void overlay_t::synchronize_window_bounds( )
 			return;
 		}
 		m_presentation_retry.succeeded();
-		this->m_resize_pending = false;
+			this->m_resize_pending = false;
 	}
 
 	if ( this->m_presentation_attached
@@ -1511,7 +1547,8 @@ bool overlay_t::open_composition_backend( )
     ComPtr<ID3D11Device> device{};
     ComPtr<ID3D11DeviceContext> context{};
     if (FAILED(render::create_overlay_device(
-        ::MonitorFromWindow(m_window_tracker.target(), MONITOR_DEFAULTTOPRIMARY), &device, &context))) return false;
+        ::MonitorFromWindow(m_window_tracker.target(), MONITOR_DEFAULTTOPRIMARY),
+        &device, &context, true))) return false;
 
 	ComPtr<IDXGIDevice> dxgi_device{};
 	ComPtr<IDXGIAdapter> adapter{};
@@ -1568,7 +1605,16 @@ bool overlay_t::open_composition_swap_chain( )
 		return false;
 	}
 
-    auto description = render::composition_description(m_render_width, m_render_height, m_allow_tearing);
+    // A slow signal changes pacing, not the swapchain model.
+    const bool waitable = true;
+    auto description = render::composition_description(
+        m_render_width, m_render_height, m_allow_tearing && waitable, waitable);
+    if (!waitable)
+    {
+        Microsoft::WRL::ComPtr<IDXGIDevice1> device1;
+        if (SUCCEEDED(this->m_device->QueryInterface(IID_PPV_ARGS(&device1))))
+            device1->SetMaximumFrameLatency(2);
+    }
 
 	ComPtr<IDXGISwapChain1> swap_chain1{};
 	ComPtr<IDXGISwapChain2> swap_chain2{};
@@ -1576,7 +1622,7 @@ bool overlay_t::open_composition_swap_chain( )
 	ComPtr<ID3D11Texture2D> back_buffer{};
 	ComPtr<ID3D11RenderTargetView> render_target{};
     auto creation = factory->CreateSwapChainForComposition(m_device, &description, nullptr, &swap_chain1);
-    if (FAILED(creation) && m_allow_tearing)
+    if (FAILED(creation) && (description.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING))
     {
         swap_chain1.Reset();
         description.Flags &= ~DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
@@ -1586,8 +1632,8 @@ bool overlay_t::open_composition_swap_chain( )
     if (FAILED(creation))
         write_overlay_lifecycle_event("presentation.create_failed", m_hwnd, creation);
     if ( FAILED(creation)
-        || FAILED( swap_chain1.As( &swap_chain2 ) )
-		|| FAILED( swap_chain2->SetMaximumFrameLatency( 1 ) )
+        || (waitable && (FAILED( swap_chain1.As( &swap_chain2 ) )
+			|| FAILED( swap_chain2->SetMaximumFrameLatency( 1 ) )))
 		|| FAILED( swap_chain1.As( &swap_chain ) )
 		|| FAILED( swap_chain->GetBuffer( 0, IID_PPV_ARGS( &back_buffer ) ) )
 		|| FAILED( this->m_device->CreateRenderTargetView(
@@ -1596,16 +1642,16 @@ bool overlay_t::open_composition_swap_chain( )
 		return false;
 	}
 
-	const auto waitable = swap_chain2->GetFrameLatencyWaitableObject( );
-	if ( !waitable )
+	const auto waitable_handle = waitable
+		? swap_chain2->GetFrameLatencyWaitableObject( ) : nullptr;
+	if ( waitable && !waitable_handle )
 		return false;
 
 	this->m_swap_chain = swap_chain.Detach( );
 	this->m_back_buffer = back_buffer.Detach( );
 	this->m_rtv = render_target.Detach( );
-	this->m_frame_latency_waitable = waitable;
-	this->m_frame_latency_unreliable = false;
-	this->m_present_tearing_enabled = this->m_allow_tearing;
+	this->m_frame_latency_waitable = waitable_handle;
+	this->m_present_tearing_enabled = this->m_allow_tearing && waitable;
 
 	D3D11_VIEWPORT viewport{};
 	viewport.Width = static_cast<float>( this->m_render_width );
@@ -1797,7 +1843,8 @@ void overlay_t::detach_presentation( ) noexcept
 bool overlay_t::open_device_backend( )
 {
     return SUCCEEDED(render::create_overlay_device(
-        ::MonitorFromWindow(m_window_tracker.target(), MONITOR_DEFAULTTOPRIMARY), &m_device, &m_context));
+        ::MonitorFromWindow(m_window_tracker.target(), MONITOR_DEFAULTTOPRIMARY),
+        &m_device, &m_context, true));
 }
 
 bool overlay_t::open_swap_chain_backend( )
@@ -1829,7 +1876,8 @@ bool overlay_t::open_swap_chain_backend( )
 	description.Scaling = DXGI_SCALING_STRETCH;
 	description.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	description.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-	description.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+	description.Flags = this->m_frame_latency_unreliable
+		? 0u : DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 	ComPtr<IDXGISwapChain1> swap_chain1{};
 	if ( FAILED( factory->CreateSwapChainForHwnd(
 		this->m_device, this->m_hwnd, &description,
@@ -1841,17 +1889,32 @@ bool overlay_t::open_swap_chain_backend( )
 	ComPtr<IDXGISwapChain> swap_chain{};
 	if ( FAILED( swap_chain1.As( &swap_chain ) ) ) return false;
 	this->m_swap_chain = swap_chain.Detach( );
-	ComPtr<IDXGISwapChain2> swap_chain2{};
-	if ( FAILED( swap_chain1.As( &swap_chain2 ) )
-		|| FAILED( swap_chain2->SetMaximumFrameLatency( 1 ) ) )
+	if (!this->m_frame_latency_unreliable)
 	{
-		this->m_swap_chain->Release( );
-		this->m_swap_chain = nullptr;
-		return false;
+		ComPtr<IDXGISwapChain2> swap_chain2{};
+		if (FAILED(swap_chain1.As(&swap_chain2))
+			|| FAILED(swap_chain2->SetMaximumFrameLatency(1)))
+		{
+			this->m_swap_chain->Release();
+			this->m_swap_chain = nullptr;
+			return false;
+		}
+		this->m_frame_latency_waitable =
+			swap_chain2->GetFrameLatencyWaitableObject();
+		if (!this->m_frame_latency_waitable)
+		{
+			this->m_swap_chain->Release();
+			this->m_swap_chain = nullptr;
+			return false;
+		}
 	}
-	this->m_frame_latency_waitable =
-		swap_chain2->GetFrameLatencyWaitableObject( );
-	if ( !this->m_frame_latency_waitable || !this->create_color_target( ) )
+	else
+	{
+		ComPtr<IDXGIDevice1> device1{};
+		if (SUCCEEDED(this->m_device->QueryInterface(IID_PPV_ARGS(&device1))))
+			device1->SetMaximumFrameLatency(2);
+	}
+	if ( !this->create_color_target( ) )
 	{
 		if ( this->m_frame_latency_waitable )
 			::CloseHandle( this->m_frame_latency_waitable );
@@ -1883,14 +1946,9 @@ bool overlay_t::initialize_graphics()
 		return false;
 	}
 
-	IDXGIDevice* dxgi_device{};
-	if ( SUCCEEDED( this->m_device->QueryInterface( IID_PPV_ARGS( &dxgi_device ) ) ) )
-	{
-		// The overlay is presentation work, never more important than CS2's own
-		// command queue. A positive priority here starved the game under GPU load.
-		dxgi_device->SetGPUThreadPriority( -2 );
-		dxgi_device->Release( );
-	}
+    const auto priority_result = render::set_overlay_gpu_priority(this->m_device);
+    if (FAILED(priority_result))
+        write_overlay_lifecycle_event("graphics.low_priority_failed", this->m_hwnd, priority_result);
 	IDXGIDevice1* dxgi_device1{};
 	if ( SUCCEEDED( this->m_device->QueryInterface( IID_PPV_ARGS( &dxgi_device1 ) ) ) )
 	{

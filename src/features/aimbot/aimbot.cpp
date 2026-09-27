@@ -1,11 +1,17 @@
 #include <stdafx.hpp>
 #include <core/math/ray_capsule.hpp>
 #include <features/aimbot/aimbot.hpp>
+#include <features/aimbot/aim_control.hpp>
 #include <features/misc/auto_stop.hpp>
 #include <features/visuals/event_log.hpp>
 #include <core/input/bindings.hpp>
+#include <core/input/action_state.hpp>
+#include <simulation/punch_snapshot.hpp>
 #include <simulation/grenade.hpp>
 #include <simulation/seed_timing.hpp>
+#include <simulation/seed_evaluation.hpp>
+#include <simulation/shot_clock_evidence.hpp>
+#include <simulation/native_velocity.hpp>
 #include <simulation/shot_state.hpp>
 #include <simulation/shot_trace.hpp>
 #include <features/trigger/seed_state.hpp>
@@ -19,33 +25,40 @@ namespace features::aimbot {
 	using simulation::ballistics_t;
 
 	namespace {
-		[[nodiscard]] bool is_host_seed_session( std::uintptr_t controller )
+		[[nodiscard]] std::optional<bool> is_host_seed_session( std::uintptr_t controller )
 		{
-			if ( !controller )
-			{
-				return false;
-			}
-			return app::context().process.load<std::int32_t>(
-				controller + SCHEMA( "CCSPlayerController", "m_iPing"_id ) ) <= 0;
-		}
-
-		[[nodiscard]] bool is_host_seed_session( )
-		{
-			return is_host_seed_session( game::local_player().controller( ) );
+			std::int32_t ping{};
+			if ( !controller || !app::context().process.copy(
+				controller + SCHEMA( "CCSPlayerController", "m_iPing"_id ),
+				&ping, sizeof( ping ) ) ) return std::nullopt;
+			return ping == 0;
 		}
 
 		[[nodiscard]] int read_seed_tick(std::uintptr_t controller, std::uintptr_t pawn, bool host_session)
         {
-            (void)host_session;
-            return simulation::read_seed_tick(controller, pawn);
+            if (!controller || !pawn) return -1;
+            auto& process = app::context().process;
+            int host_tick{-1}, simulation_tick{-1}, tick_base{-1};
+            if (host_session) {
+                std::uintptr_t globals{};
+                if (!process.copy(app::context().addresses.global_vars, &globals, sizeof(globals))
+                    || !globals || !process.copy(globals + 0x44, &host_tick, sizeof(host_tick))) return -1;
+            } else if (!process.copy(pawn + SCHEMA("C_BaseEntity", "m_nSimulationTick"_id),
+                &simulation_tick, sizeof(simulation_tick))) return -1;
+            if (host_tick <= 0 && simulation_tick < 0
+                && !process.copy(controller + SCHEMA("CBasePlayerController", "m_nTickBase"_id),
+                    &tick_base, sizeof(tick_base))) return -1;
+            return simulation::seed_timing::select_tick(
+                host_session, host_tick, simulation_tick, tick_base);
         }
 
 		[[nodiscard]] int read_seed_tick( )
 		{
 			const auto controller = game::local_player().controller( );
 			const auto pawn = game::local_player().pawn( );
-			return read_seed_tick(
-				controller, pawn, is_host_seed_session( controller ) );
+			const auto host_session = is_host_seed_session( controller );
+			return host_session ? read_seed_tick(
+				controller, pawn, *host_session ) : -1;
 		}
 
 		[[nodiscard]] int predicted_id_tick( int sequence )
@@ -802,58 +815,6 @@ namespace features::aimbot {
 
 		// The 0.5 degree grid the spread SHA sees. Anything finer than this is invisible
 		// to the seed, which is what makes it a sound memo key.
-		[[nodiscard]] foundation::vec3 read_aim_punch( std::uintptr_t pawn )
-		{
-			struct sample_vector
-			{
-				std::int32_t size;
-				std::int32_t pad;
-				std::uintptr_t data;
-				std::int32_t capacity;
-				std::uint32_t flags;
-			};
-			const auto plausible = []( std::uintptr_t v ) { return v >= 0x10000 && v <= 0x00007fffffffffffULL; };
-			if ( !plausible( pawn ) )
-			{
-				return {};
-			}
-			const auto services = app::context().process.load<std::uintptr_t>(
-				pawn + SCHEMA( "C_CSPlayerPawn", "m_pAimPunchServices"_id ) );
-			if ( !plausible( services ) )
-			{
-				return {};
-			}
-			const auto valid_angle = []( const foundation::vec3& value )
-			{
-				return std::isfinite( value.x ) && std::isfinite( value.y )
-					&& std::isfinite( value.z ) && std::abs( value.x ) < 45.0f
-					&& std::abs( value.y ) < 45.0f && std::abs( value.z ) < 45.0f;
-			};
-			foundation::vec3 punch{};
-
-			for ( const auto track_offset : {
-				std::uintptr_t{ 0x68 }, std::uintptr_t{ 0xb0 } } )
-			{
-				const auto samples = app::context().process.load<sample_vector>(
-					services + track_offset + 0x20 );
-				if ( samples.size <= 0 || samples.size > 4096
-					|| samples.capacity < samples.size || samples.capacity > 8192
-					|| !plausible( samples.data ) )
-				{
-					continue;
-				}
-				const auto sample = app::context().process.load<foundation::vec3>(
-					samples.data + static_cast<std::uintptr_t>( samples.size - 1 ) * sizeof( foundation::vec3 ) );
-				if ( std::isfinite( sample.x ) && std::abs( sample.x ) < 45.0f &&
-					std::abs( sample.y ) < 45.0f && std::abs( sample.z ) < 45.0f )
-				{
-					punch += sample;
-				}
-			}
-			punch *= 2.0f;
-			return std::isfinite( punch.x ) && std::isfinite( punch.y ) ? punch : foundation::vec3{};
-		}
-
 		[[nodiscard]] int part_from_hitbox(
 			const game::hitbox_catalog::entry& hitbox, int hitgroup )
 		{
@@ -1110,15 +1071,23 @@ namespace features::aimbot {
 		this->m_seed_last_shots = -1;
 		this->m_seed_pending_target_tick = -1;
 		this->m_seed_pending_time = {};
+        this->m_seed_phase_receipt = {};
 		this->m_seed_memo_sequence = -1;
 		this->m_seed_memo_pitch = {};
 		this->m_seed_memo_yaw = {};
 		this->m_last_time = 0.0f;
 		this->m_aim_pawn = 0;
+		this->m_aim_selection_world.reset();
+		this->m_aim_selection_target = {};
+		this->m_aim_selection_view = {};
+		this->m_aim_selection_weapon = 0;
+		this->m_aim_selection_at = {};
+		this->m_aim_last_bone = -1;
 		this->m_aim_error = {};
 		this->m_aim_last_input_sequence = -1;
-		this->m_aim_last_input_view = {};
-		this->m_aim_last_input_time = {};
+		this->m_aim_last_camera_angles = {};
+		this->m_aim_sent_since_sample = {};
+		this->m_aim_pending_since = {};
 		this->m_aim_virtual_angles = {};
 		this->m_aim_virtual_angles_valid = false;
 		this->m_aim_degrees_per_pixel = {};
@@ -1180,6 +1149,10 @@ namespace features::aimbot {
 		this->m_trigger_release_time = {};
 		this->m_seed_pending_target_tick = -1;
 		this->m_seed_pending_time = {};
+        this->m_seed_phase_receipt = {};
+        this->m_seed_network_window = {};
+        this->m_seed_last_shots = -1;
+        this->m_seed_last_host_mode = -1;
 		this->m_seed_memo_sequence = -1;
 		this->m_seed_memo_pitch = std::numeric_limits<float>::quiet_NaN( );
 		this->m_seed_memo_yaw = std::numeric_limits<float>::quiet_NaN( );
@@ -1189,6 +1162,8 @@ namespace features::aimbot {
 		this->m_seed_angle_history_count = 0;
 		this->m_seed_phase_tick = -1;
 		this->m_seed_phase_tick_at = {};
+        this->m_seed_phase_sampled_at = {};
+        this->m_seed_phase_observation = {};
 		this->m_seed_targets.clear( );
 		this->m_seed_player_buffer.clear( );
 		this->m_seed_last_controller = 0;
@@ -1226,6 +1201,56 @@ namespace features::aimbot {
         using trace_reason = simulation::shot_trace::decision_reason;
         const bool tracing = simulation::shot_trace::enabled();
         simulation::shot_trace::decision_scope trace{trace_reason::snapshot, tracing};
+        const auto trace_snapshot = [](simulation::shot_trace::snapshot_record& out,
+            const ballistics_t::context& ctx) {
+            out.weapon = ctx.weapon; out.tick_base = ctx.player_tick;
+            out.weapon_vdata = ctx.weapon_vdata; out.fire_mode = ctx.fire_mode;
+            out.pattern_seed = ctx.pattern_seed; out.num_bullets = ctx.num_bullets;
+            out.ground_entity = ctx.ground_entity; out.walking = ctx.is_walking; out.on_ground = ctx.on_ground;
+            out.current_time = NAN; out.wat = NAN; out.last_shot_time = NAN;
+            out.clip = ctx.clip; out.item = ctx.item_def_idx;
+            out.next_attack = -1;
+            out.weapon_ready = ctx.weapon_ready; out.reloading = ctx.is_reloading;
+            out.inaccuracy = ctx.inaccuracy; out.spread = ctx.spread; out.recoil = ctx.recoil_index;
+            const auto& d = ctx.debug;
+            out.accuracy_terms = {d.accuracy_penalty, d.turning_inaccuracy, d.move_inaccuracy,
+                d.air_inaccuracy, d.strafing_inaccuracy, d.move_factor, d.max_speed.first,
+                d.max_speed.second, d.inaccuracy_move.first, d.inaccuracy_move.second,
+                d.inaccuracy_jump_initial, d.inaccuracy_jump_apex, float(ctx.is_walking),
+                float(ctx.on_ground), NAN, ctx.postpone_fire_ready_fraction,
+                d.eye_angles.x, d.eye_angles.y, ctx.velocity_length, ctx.velocity_length};
+        };
+        const auto trace_plan = [](const seed_shot_plan& p) {
+            return simulation::shot_trace::plan_record{p.current.tick, p.next.tick, int(p.phase),
+                p.current.fraction, p.next.fraction, p.source_angles, p.current.hash_angles,
+                p.next.hash_angles, p.current.direction_angles, p.next.direction_angles,
+                p.current.punch, p.next.punch};
+        };
+        struct target_trace_guard {
+            std::optional<simulation::shot_trace::target_record> initial, final;
+            ~target_trace_guard() {
+                if (initial) simulation::shot_trace::submit_target(*initial);
+                if (final) simulation::shot_trace::submit_target(*final);
+            }
+        } target_trace;
+        const auto trace_target = [&](const game::player_snapshot& player, int stage) {
+            simulation::shot_trace::target_record result{};
+            result.cycle_id = trace.record.id; result.stage = stage;
+            result.pawn = player.pawn; result.controller = player.controller;
+            result.health = player.health; result.armor = player.armor;
+            result.simulation_tick = player.simulation_tick; result.simulation_time = player.simulation_time;
+            result.helmet = player.has_helmet; result.origin = player.origin; result.velocity = player.velocity;
+            for (const auto& box : player.hitboxes) {
+                if (result.count == result.capsules.size()) break;
+                if (box.index < 0 || box.bone < 0 || box.bone >= player.bones.bones.size()) continue;
+                const auto& bone = player.bones.bones[box.bone];
+                result.capsules[result.count++] = {box.index, box.bone,
+                    game::hitbox_data().hitgroup_from_hitbox(box.index),
+                    bone.position + bone.rotation.apply(box.mins),
+                    bone.position + bone.rotation.apply(box.maxs), box.radius};
+            }
+            return result;
+        };
 		const auto now = std::chrono::steady_clock::now( );
 		if ( this->m_trigger_held && now >= this->m_trigger_release_time )
 		{
@@ -1283,7 +1308,10 @@ namespace features::aimbot {
         trace.reason = trace_reason::snapshot;
 		const auto controller = app::context().process.load<std::uintptr_t>(
 			app::context().addresses.local_player_controller );
-		const auto host_session = is_host_seed_session( controller );
+		const auto host_status = is_host_seed_session( controller );
+        if (!host_status) return;
+        const auto host_session = *host_status;
+        if (tracing) { trace.record.initial.controller = controller; trace.record.initial.host_mode = host_session; }
 		const auto game_type = game::variables().get<std::int32_t>(
 			CONVAR( "game_type"_id ) );
 		const auto game_mode = game::variables().get<std::int32_t>(
@@ -1302,16 +1330,13 @@ namespace features::aimbot {
 			return;
 		}
 
+        if (tracing) trace.record.initial.pawn = pawn;
 		const auto local_health = app::context().process.load<std::int32_t>(
 			pawn + SCHEMA( "C_BaseEntity", "m_iHealth"_id ) );
 		const auto local_team = app::context().process.load<std::int32_t>(
 			pawn + SCHEMA( "C_BaseEntity", "m_iTeamNum"_id ) );
-		auto velocity = app::context().process.load<foundation::vec3>(
-			pawn + SCHEMA( "C_BaseEntity", "m_vecAbsVelocity"_id ) );
 		if ( local_health <= 0 || local_health > 100
-			|| ( local_team != 2 && local_team != 3 )
-			|| !std::isfinite( velocity.x ) || !std::isfinite( velocity.y )
-			|| !std::isfinite( velocity.z ) )
+			|| ( local_team != 2 && local_team != 3 ) )
 		{
 			this->reset_seed( );
 			return;
@@ -1330,6 +1355,38 @@ namespace features::aimbot {
 			return;
 		}
 
+		const auto identity_changed =
+			( this->m_seed_last_controller
+				&& this->m_seed_last_controller != controller )
+			|| ( this->m_seed_last_pawn && this->m_seed_last_pawn != pawn );
+		const auto tick_rewound = this->m_seed_last_tick >= 0
+			&& seed_tick + 32 < this->m_seed_last_tick;
+        const auto source_changed = m_seed_last_host_mode >= 0
+            && m_seed_last_host_mode != static_cast<int>(host_session);
+        if ( identity_changed || tick_rewound || source_changed )
+		{
+			this->reset_seed( );
+		}
+		this->m_seed_last_controller = controller;
+		this->m_seed_last_pawn = pawn;
+		if ( this->m_seed_last_tick != seed_tick )
+		{
+
+			this->m_seed_tick_observed_at = now;
+		}
+		this->m_seed_last_tick = seed_tick;
+        m_seed_last_host_mode = static_cast<int>(host_session);
+        sync_seed_phase(seed_tick, std::chrono::steady_clock::now());
+        if (tracing) {
+            auto& r = trace.record;
+            r.initial.tick = seed_tick; r.initial.eye = eye_pos; r.initial.view = view_angles;
+            r.phase_tick = m_seed_phase_tick;
+            r.minimum_us = m_seed_network_window.minimum_us; r.maximum_us = m_seed_network_window.maximum_us;
+            r.phase_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - m_seed_phase_tick_at).count();
+        }
+
+
 		const auto shots_fired = app::context().process.load<std::int32_t>(
 			pawn + SCHEMA( "C_CSPlayerPawn", "m_iShotsFired"_id ) );
 		const auto shot_consumed = this->m_seed_last_shots >= 0
@@ -1337,6 +1394,8 @@ namespace features::aimbot {
 		if ( shot_consumed )
 		{
             if (tracing) simulation::shot_trace::consumed(pawn, seed_tick, shots_fired);
+            if (m_seed_phase_receipt.weapon && m_seed_phase_receipt.pressed_at <= now)
+                m_seed_phase_receipt.shot_seen = true;
 			features::visuals::event_log( ).mark_latest_trigger_consumed( );
 #if defined( VESTA_SEED_LOG ) && VESTA_SEED_LOG
 			if ( g_press_sequence >= 0 )
@@ -1378,37 +1437,67 @@ namespace features::aimbot {
 				features::misc::auto_stop_source::seed_trigger );
 		}
 		this->m_seed_last_shots = shots_fired;
+        if (m_seed_phase_receipt.weapon) {
+            auto& receipt = m_seed_phase_receipt;
+            int feedback_player_tick{};
+            if (!app::context().process.copy(controller + SCHEMA("CBasePlayerController", "m_nTickBase"_id),
+                &feedback_player_tick, sizeof(feedback_player_tick)) || feedback_player_tick < receipt.player_tick) {
+                receipt.feedback_valid = false;
+                m_seed_network_window.early_streak = m_seed_network_window.late_streak = 0;
+            }
+            receipt.player_tick = std::max(receipt.player_tick, feedback_player_tick);
+            if (now - receipt.pressed_at > std::chrono::milliseconds(500)) receipt = {};
+            else if (receipt.shot_seen) {
+                const auto time_offset = SCHEMA("C_CSWeaponBase", "m_fLastShotTime"_id);
+                const auto wat_offset = SCHEMA("C_CSWeaponBase", "m_flWatTickOffset"_id);
+                float shot_time{}, wat{}, confirmed_time{}, confirmed_wat{};
+                auto& process = app::context().process;
+                if (time_offset > 0 && wat_offset > 0
+                    && process.copy(receipt.weapon + time_offset, &shot_time, sizeof(shot_time))
+                    && process.copy(receipt.weapon + wat_offset, &wat, sizeof(wat))
+                    && process.copy(receipt.weapon + time_offset, &confirmed_time, sizeof(confirmed_time))
+                    && process.copy(receipt.weapon + wat_offset, &confirmed_wat, sizeof(confirmed_wat))
+                    && shot_time == confirmed_time && wat == confirmed_wat
+                    && std::isfinite(shot_time) && shot_time > 0.0f
+                    && shot_time > receipt.previous_shot_time) {
+                    if (const auto clock = simulation::infer_shot_clock(shot_time, wat);
+                        receipt.feedback_valid && clock && clock->minimum_tick == clock->maximum_tick)
+                        m_seed_network_window.observe(receipt.phase_us,
+                            clock->minimum_tick - receipt.selected_tick);
+                    receipt = {};
+                }
+            }
+        }
 
-		const auto identity_changed =
-			( this->m_seed_last_controller
-				&& this->m_seed_last_controller != controller )
-			|| ( this->m_seed_last_pawn && this->m_seed_last_pawn != pawn );
-		const auto tick_rewound = this->m_seed_last_tick >= 0
-			&& seed_tick + 32 < this->m_seed_last_tick;
-		if ( identity_changed || tick_rewound )
-		{
-			this->reset_seed( );
-		}
-		this->m_seed_last_controller = controller;
-		this->m_seed_last_pawn = pawn;
-		if ( this->m_seed_last_tick != seed_tick )
-		{
 
-			this->m_seed_tick_observed_at = now;
-		}
-		this->m_seed_last_tick = seed_tick;
 
-		// Preserve seed_trigger_advanced's ordering: coherent local state first,
-		// then a private weapon snapshot, then private target/bone reads.
         trace.reason = trace_reason::weapon;
 		ballistics_t::context ctx{};
-		if ( !seed_shared.seed_weapon( pawn, controller, velocity, ctx ) )
+		if ( !seed_shared.seed_weapon( pawn, controller, ctx )
+            || (!host_session && static_cast<long long>(ctx.seed_simulation_tick) + 1 != seed_tick) )
 		{
 			this->m_seed_targets.clear( );
 			return;
 		}
+        const auto velocity = ctx.velocity;
+        if (tracing) {
+            const auto observed_simulation_tick = ctx.seed_simulation_tick;
+            const auto observed_ping = app::context().process.load<int>(
+                controller + SCHEMA("CCSPlayerController", "m_iPing"_id));
+            const auto observed_view = ctx.seed_view_angles;
+            trace_snapshot(trace.record.initial, ctx);
+            trace.record.initial.velocity = velocity;
+            trace.record.initial.simulation_tick = observed_simulation_tick;
+            trace.record.initial.ping = observed_ping;
+            trace.record.snapshot_end_qpc = simulation::shot_trace::qpc_now();
+            simulation::shot_trace::weapon_snapshot(seed_tick, observed_simulation_tick,
+                ctx.player_tick, observed_ping, ctx.inaccuracy, ctx.spread,
+                ctx.recoil_index, observed_view, velocity, ctx.weapon);
+        }
 		const auto resolved = this->runtime_config()->combat.get( ctx.weapon_type );
 		const auto cfg = resolved.triggerbot;
+        if (tracing) trace.record.policy = {cfg.min_damage, float(cfg.hitbox_parts), float(cfg.seed_type),
+            float(cfg.reaction_time), float(cfg.predictive), float(cfg.checks.walls), float(cfg.lethal_only), float(cfg.key)};
 		const auto is_enemy = [ local_team, free_for_all ]( int team )
 		{
 			return free_for_all || team != local_team;
@@ -1436,6 +1525,12 @@ namespace features::aimbot {
         trace.reason = trace_reason::reaction;
         if (!m_seed_reaction.ready(now, cfg.reaction_time)) return;
         trace.reason = trace_reason::cooldown;
+        if (!simulation::seed_timing::current_phase(m_seed_phase_tick, seed_tick, m_seed_phase_tick_at)
+            || (!host_session && std::chrono::steady_clock::now() - m_seed_phase_tick_at
+                > std::chrono::microseconds(m_seed_network_window.maximum_us))) {
+            trace.reason = trace_reason::stale_delivery;
+            return;
+        }
 		constexpr std::uint16_t revolver_id{ 64 };
 		if ( ( !ctx.weapon_ready && ctx.item_def_idx != revolver_id )
 			|| ctx.is_reloading )
@@ -1447,8 +1542,12 @@ namespace features::aimbot {
 
         trace.reason = this->m_trigger_held ? trace_reason::pending : trace_reason::plan_unavailable;
 		const auto plan = this->build_seed_plan(
-			pawn, view_angles, host_session, seed_tick, now,
-			!this->m_trigger_held );
+			pawn, ctx.seed_view_angles, host_session, seed_tick, now,
+			!this->m_trigger_held, &ctx.seed_recoil );
+        if (tracing) {
+            trace.record.plan_qpc = simulation::shot_trace::qpc_now();
+            if (plan) trace.record.initial_plan = trace_plan(*plan);
+        }
 		if ( this->m_trigger_held || !plan )
 		{
 			return;
@@ -1622,27 +1721,20 @@ namespace features::aimbot {
 			std::uintptr_t target_pawn, int required_hitbox,
 			const seed_shot_plan& shot_plan )
 		{
-			auto current = false;
-			auto next = false;
-			if ( shot_plan.phase != seed_prediction_phase::next )
-			{
-				current = evaluate_sample(
-					candidates, weapon_ctx, local_eye, local_velocity,
-					local_tick, target_pawn, required_hitbox,
-					shot_plan.current );
-			}
-			if ( shot_plan.phase != seed_prediction_phase::current )
-			{
-				next = evaluate_sample(
-					candidates, weapon_ctx, local_eye, local_velocity,
-					local_tick, target_pawn, required_hitbox,
-					shot_plan.next );
-			}
-			return std::pair{ current, next };
+            return simulation::seed_evaluation::required_pair(
+                shot_plan.phase != seed_prediction_phase::next,
+                shot_plan.phase != seed_prediction_phase::current,
+                simulation::seed_evaluation::identical_ray(shot_plan.current, shot_plan.next),
+                [&](bool next) {
+                    return evaluate_sample(candidates, weapon_ctx, local_eye, local_velocity,
+                        local_tick, target_pawn, required_hitbox,
+                        next ? shot_plan.next : shot_plan.current);
+                });
 		};
 
         trace.reason = trace_reason::no_hit;
 		std::uintptr_t firing_target{};
+        std::uintptr_t firing_controller{};
 		int firing_hitbox = -1;
 		for ( const auto& player : players )
 		{
@@ -1663,10 +1755,16 @@ namespace features::aimbot {
 			if ( safe_seed_match( *plan, matches ) )
 			{
 				firing_target = player.pawn;
+                if (tracing) target_trace.initial = trace_target(player, 0);
+                firing_controller = player.controller;
 				firing_hitbox = restricted_pawn ? restricted_hitbox : -1;
 				break;
 			}
 		}
+        if (tracing) {
+            trace.record.target_qpc = simulation::shot_trace::qpc_now();
+            trace.record.initial.target = firing_target;
+        }
 		if ( !firing_target )
 		{
 			return;
@@ -1680,31 +1778,33 @@ namespace features::aimbot {
 				static_cast<float>( ticks_ahead ) * game::rules::simulation_step ) );
 
         trace.reason = trace_reason::changed_state;
+        if (tracing) trace.record.final_start_qpc = simulation::shot_trace::qpc_now();
+        const auto final_now = std::chrono::steady_clock::now();
 		const auto final_controller = app::context().process.load<std::uintptr_t>(
 			app::context().addresses.local_player_controller );
 		if ( final_controller != controller )
 		{
 			return;
 		}
-		const auto final_host_session =
-			is_host_seed_session( final_controller );
+		const auto final_host_status = is_host_seed_session( final_controller );
+        if (!final_host_status) return;
+        const auto final_host_session = *final_host_status;
 		const auto final_binding = game::resolve_local_pawn( final_controller );
 		const auto final_pawn = final_binding.pawn;
 		if ( final_pawn != pawn || final_binding.handle != local_binding.handle )
 		{
 			return;
 		}
+		game::world().seed_players_into( this->m_seed_player_buffer,
+			final_pawn, final_controller, local_team, free_for_all,
+			firing_target, firing_controller );
+		const auto& final_players = this->m_seed_player_buffer;
 		const auto final_health = app::context().process.load<std::int32_t>(
 			final_pawn + SCHEMA( "C_BaseEntity", "m_iHealth"_id ) );
 		const auto final_team = app::context().process.load<std::int32_t>(
 			final_pawn + SCHEMA( "C_BaseEntity", "m_iTeamNum"_id ) );
-		auto final_velocity = app::context().process.load<foundation::vec3>(
-			final_pawn + SCHEMA( "C_BaseEntity", "m_vecAbsVelocity"_id ) );
 		if ( final_health <= 0 || final_health > 100
-			|| final_team != local_team
-			|| !std::isfinite( final_velocity.x )
-			|| !std::isfinite( final_velocity.y )
-			|| !std::isfinite( final_velocity.z ) )
+			|| final_team != local_team )
 		{
 			return;
 		}
@@ -1717,38 +1817,65 @@ namespace features::aimbot {
 		}
 		const auto final_tick = read_seed_tick(
 			final_controller, final_pawn, final_host_session );
-		if ( final_tick != seed_tick )
+		if ( final_tick != seed_tick || final_host_session != host_session )
 		{
 			return;
 		}
 
 		ballistics_t::context final_ctx{};
 		if ( !seed_shared.seed_weapon(
-			final_pawn, final_controller, final_velocity, final_ctx )
+			final_pawn, final_controller, final_ctx )
 			|| ( !final_ctx.weapon_ready
 				&& final_ctx.item_def_idx != revolver_id )
 			|| final_ctx.is_reloading
-			|| final_ctx.weapon != ctx.weapon )
+			|| final_ctx.weapon != ctx.weapon
+            || final_ctx.player_tick != ctx.player_tick
+            || final_ctx.seed_simulation_tick != ctx.seed_simulation_tick
+            || (!final_host_session && static_cast<long long>(final_ctx.seed_simulation_tick) + 1 != final_tick) )
 		{
 			return;
 		}
-		const auto final_now = std::chrono::steady_clock::now( );
-		const auto final_plan = this->build_seed_plan(
-			final_pawn, final_view, final_host_session,
-			final_tick, final_now, false );
+        const auto final_velocity = final_ctx.velocity;
+        if (tracing) {
+            auto& out = trace.record.final;
+            out.pawn = final_pawn; out.controller = final_controller; out.target = firing_target;
+            out.tick = final_tick; out.host_mode = final_host_session;
+            out.eye = final_eye; out.view = final_view; out.velocity = final_velocity;
+            trace_snapshot(out, final_ctx);
+            out.simulation_tick = final_ctx.seed_simulation_tick;
+            trace.record.final_snapshot_qpc = simulation::shot_trace::qpc_now();
+        }
+        float previous_shot_time{};
+        bool previous_shot_time_valid{};
+        if (!final_host_session) {
+            const auto last_shot_offset = SCHEMA("C_CSWeaponBase", "m_fLastShotTime"_id);
+            previous_shot_time_valid = last_shot_offset > 0
+                && app::context().process.copy(final_ctx.weapon + last_shot_offset,
+                    &previous_shot_time, sizeof(previous_shot_time))
+                && std::isfinite(previous_shot_time) && previous_shot_time >= 0.0f;
+        }
+		auto final_plan = this->build_seed_plan(
+			final_pawn, final_ctx.seed_view_angles, final_host_session,
+			final_tick, final_now, false, &final_ctx.seed_recoil );
+        if (tracing) {
+            trace.record.final_plan_qpc = simulation::shot_trace::qpc_now();
+            if (final_plan) trace.record.final_plan = trace_plan(*final_plan);
+        }
 		if ( !final_plan )
 		{
 			return;
 		}
 
-		game::world().seed_players_into( this->m_seed_player_buffer,
-			final_pawn, final_controller, final_team, free_for_all,
-			firing_target );
-		const auto& final_players = this->m_seed_player_buffer;
+
         trace.reason = trace_reason::recheck;
 		const auto final_matches = evaluate_plan(
 			final_players, final_ctx, final_eye, final_velocity, final_tick,
 			firing_target, firing_hitbox, *final_plan );
+        if (tracing) {
+            trace.record.final_ray_qpc = simulation::shot_trace::qpc_now();
+            const auto target = std::ranges::find(final_players, firing_target, &game::player_snapshot::pawn);
+            if (target != final_players.end()) target_trace.final = trace_target(*target, 1);
+        }
 		if ( !safe_seed_match( *final_plan, final_matches ) )
 		{
 			return;
@@ -1771,19 +1898,27 @@ namespace features::aimbot {
 		}
 
         trace.reason = trace_reason::changed_state;
+        if (tracing) trace.record.terminal_start_qpc = simulation::shot_trace::qpc_now();
 		const auto terminal_guard_at = std::chrono::steady_clock::now( );
 		const auto terminal_tick = read_seed_tick(
 			final_controller, final_pawn, final_host_session );
-		const auto terminal_angles = app::context().process.load<foundation::vec3>(
-			final_pawn + SCHEMA( "C_BasePlayerPawn", "v_angle"_id ) );
+        foundation::vec3 terminal_angles{};
+        if (!app::context().process.copy(final_pawn + SCHEMA("C_BasePlayerPawn", "v_angle"_id),
+            &terminal_angles, sizeof(terminal_angles))) return;
 		const auto terminal_punch = simulation::read_shot_punch(final_pawn,
             {final_plan->current.tick, final_plan->current.fraction});
-		const auto terminal_recoil_index = app::context().process.load<float>(
-			final_ctx.weapon + SCHEMA( "C_CSWeaponBase", "m_flRecoilIndex"_id ) );
-		const auto terminal_clip = app::context().process.load<std::int32_t>(
-			final_ctx.weapon + SCHEMA( "C_BasePlayerWeapon", "m_iClip1"_id ) );
-		const auto terminal_reloading = app::context().process.load<bool>(
-			final_ctx.weapon + SCHEMA( "C_CSWeaponBase", "m_bInReload"_id ) );
+        float terminal_recoil_index{};
+        int terminal_clip{}, terminal_player_tick{};
+        bool terminal_reloading{};
+        auto& process = app::context().process;
+        if (!process.copy(final_ctx.weapon + SCHEMA("C_CSWeaponBase", "m_flRecoilIndex"_id),
+                &terminal_recoil_index, sizeof(terminal_recoil_index))
+            || !process.copy(final_ctx.weapon + SCHEMA("C_BasePlayerWeapon", "m_iClip1"_id),
+                &terminal_clip, sizeof(terminal_clip))
+            || !process.copy(final_ctx.weapon + SCHEMA("C_CSWeaponBase", "m_bInReload"_id),
+                &terminal_reloading, sizeof(terminal_reloading))
+            || !process.copy(final_controller + SCHEMA("CBasePlayerController", "m_nTickBase"_id),
+                &terminal_player_tick, sizeof(terminal_player_tick))) return;
         const auto terminal_direction = terminal_punch
             ? terminal_angles + *terminal_punch : foundation::vec3{NAN,NAN,NAN};
         const auto prepared_direction = final_plan->source_angles + final_plan->prepared_punch;
@@ -1794,10 +1929,19 @@ namespace features::aimbot {
 		const auto same_punch = terminal_punch
 			&& std::abs( terminal_punch->x - final_plan->prepared_punch.x ) <= 0.02f
 			&& std::abs( terminal_punch->y - final_plan->prepared_punch.y ) <= 0.02f;
+        if (tracing) {
+            auto& r = trace.record;
+            r.terminal_end_qpc = simulation::shot_trace::qpc_now();
+            r.terminal_tick = terminal_tick; r.terminal_angles = terminal_angles;
+            r.terminal_punch = terminal_punch.value_or(foundation::vec3{NAN,NAN,NAN});
+            r.terminal_recoil = terminal_recoil_index; r.terminal_clip = terminal_clip;
+            r.terminal_reloading = terminal_reloading; r.same_bucket = same_hash_bucket; r.same_punch = same_punch;
+        }
 		if ( terminal_tick != final_tick || !same_hash_bucket || !same_punch
+			|| terminal_player_tick != final_ctx.player_tick
 			|| !std::isfinite( terminal_recoil_index )
 			|| std::abs( terminal_recoil_index - final_ctx.recoil_index ) > 0.001f
-			|| terminal_clip <= 0 || terminal_reloading )
+			|| terminal_clip <= 0 || terminal_clip != final_ctx.clip || terminal_reloading )
 		{
 #if defined( VESTA_SEED_LOG ) && VESTA_SEED_LOG
 			seed_file_write( std::format(
@@ -1810,14 +1954,39 @@ namespace features::aimbot {
 			return;
 		}
 
+        // A stable seed bucket does not imply an unchanged continuous ray direction.
+        const auto angle_delta = terminal_angles - final_plan->source_angles;
+        if (std::abs(angle_delta.x) > 0.0001f || std::abs(angle_delta.y) > 0.0001f) {
+            const auto refreshed_plan = this->build_seed_plan(final_pawn, terminal_angles,
+                final_host_session, final_tick, terminal_guard_at, false, &final_ctx.seed_recoil);
+            if (!refreshed_plan) return;
+            const auto refreshed_matches = evaluate_plan(final_players, final_ctx, final_eye,
+                final_velocity, final_tick, firing_target, firing_hitbox, *refreshed_plan);
+            if (!safe_seed_match(*refreshed_plan, refreshed_matches)) return;
+            final_plan = refreshed_plan;
+            if (tracing) trace.record.final_plan = trace_plan(*final_plan);
+        }
+
         trace.reason = trace_reason::stale_delivery;
         const auto delivery_tick = read_seed_tick(final_controller, final_pawn, final_host_session);
         const auto delivery_at = std::chrono::steady_clock::now();
         const auto micros = [](auto duration) { return std::chrono::duration_cast<std::chrono::microseconds>(duration); };
-        if (!simulation::seed_timing::fresh_decision(
+        if (tracing) {
+            auto& r = trace.record;
+            r.delivery_qpc = simulation::shot_trace::qpc_now(); r.delivery_tick = delivery_tick;
+            r.final_age_us = micros(delivery_at - final_now).count();
+            r.terminal_age_us = micros(delivery_at - terminal_guard_at).count();
+            r.phase_us = micros(delivery_at - m_seed_phase_tick_at).count();
+        }
+        if (!(final_host_session ? simulation::seed_timing::fresh_decision(
                 micros(delivery_at - final_now), micros(delivery_at - terminal_guard_at),
                 micros(final_now - m_seed_phase_tick_at), micros(delivery_at - m_seed_phase_tick_at))
+            : simulation::seed_timing::fresh_network_decision(
+                micros(delivery_at - final_now), micros(delivery_at - terminal_guard_at),
+                micros(final_now - m_seed_phase_tick_at), micros(delivery_at - m_seed_phase_tick_at),
+                m_seed_network_window))
             || delivery_tick != final_tick
+            || !simulation::seed_timing::current_phase(m_seed_phase_tick, final_tick, m_seed_phase_tick_at)
             || !app::context().overlay.combat_input_ready() || app::context().menu.is_open())
         {
             m_seed_memo_sequence = -1;
@@ -1829,6 +1998,31 @@ namespace features::aimbot {
 		this->m_seed_held_proxy =
 			cfg.key == VK_LBUTTON && final_ctx.item_def_idx != revolver_id;
         trace.reason = trace_reason::input_failed;
+        if (tracing) {
+            trace.record.input_proxy = m_seed_held_proxy;
+            trace.record.pre_cock = m_revolver_pre_cock_down;
+            trace.record.input_start_qpc = simulation::shot_trace::qpc_now();
+        }
+        const auto submission_started_at = std::chrono::steady_clock::now();
+        const bool transferred_press = !m_seed_held_proxy && m_revolver_pre_cock_down;
+        auto& api_budget = m_seed_held_proxy ? m_seed_key_budget : m_seed_pointer_budget;
+        const auto api_reserve = transferred_press ? std::chrono::microseconds::zero() : api_budget.reserve();
+        const auto start_phase = micros(submission_started_at - m_seed_phase_tick_at);
+        const auto projected_phase = start_phase + api_reserve;
+        const bool has_submission_budget = final_host_session
+            ? simulation::seed_timing::fresh_decision(micros(submission_started_at - final_now),
+                micros(submission_started_at - terminal_guard_at),
+                micros(final_now - m_seed_phase_tick_at), projected_phase)
+            : simulation::seed_timing::fresh_network_decision(micros(submission_started_at - final_now),
+                micros(submission_started_at - terminal_guard_at),
+                micros(final_now - m_seed_phase_tick_at), start_phase, m_seed_network_window)
+                && m_seed_network_window.contains(projected_phase);
+        if (!has_submission_budget) {
+            trace.reason = trace_reason::stale_delivery;
+            m_seed_held_proxy = false;
+            stop_guard.preserve = false;
+            return;
+        }
 		bool press_delivered{};
 		if ( this->m_seed_held_proxy )
 		{
@@ -1848,7 +2042,15 @@ namespace features::aimbot {
 					platform::windows::pointer_action::primary_down );
 			}
 			this->m_revolver_pre_cock_down = false;
-		}
+        }
+        const auto submission_completed_at = std::chrono::steady_clock::now();
+        if (!transferred_press) api_budget.observe(submission_completed_at - submission_started_at);
+        if (tracing) {
+            trace.record.input_end_qpc = simulation::shot_trace::qpc_now();
+            trace.record.input_ok = press_delivered;
+            trace.record.input_backend = !trace.record.input_proxy && trace.record.pre_cock
+                ? 0 : platform::windows::input_gateway::last_injection_backend();
+        }
 		if ( !press_delivered )
 		{
 			// Do not create synthetic ownership for an input event Windows did not
@@ -1857,6 +2059,8 @@ namespace features::aimbot {
 			return;
 		}
 
+        const auto submitted_at = submission_started_at
+            + (submission_completed_at - submission_started_at) / 2;
         trace.reason = trace_reason::submitted;
         if (tracing) {
             const auto& candidate = final_plan->phase == seed_prediction_phase::current
@@ -1874,13 +2078,21 @@ namespace features::aimbot {
 		this->m_seed_press_active = true;
 		this->m_revolver_committed = final_ctx.item_def_idx == revolver_id;
 		this->m_trigger_release_time =
-			delivery_at + std::chrono::milliseconds(
+			submission_completed_at + std::chrono::milliseconds(
 				this->m_revolver_committed ? 1200 : 40 );
 		this->m_seed_pending_target_tick =
 			final_plan->phase == seed_prediction_phase::current
 				? final_plan->current.tick
 				: final_plan->next.tick;
-		this->m_seed_pending_time = delivery_at;
+		this->m_seed_pending_time = submitted_at;
+        m_seed_phase_receipt = {};
+        if (previous_shot_time_valid) {
+            // This marker predates input; a post-input read can already contain this shot.
+            m_seed_phase_receipt = {final_ctx.weapon, final_tick,
+                static_cast<int>(micros(submitted_at - m_seed_phase_tick_at).count()),
+                previous_shot_time, submitted_at, false, final_ctx.player_tick, true};
+        }
+
 
 #if defined( VESTA_SEED_LOG ) && VESTA_SEED_LOG
 		foundation::vec3 press_command_angles{};
@@ -1932,7 +2144,12 @@ namespace features::aimbot {
 			this->draw_penetration_crosshair( draw_list, eye_pos, view_angles, cfg, current_time );
 		}
 
-		const auto draw_aim_visualization = cfg.aimbot.draw_fov;
+		const auto draw_aim_visualization = cfg.aimbot.enabled && cfg.aimbot.draw_fov;
+		if ( !draw_aim_visualization )
+		{
+			this->m_fov_alpha.snap( 0.0f );
+			return;
+		}
 		this->m_fov_alpha.set_target( valid_weapon && draw_aim_visualization
 			? 1.0f : 0.0f );
 		this->m_fov_alpha.update( );
@@ -2088,11 +2305,17 @@ namespace features::aimbot {
 		const auto aimbot_requested = requested_cfg.aimbot.enabled
 			&& config::combat_profile::activation_active(
 				requested_cfg.aimbot.activation_mode, requested_cfg.aimbot.key );
+		if ( !aimbot_requested )
+		{
+			this->m_aim_selection_world.reset();
+			this->m_aim_selection_target = {};
+		}
 		const auto trigger_requested = requested_cfg.triggerbot.enabled
 			&& !independent_seed
 			&& config::combat_profile::activation_active(
 				requested_cfg.triggerbot.activation_mode, requested_cfg.triggerbot.key );
-		const auto dynamic_fov_visualization_requested = requested_cfg.aimbot.draw_fov
+		const auto dynamic_fov_visualization_requested = requested_cfg.aimbot.enabled
+			&& requested_cfg.aimbot.draw_fov
 			&& requested_cfg.aimbot.fov_config.selection
 				!= config::combat_profile::fov_settings::fixed;
 
@@ -2113,7 +2336,12 @@ namespace features::aimbot {
 			this->m_trigger_target_valid = false;
 			this->m_aim_error = {};
 			this->m_aim_last_input_sequence = -1;
+			this->m_aim_virtual_angles_valid = false;
+			this->m_aim_sent_since_sample = {};
+			this->m_aim_pending_since = {};
 			this->m_aim_pawn = 0;
+			this->m_aim_selection_world.reset();
+			this->m_aim_selection_target = {};
 			this->m_aim_tracking_lag = 0.0f;
 			this->m_aim_velocity_valid = false;
 			features::misc::auto_stop( ).cancel_request(
@@ -2178,34 +2406,43 @@ namespace features::aimbot {
 			return;
 		}
 
-		target visual_target{};
-		bool visual_target_sampled{};
-		if ( cfg.aimbot.draw_fov
+		const auto visual_scan_requested = cfg.aimbot.enabled && cfg.aimbot.draw_fov
 			&& cfg.aimbot.fov_config.selection
-				!= config::combat_profile::fov_settings::fixed
-			&& now >= this->m_next_visual_scan )
+				!= config::combat_profile::fov_settings::fixed;
+		const auto visual_scan_due = visual_scan_requested
+			&& now >= this->m_next_visual_scan;
+		const auto aim_can_select = aimbot_requested && cfg.aimbot.enabled
+			&& config::combat_profile::activation_active(
+				cfg.aimbot.activation_mode, cfg.aimbot.key )
+			&& !this->m_trigger_held && !ctx.is_reloading && ctx.clip != 0
+			&& ( !visual_scan_due || !local_checks_blocked( cfg.aimbot.checks ) );
+		const auto publish_indicator = [ this, &cfg, &frame ]( const target& picked )
 		{
-
-			visual_target_sampled = true;
+			if ( !picked.player ) return;
+			auto point = picked.aim_point;
+			if ( picked.bone >= 0 && picked.bone < 128 && picked.bones.is_valid( ) )
+			{
+				const auto& bone = picked.bones.bones[ picked.bone ];
+				point = bone.position + bone.rotation.apply( picked.aim_offset );
+			}
+			std::scoped_lock lock( this->m_indicator_mutex );
+			this->m_indicator_point = point;
+			this->m_indicator_fov = selection_fov( cfg.aimbot, frame.eye, point );
+			this->m_indicator_time = std::chrono::steady_clock::now( );
+			this->m_indicator_pawn = picked.player->pawn;
+			this->m_indicator_bone_cache = picked.player->bone_cache;
+			this->m_indicator_bone = picked.bone;
+			this->m_indicator_offset = picked.aim_offset;
+		};
+		if ( visual_scan_due && !aim_can_select )
+		{
 			auto visual_cfg = cfg;
 			visual_cfg.aimbot.prediction.enabled = false;
-			visual_target = this->choose_target(
+			const auto visual_target = this->choose_target(
 				frame.eye, frame.view_angles, *frame.targets, visual_cfg,
 				cfg.aimbot.fov_config.selection
 					!= config::combat_profile::fov_settings::target_distance );
-			std::scoped_lock lock( this->m_indicator_mutex );
-			if ( visual_target.player )
-			{
-				this->m_indicator_point = visual_target.aim_point;
-				this->m_indicator_fov = selection_fov(
-					cfg.aimbot, frame.eye, visual_target.aim_point );
-				this->m_indicator_time = now;
-				this->m_indicator_pawn = visual_target.player->pawn;
-				this->m_indicator_bone_cache = visual_target.player->bone_cache;
-				this->m_indicator_bone = visual_target.bone;
-				this->m_indicator_offset = visual_target.aim_offset;
-			}
-
+			publish_indicator( visual_target );
 			this->m_next_visual_scan = std::chrono::steady_clock::now( )
 				+ std::chrono::milliseconds( 33 );
 		}
@@ -2251,7 +2488,12 @@ namespace features::aimbot {
 					// Keep the exact release/reset semantics from aimbot().
 					this->m_aim_error = {};
 					this->m_aim_last_input_sequence = -1;
+					this->m_aim_virtual_angles_valid = false;
+					this->m_aim_sent_since_sample = {};
+					this->m_aim_pending_since = {};
 					this->m_aim_pawn = 0;
+					this->m_aim_selection_world.reset();
+					this->m_aim_selection_target = {};
 					this->m_aim_tracking_lag = 0.0f;
 					this->m_aim_velocity_valid = false;
 				}
@@ -2260,15 +2502,55 @@ namespace features::aimbot {
 					if ( local_checks_blocked( cfg.aimbot.checks ) )
 					{
 						this->m_aim_pawn = 0;
+						this->m_aim_selection_world.reset();
+						this->m_aim_selection_target = {};
 						this->flush_recoil_input( );
 						return;
 					}
-					auto selected_target = visual_target_sampled
-						? visual_target : this->choose_target(
-							frame.eye, frame.view_angles, *frame.targets, cfg );
-					if ( selected_target.player && selected_target.fov
-						> selection_fov( cfg.aimbot, frame.eye, selected_target.aim_point ) )
-						selected_target = {};
+					// Bound target selection to one world sample or 16 ms, whichever ends first.
+					const auto selection_now = std::chrono::steady_clock::now( );
+					const auto view_delta = std::hypot(
+						frame.view_angles.x - this->m_aim_selection_view.x,
+						foundation::wrap_yaw(frame.view_angles.y - this->m_aim_selection_view.y));
+					const auto can_reuse = this->m_aim_selection_world == frame.targets
+						&& this->m_aim_selection_weapon == ctx.weapon
+						&& selection_now - this->m_aim_selection_at < std::chrono::milliseconds( 16 )
+						&& (this->m_aim_selection_target.player || view_delta < 0.5f);
+					auto selected_target = can_reuse ? this->m_aim_selection_target
+						: this->choose_target( frame.eye, frame.view_angles, *frame.targets, cfg );
+					if ( selected_target.player )
+					{
+						selected_target.fov = this->get_fov( frame.view_angles, frame.eye,
+							selected_target.aim_point );
+						if ( selected_target.fov > selection_fov( cfg.aimbot, frame.eye,
+							selected_target.aim_point ) )
+							selected_target = {};
+					}
+					if ( !can_reuse )
+					{
+						this->m_aim_selection_world = frame.targets;
+						this->m_aim_selection_target = selected_target;
+						this->m_aim_selection_view = frame.view_angles;
+						this->m_aim_selection_weapon = ctx.weapon;
+						this->m_aim_selection_at = std::chrono::steady_clock::now( );
+					}
+					if ( selected_target.player && visual_scan_requested )
+					{
+						publish_indicator( selected_target );
+						this->m_next_visual_scan = std::chrono::steady_clock::now( )
+							+ std::chrono::milliseconds( 33 );
+					}
+					else if ( !selected_target.player && visual_scan_due
+						&& cfg.aimbot.fov_config.selection
+							== config::combat_profile::fov_settings::target_distance )
+					{
+						auto visual_cfg = cfg;
+						visual_cfg.aimbot.prediction.enabled = false;
+						publish_indicator( this->choose_target(
+							frame.eye, frame.view_angles, *frame.targets, visual_cfg, false ) );
+						this->m_next_visual_scan = std::chrono::steady_clock::now( )
+							+ std::chrono::milliseconds( 33 );
+					}
 					if ( selected_target.player )
 					{
 						this->aimbot(
@@ -2288,6 +2570,7 @@ namespace features::aimbot {
 	{
 		target selected{};
 		selected.fov = std::numeric_limits<float>::max( );
+		auto best_score = selected.fov;
 
 		for ( const auto& player : players )
 		{
@@ -2301,7 +2584,7 @@ namespace features::aimbot {
 			candidate.player = &player;
 			candidate.bones = player.bones;
 			candidate.aim_point = get_aim_point( eye_pos, view_angles, player,
-				candidate.bones, config, candidate.damage, candidate.hitbox,
+				candidate.bones, config, enforce_fov, candidate.damage, candidate.hitbox,
 				candidate.bone, candidate.penetrated, candidate.aim_offset );
 			if ( candidate.hitbox < 0 )
 				continue;
@@ -2310,25 +2593,27 @@ namespace features::aimbot {
 				view_angles, eye_pos, candidate.aim_point );
 			const auto candidate_limit = selection_fov(
 				config.aimbot, eye_pos, candidate.aim_point );
+			const auto score = detail::selection_cost( candidate.fov,
+				player.pawn == this->m_aim_pawn );
 			if ( ( !enforce_fov || candidate.fov <= candidate_limit )
-				&& candidate.fov <= selected.fov )
+				&& score <= best_score )
+			{
+				best_score = score;
 				selected = std::move( candidate );
+			}
 		}
 		return selected;
 	}
 
-	foundation::vec3 aimbot_t::get_aim_point( const foundation::vec3& eye_pos, const foundation::vec3& view_angles, const game::player_snapshot& player, const game::skeleton_reader::data& bones, const config::combat_profile::resolved_config& cfg, float& out_damage, int& out_hitbox, int& out_bone, bool& out_penetrated, foundation::vec3& out_offset ) const
+	foundation::vec3 aimbot_t::get_aim_point( const foundation::vec3& eye_pos, const foundation::vec3& view_angles, const game::player_snapshot& player, const game::skeleton_reader::data& bones, const config::combat_profile::resolved_config& cfg, bool enforce_fov, float& out_damage, int& out_hitbox, int& out_bone, bool& out_penetrated, foundation::vec3& out_offset ) const
 	{
 		out_hitbox = -1;
 		out_bone = -1;
 		out_offset = {};
-		if ( !game::collision().valid( ) )
-		{
-			return {};
-		}
+		const bool collision_ready = game::collision().valid();
 
 		foundation::vec3 best_point{};
-		auto best_fov = std::numeric_limits<float>::max( );
+		auto best_score = std::numeric_limits<float>::max( );
 		foundation::vec3 selection_prediction{};
 		if ( cfg.aimbot.prediction.enabled )
 		{
@@ -2395,7 +2680,12 @@ namespace features::aimbot {
 				const auto pos = base_pos + selection_prediction;
 
 				const auto fov = this->get_fov( view_angles, eye_pos, pos );
-				if ( fov >= best_fov )
+				if ( !detail::should_trace_candidate( fov,
+				selection_fov( cfg.aimbot, eye_pos, pos ), enforce_fov ) )
+					continue;
+				const auto score = detail::selection_cost( fov,
+					player.pawn == this->m_aim_pawn && hb.bone == this->m_aim_last_bone );
+				if ( score >= best_score )
 				{
 					continue;
 				}
@@ -2409,7 +2699,9 @@ namespace features::aimbot {
 					continue;
 				}
 
-				const auto trace = game::collision().trace_ray( eye_pos, pos );
+				const auto trace = collision_ready
+					? game::collision().trace_ray(eye_pos, pos)
+					: game::collision_world::trace_result{};
 
 				if ( !trace.hit )
 				{
@@ -2443,7 +2735,7 @@ namespace features::aimbot {
 					continue;
 				}
 
-				best_fov = fov;
+				best_score = score;
 				best_point = pos;
 				out_damage = damage;
 				out_hitbox = hb.index;
@@ -2706,7 +2998,8 @@ namespace features::aimbot {
 		this->m_rcs_burst_shots = std::max(
 			this->m_rcs_burst_shots, std::max( reported_shots, 0 ) );
 
-		const auto physical_attack = ( ::GetAsyncKeyState( VK_LBUTTON ) & 0x8000 ) != 0;
+        const auto physical_attack = game::physical_action_down(
+            game::input_action::attack, app::context().input);
 		const auto attack_owned_by_trigger = this->m_trigger_held
 			&& !this->m_seed_held_secondary && !this->m_seed_held_proxy;
 		if ( !physical_attack && !attack_owned_by_trigger )
@@ -2730,10 +3023,14 @@ namespace features::aimbot {
 		const auto fov_adjust = app::context().process.load<float>(
 			pawn + SCHEMA( "C_BasePlayerPawn", "m_flFOVSensitivityAdjust"_id ) );
 		const auto degrees_per_pixel = sensitivity * 0.022f * fov_adjust;
-		if ( degrees_per_pixel <= 0.0f ) return;
+        if (!std::isfinite(degrees_per_pixel) || degrees_per_pixel <= 0.0f) return;
 
-		const auto punch = read_aim_punch( pawn );
-		this->m_rcs_raw = punch;
+        const auto punch_sample = simulation::read_cached_punch(
+            app::context().process, pawn,
+            SCHEMA("C_CSPlayerPawn", "m_pAimPunchServices"_id));
+        if (!punch_sample) return;
+        const auto punch = *punch_sample;
+        this->m_rcs_raw = punch;
 
 		if ( !this->m_rcs_active )
 		{
@@ -2835,6 +3132,13 @@ namespace features::aimbot {
 		{
 			this->m_rcs_pending_mouse.x -= static_cast<float>( dx );
 			this->m_rcs_pending_mouse.y -= static_cast<float>( dy );
+			if ( this->m_aim_virtual_angles_valid && this->m_aim_degrees_per_pixel > 0.0f )
+			{
+				if ( this->m_aim_pending_since.time_since_epoch().count() == 0 )
+					this->m_aim_pending_since = now;
+				this->m_aim_sent_since_sample.x += static_cast<float>( dy ) * this->m_aim_degrees_per_pixel;
+				this->m_aim_sent_since_sample.y -= static_cast<float>( dx ) * this->m_aim_degrees_per_pixel;
+			}
 			this->m_rcs_last_input_sequence = -1;
 			this->m_rcs_last_input_time = now;
 		}
@@ -2848,6 +3152,8 @@ namespace features::aimbot {
 			this->m_aim_error = {};
 			this->m_aim_last_input_sequence = -1;
 			this->m_aim_virtual_angles_valid = false;
+			this->m_aim_sent_since_sample = {};
+			this->m_aim_pending_since = {};
 			this->m_aim_last_call = {};
 			this->m_aim_pawn = 0; // отпустили клавишу → следующий захват как новый
 			this->m_aim_tracking_lag = 0.0f;
@@ -2934,7 +3240,7 @@ namespace features::aimbot {
 
 		// Reconstruct the picked point from the freshest complete bone transform.
 		auto aim_point = tgt.aim_point;
-		if ( tgt.bone >= 0 )
+		if ( tgt.bone >= 0 && tgt.bone < 128 )
 		{
 			const auto& fresh_bone = freshest.bones[ tgt.bone ];
 			const auto rotation_norm = fresh_bone.rotation.x * fresh_bone.rotation.x
@@ -2958,7 +3264,8 @@ namespace features::aimbot {
 			: std::clamp( cfg.humanize, 0, 100 ) / 100.0f;
 
 		auto dt = std::chrono::duration<float>( now - this->m_aim_last_call ).count( );
-		if ( dt <= 0.0f || dt > 0.1f )
+		const auto stale_control = dt <= 0.0f || dt > 0.1f;
+		if ( stale_control )
 		{
 			dt = game::rules::simulation_step; // first command after a pause
 		}
@@ -2974,15 +3281,32 @@ namespace features::aimbot {
 			sampled_control_angles.y -= this->m_rcs_pending_mouse.x * deg_per_pixel;
 			sampled_control_angles.y = foundation::wrap_yaw( sampled_control_angles.y );
 		}
-		if ( !this->m_aim_virtual_angles_valid || sequence_changed
-			|| now - this->m_aim_last_input_time > std::chrono::milliseconds( 50 ) )
+		if ( !this->m_aim_virtual_angles_valid || stale_control )
 		{
 			this->m_aim_virtual_angles = sampled_control_angles;
 			this->m_aim_virtual_angles_valid = true;
+			this->m_aim_last_camera_angles = command_angles_valid ? raw_angles : view_angles;
+			this->m_aim_sent_since_sample = {};
+			this->m_aim_pending_since = {};
+		}
+		else if ( sequence_changed && command_angles_valid )
+		{
+			const auto pending_expired = this->m_aim_pending_since.time_since_epoch().count() != 0
+				&& now - this->m_aim_pending_since > std::chrono::milliseconds( 80 );
+			const auto feedback = detail::reconcile_control_angles(
+				this->m_aim_virtual_angles, sampled_control_angles,
+				this->m_aim_last_camera_angles, raw_angles,
+				this->m_aim_sent_since_sample, dt, pending_expired );
+			this->m_aim_virtual_angles = snap ? sampled_control_angles : feedback.control;
+			if ( feedback.manual_override || pending_expired ) this->m_aim_error = {};
+			this->m_aim_last_camera_angles = raw_angles;
+			this->m_aim_sent_since_sample = snap ? foundation::vec3{} : feedback.pending;
+			if ( snap || feedback.manual_override || pending_expired
+				|| this->m_aim_sent_since_sample.length_sqr() < 0.0001f )
+				this->m_aim_pending_since = {};
 		}
 		auto control_angles = this->m_aim_virtual_angles;
 		this->m_aim_last_input_sequence = input_sequence;
-		this->m_aim_last_input_view = view_angles;
 
 		const auto target_angle = [ & ]( const foundation::vec3& point )
 			{
@@ -3030,6 +3354,7 @@ namespace features::aimbot {
 			}
 		}
 		this->m_aim_last_seen = now;
+		this->m_aim_last_bone = tgt.bone;
 
 		if ( h > 0.0f && now < this->m_aim_reaction_until ) return;
 
@@ -3239,8 +3564,7 @@ namespace features::aimbot {
 			|| std::abs( this->m_rcs_pending_mouse.y ) >= 1.0f )
 		{
 
-			if ( !game::collision().valid( )
-				|| !config::combat_profile::activation_active(
+			if ( !config::combat_profile::activation_active(
 				cfg.activation_mode, cfg.key )
 				|| local_checks_blocked( cfg.checks )
 				|| live_target_invulnerable( tgt.player ? tgt.player->pawn : 0,
@@ -3250,9 +3574,8 @@ namespace features::aimbot {
 			{
 				return;
 			}
-			const auto live_trace = game::collision().trace_ray( eye_pos, aim_point );
-
-			const auto live_visible = !live_trace.hit;
+			const auto live_visible = !game::collision().valid()
+				|| !game::collision().trace_ray(eye_pos, aim_point).hit;
 			if ( !live_visible )
 			{
 				if ( cfg.checks.walls == config::combat_profile::wall_policy::block )
@@ -3279,9 +3602,14 @@ namespace features::aimbot {
 				this->m_aim_virtual_angles.x += static_cast<float>( dy ) * deg_per_pixel;
 				this->m_aim_virtual_angles.y = foundation::wrap_yaw(
 					this->m_aim_virtual_angles.y - static_cast<float>( dx ) * deg_per_pixel );
+				if ( dx + rcs_dx || dy + rcs_dy )
+				{
+					if ( this->m_aim_pending_since.time_since_epoch().count() == 0 )
+						this->m_aim_pending_since = now;
+					this->m_aim_sent_since_sample.x += static_cast<float>( dy + rcs_dy ) * deg_per_pixel;
+					this->m_aim_sent_since_sample.y -= static_cast<float>( dx + rcs_dx ) * deg_per_pixel;
+				}
 				this->m_aim_last_input_sequence = input_sequence;
-				this->m_aim_last_input_view = view_angles;
-				this->m_aim_last_input_time = now;
 				this->m_rcs_last_input_sequence = input_sequence;
 				this->m_rcs_last_input_time = now;
 				this->m_rcs_pending_mouse.x -= static_cast<float>( rcs_dx );
@@ -3372,6 +3700,8 @@ namespace features::aimbot {
 			{
 				const auto hitgroup = game::hitbox_data( ).hitgroup_from_hitbox(
 					hitbox.index );
+				if ((cfg.hitbox_parts & part_from_hitbox(hitbox, hitgroup)) == 0)
+					continue;
 				if ( hitbox.index < 0 || hitbox.bone < 0 || hitbox.bone >= 128 )
 				{
 					continue;
@@ -3410,13 +3740,26 @@ namespace features::aimbot {
 		result.hitbox = best.hitbox;
 		result.hitgroup = best.hitgroup;
 		result.point = eye_pos + direction * best.distance;
-        ballistics_t::penetration::result passage{};
-        if (!simulation::ballistics().pen().run_seed(eye_pos, direction, *best.player,
-            best.bones, cfg.hitbox_parts,
-            cfg.checks.walls == config::combat_profile::wall_policy::penetration,
-            1.0f, best.hitbox, passage)) return {};
-        result.damage = passage.damage;
-        result.penetrated = passage.penetrated;
+		if (game::collision().valid())
+		{
+			ballistics_t::penetration::result passage{};
+			if (!simulation::ballistics().pen().run_seed(eye_pos, direction, *best.player,
+				best.bones, cfg.hitbox_parts,
+				cfg.checks.walls == config::combat_profile::wall_policy::penetration,
+				1.0f, best.hitbox, passage)) return {};
+			result.damage = passage.damage;
+			result.penetrated = passage.penetrated;
+		}
+		else
+		{
+			const auto& weapon = simulation::ballistics().pen().get_weapon_data();
+			if (weapon.range <= best.distance || weapon.damage <= 0.0f) return {};
+			result.damage = simulation::ballistics().pen().get_max_damage(
+				best.hitgroup, best.player->armor, best.player->has_helmet,
+				best.player->team) * std::pow(std::clamp(weapon.range_modifier,
+				0.0f, 1.0f), best.distance / 500.0f);
+			result.penetrated = false;
+		}
 
 		if ( cfg.checks.smoke && line_through_smoke( eye_pos, result.point ) )
 			return {};

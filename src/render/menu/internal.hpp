@@ -687,7 +687,7 @@ std::string key_name(int key);
 
 [[nodiscard]] int pressed_bind_key();
 
-void keybind_row(const char *label, int &value);
+void keybind_row(const char *label, int &value, bool keyboard_only = false, bool game_control = false);
 
 void color_picker_popup(zdraw::rgba &color, ImVec2 item_min, ImVec2 item_max, ImGuiID picker_id);
 

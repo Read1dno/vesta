@@ -58,43 +58,4 @@ inline std::uint32_t float_getter(std::span<const std::byte> code)
     const auto offset = field<std::uint32_t>(code,4);
     return offset >= 0x100 && offset <= 0x800 ? offset : 0;
 }
-inline bool valid_frame(const crosshair_frame& frame)
-{
-    if (frame.count > frame.pieces.size()) return false;
-    for (std::size_t i=0; i<frame.count; ++i) {
-        const auto& p=frame.pieces[i];
-        if (p.type > 2) return false;
-        for (float v:p.geometry) if (!std::isfinite(v) || std::abs(v)>32768) return false;
-        for (const auto& color:{p.color,p.outline})
-            for (float v:color) if (!std::isfinite(v) || v<0 || v>1.01f) return false;
-        if (!std::isfinite(p.angle) || !std::isfinite(p.rotation)
-            || std::abs(p.angle)>6.284f || std::abs(p.rotation)>6.284f) return false;
-        if (p.type==0 && (p.geometry[2]<p.geometry[0] || p.geometry[3]<p.geometry[1])) return false;
-        if (p.type!=0 && (p.geometry[2]<0 || p.geometry[3]<0 || p.geometry[3]>p.geometry[2]*2)) return false;
-    }
-    return true;
-}
-template<class Reader>
-bool coherent_frame(std::uintptr_t sequence, std::uintptr_t buffers, Reader&& read,
-    crosshair_frame& output, std::uint32_t& published)
-{
-    output={};published=0;
-    if(!sequence || !buffers) return false;
-    for(int attempt=0;attempt<3;++attempt) {
-        std::uint32_t before{},after{};
-        crosshair_frame sample{};
-        if(!read(sequence,&before,sizeof(before)) || !before
-            || !read(buffers+(before&1)*sizeof(sample),&sample,sizeof(sample))
-            || !read(sequence,&after,sizeof(after))) return false;
-        if(before!=after) continue;
-        if(!valid_frame(sample)) return false;
-        output=sample;published=before;return true;
-    }
-    return false;
-}
-inline float linear_to_srgb(float v)
-{
-    v=std::clamp(v,0.0f,1.0f);
-    return v<=0.0031308f ? v*12.92f : 1.055f*std::pow(v,1.0f/2.4f)-0.055f;
-}
 } // namespace game::compatibility::detail

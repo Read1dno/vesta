@@ -1,27 +1,30 @@
-# Vesta website
+# Vesta landing page
 
-Static GitHub Pages site with no analytics, cookies, backend, or third-party
-JavaScript. It contains the product landing page, a captured Web Radar preview,
-profile downloads, and the HTML build of the Lua API documentation.
+Static GitHub Pages landing for Vesta. It intentionally has no runtime backend,
+analytics, cookies or third-party JavaScript.
 
-## Local preview
+The landing includes downloadable, valid Vesta profiles and the production Web
+Radar frontend running against a captured read-only snapshot. It also builds
+`docs/api_docs` into a responsive HTML documentation site. No preview calls an
+external service.
 
-```powershell
-cd website
-npm run build
-npm run serve
-```
+## Configure links
 
-Open `http://127.0.0.1:4173/`. Do not open `index.html` through a `file://` URL:
-Firefox blocks the radar preview's JSON requests for local files.
+Edit `site-config.js` before publishing:
 
-The build copies:
+- `releaseUrl` and `sourceUrl` may stay empty on a GitHub project page; they are
+  derived from `OWNER.github.io/REPOSITORY` automatically.
 
-- the feature catalogue from `website/feature-tree-data.js`;
-- profiles that exist in `configs/`;
-- `lua/scripts/Vesta Web Radar.lua`;
-- Markdown documentation from `lua/docs`.
+## Build
 
-Missing profiles are rendered as unavailable instead of producing broken links.
-Edit `site-config.js` only when explicit release/source URLs are required; on a
-GitHub project page they are derived from the current URL.
+Run `npm run build` in this directory. The resulting `dist` folder contains the
+entire static site. The build always copies the canonical portable Web Radar
+script from `scripts/Vesta Web Radar.lua`, generates the three config presets
+from the current root `legit.cfg`, and renders the Lua API Markdown files.
+
+Run `npm run serve` and open `http://127.0.0.1:4173/` for local preview. Do not
+open `index.html` directly: Firefox correctly blocks the radar demo's JSON
+requests from a `file://` origin.
+
+The repository workflow publishes `website/dist` to GitHub Pages after changes
+to the landing page or Web Radar script reach `main`.

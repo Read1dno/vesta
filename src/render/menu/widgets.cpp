@@ -528,7 +528,7 @@ void text_input_row(const char *label, char *buffer, std::size_t size)
     end_row();
 }
 
-void keybind_row(const char *label, int &value)
+void keybind_row(const char *label, int &value, bool keyboard_only, bool game_control)
 {
     begin_row(label, 130.0f);
     const auto listening = g_listening_key == &value;
@@ -567,9 +567,16 @@ void keybind_row(const char *label, int &value)
 
         if (const int key = pressed_bind_key())
         {
-            value = key == VK_ESCAPE ? 0 : key;
-            g_listening_key = nullptr;
-            g_listening_armed = false;
+            const bool mouse = key == VK_LBUTTON || key == VK_RBUTTON
+                || key == VK_MBUTTON || key == VK_XBUTTON1 || key == VK_XBUTTON2;
+            if ((!keyboard_only || !mouse)
+                  && (!game_control || key == VK_ESCAPE
+                      || !platform::windows::is_lifecycle_key(static_cast<std::uint16_t>(key))))
+            {
+                value = key == VK_ESCAPE ? 0 : key;
+                g_listening_key = nullptr;
+                g_listening_armed = false;
+            }
         }
     }
     end_row();

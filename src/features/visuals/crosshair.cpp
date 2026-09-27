@@ -1,6 +1,5 @@
 #include <stdafx.hpp>
 #include <features/visuals/visuals.hpp>
-#include <features/visuals/crosshair_sync.hpp>
 
 namespace features::visuals {
 
@@ -14,32 +13,6 @@ namespace features::visuals {
 		const auto [ sw, sh ] = zdraw::get_display_size( );
 		if ( sw <= 0 || sh <= 0 ) return;
 
-		if ( cfg.sync && !cfg.copy_game )
-		{
-			const auto& weapon_ctx = simulation::ballistics().ctx( );
-			if ( weapon_ctx.valid )
-			{
-
-				bool game_has_crosshair = true;
-				switch ( weapon_ctx.weapon_type )
-				{
-				case game::rules::precision:
-					game_has_crosshair = weapon_ctx.is_scoped;
-					break;
-				case game::rules::objective:
-					game_has_crosshair = false;
-					break;
-				default:
-					game_has_crosshair = true;
-					break;
-				}
-
-				if ( game_has_crosshair )
-				{
-					return;
-				}
-			}
-		}
 
 		auto crosshair_color = cfg.color;
         bool penetration_override{};
@@ -75,11 +48,6 @@ namespace features::visuals {
 			}
 		}
 
-        if (cfg.copy_game) {
-            draw_game_crosshair(draw_list,static_cast<float>(sw),static_cast<float>(sh),
-                penetration_override ? &crosshair_color : nullptr);
-            return;
-        }
         const auto center_x=static_cast<float>(sw)*0.5f;
         const auto center_y=static_cast<float>(sh)*0.5f;
 

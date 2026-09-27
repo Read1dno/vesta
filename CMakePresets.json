@@ -2,7 +2,7 @@
   "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 20,
+    "minor": 25,
     "patch": 0
   },
   "configurePresets": [
@@ -24,7 +24,23 @@
       "displayName": "vesta Release (clean)",
       "description": "Optimized release build without the console module",
       "inherits": "msvc-base",
-      "binaryDir": "${sourceDir}/build/release"
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "VESTA_INSTALLED_UIACCESS": "OFF",
+        "VESTA_PERF_LOG": "OFF",
+        "VESTA_WINDOWED_PROFILE": "OFF",
+        "VESTA_WINDOWED_SESSION": "OFF",
+        "VESTA_OUTPUT_NAME": "vesta"
+      }
+    },
+    {
+      "name": "profile",
+      "displayName": "vesta optimized CPU profiling",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/profile",
+      "cacheVariables": {
+        "VESTA_PERF_LOG": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -38,6 +54,11 @@
       "name": "release",
       "displayName": "Build vesta Release",
       "configurePreset": "release",
+      "configuration": "Release"
+    },
+    {
+      "name": "profile",
+      "configurePreset": "profile",
       "configuration": "Release"
     }
   ]

@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "1.*"]
 
 permissions:
   contents: write
@@ -21,11 +21,22 @@ jobs:
         run: cmake --build --preset release --parallel
       - name: Test
         run: ctest --test-dir build/release -C Release --output-on-failure
+      - name: Package forum archive
+        shell: pwsh
+        run: |
+          Compress-Archive -LiteralPath build/bin/vesta.exe, build/bin/vesta.pdb `
+            -DestinationPath "Vesta-${{ github.ref_name }}-forum.zip"
       - name: Create checksum
         shell: pwsh
         run: |
-          $hash = (Get-FileHash build/bin/vesta.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  vesta.exe" | Set-Content -Encoding ascii SHA256SUMS.txt
+          @(
+            "build/bin/vesta.exe"
+            "build/bin/vesta.pdb"
+            "Vesta-${{ github.ref_name }}-forum.zip"
+          ) | ForEach-Object {
+            $hash = (Get-FileHash $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $(Split-Path $_ -Leaf)"
+          } | Set-Content -Encoding ascii SHA256SUMS.txt
       - name: Attest GitHub Actions build
         uses: actions/attest@v4
         with:
@@ -38,6 +49,8 @@ jobs:
           $tag = "${{ github.ref_name }}"
           $assets = @(
             "build/bin/vesta.exe"
+            "build/bin/vesta.pdb"
+            "Vesta-${{ github.ref_name }}-forum.zip"
             "SHA256SUMS.txt"
             "LICENSE"
             "NOTICE"

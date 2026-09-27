@@ -36,3 +36,6 @@ __pycache__/
 *.key
 imgui.ini
 /legit.cfg
+
+# Local reverse-engineering captures are not part of the public source.
+/tests/frida/

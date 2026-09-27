@@ -143,7 +143,7 @@ namespace {
 		const auto independent_seed = combat.triggerbot.seed_type
 			!= config::combat_profile::seed_mode::none;
 		const auto combat_players =
-			combat.aimbot.draw_fov
+			( combat.aimbot.enabled && combat.aimbot.draw_fov )
 			|| ( combat.aimbot.enabled && config::combat_profile::activation_active(
 				combat.aimbot.activation_mode, combat.aimbot.key ) )
 			|| ( combat.triggerbot.enabled && !independent_seed

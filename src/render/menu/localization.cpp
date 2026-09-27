@@ -203,7 +203,6 @@ const std::unordered_map<std::string_view, const char *> &russian()
         {"Fill Opacity", "Прозрачность заливки"},
         {"Outline Opacity", "Прозрачность контура"},
         {"In-Game Avatars", "Внутриигровые аватары"},
-        {"Copy Game Crosshair", "Копировать игровой прицел"},
         {"Outline Color", "Цвет обводки"},
         {"Outline Thickness", "Толщина обводки"},
 
@@ -380,7 +379,6 @@ const std::unordered_map<std::string_view, const char *> &russian()
         // --- crosshair --------------------------------------------------
         {"CROSSHAIR SETTINGS", "ПРИЦЕЛ"},
         {"Enable Crosshair", "Включить прицел"},
-        {"Weapon Sync", "Синхронизация"},
         {"Draw Dot", "Точка"},
         {"Draw Lines", "Линии"},
         {"T-Style", "T-образный"},
@@ -463,6 +461,8 @@ const std::unordered_map<std::string_view, const char *> &russian()
         {"Point Size", "Размер точки"},
         {"ENGINE", "ДВИЖОК"},
         {"FPS Limiter", "Лимит FPS"},
+        {"GPU Effects", "GPU-эффекты"},
+        {"Restart to change GPU effects. The base overlay uses the display adapter; off keeps 2D ESP and the menu, while chams, no flash, no smoke and bloom are disabled.", "После изменения перезапустите Vesta. Базовый оверлей использует видеокарту; выключение сохраняет 2D ESP и меню, но отключает chams, no flash, no smoke и bloom."},
         {"Maximum FPS", "Максимум FPS"},
         {"INTERFACE", "ИНТЕРФЕЙС"},
         {"LANGUAGE", "ЯЗЫК"},
@@ -474,6 +474,19 @@ const std::unordered_map<std::string_view, const char *> &russian()
         {"EDGE JUMP", "EDGE JUMP"},
         {"Enable Bunny Hop", "Включить Bunny Hop"},
         {"Enable Edge Jump", "Включить Edge Jump"},
+        {"GAME KEY BINDS", "КНОПКИ ИГРЫ"},
+        {"GAME ATTACK BINDS", "КНОПКИ СТРЕЛЬБЫ"},
+        {"Back", "Назад"},
+        {"Left", "Влево"},
+        {"Right", "Вправо"},
+        {"Duck", "Приседание"},
+        {"Attack", "Выстрел"},
+        {"Secondary Attack", "Доп. атака"},
+        {"Reset Game Binds", "Сбросить кнопки игры"},
+        {"Reset", "Сбросить"},
+        {"Match these binds in the game; no automatic detection.",
+         "Установите такие же кнопки в игре; автоопределения нет."},
+
 
         // --- misc: effects ----------------------------------------------
         {"BULLET TRACERS", "ТРАССЕРЫ"},

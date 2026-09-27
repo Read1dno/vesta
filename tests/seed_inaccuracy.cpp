@@ -6,14 +6,20 @@ void simulation::ballistics_t::penetration::prepare(std::uintptr_t, std::uintptr
     m_weapon_data={35.0f,2.0f,.98f,8192.0f,1.5f,4.0f};
 }
 namespace {
-constexpr std::uintptr_t pawn=0x10000,controller=0x20000,weapon=0x30000,vdata=0x40000,services=0x50000;
+constexpr std::uintptr_t pawn=0x10000,controller=0x20000,weapon=0x30000,vdata=0x40000,services=0x50000,punch_services=0x60000;
 template<class T> void field(std::uintptr_t p,std::string_view name,T value) {fixture::put(p+schema(name),value);}
 void setup() {
     fixture::memory.clear();fixture::clear_reads();
-    for(auto p:{pawn,controller,weapon,vdata,services})
+    for(auto p:{pawn,controller,weapon,vdata,services,punch_services})
         for(unsigned i=0;i<0x4000;++i)fixture::memory[p+i]=std::byte{};
     field(controller,"m_nTickBase",100);
+    field(pawn,"m_nSimulationTick",103);
+    field(pawn,"m_iEFlags",0u);
     field(pawn,"m_vecAbsVelocity",foundation::vec3{100,20,0});
+    field(pawn,"m_pAimPunchServices",punch_services);
+    simulation::seed_window::recoil_pair recoil{};
+    recoil.predictable.base.tick=100;recoil.unpredictable.base.tick=100;
+    fixture::put(punch_services,recoil);
     field(pawn,"m_pWeaponServices",services);
     field(services,"m_hActiveWeapon",std::uint32_t{17});
     field(weapon,"m_fLastShotTime",1.0f);
@@ -32,6 +38,7 @@ void setup() {
     field(weapon,"m_fAccuracyPenalty",.02f);
     field(pawn,"m_bIsWalking",false);
     field(pawn,"m_hGroundEntity",0u);
+    field(pawn,"m_angEyeAngles",foundation::vec3{0,30,0});
     field(pawn,"v_angle",foundation::vec3{0,30,0});
     field(weapon,"m_bInReload",false);
     field(weapon,"m_iClip1",30);
@@ -47,6 +54,7 @@ int main() {
     unsigned cases{},failed{};
     const auto sample=[&](const char* name,foundation::vec3 velocity,float expected,bool valid=true) {
         ++cases;
+        field(pawn,"m_vecAbsVelocity",velocity);
         const bool actual=b.seed_weapon(pawn,controller,velocity,out);
         if(actual!=valid || out.valid!=valid || (valid && (!std::isfinite(out.inaccuracy)
             || std::abs(out.inaccuracy-expected)>2e-6f))) {
@@ -75,12 +83,14 @@ int main() {
     sample("unresolved_ground_handle",{0,0,400},.43f);
     setup();field(pawn,"m_hGroundEntity",0xffffffffu);field(pawn,"m_MoveType",std::uint8_t{9});
     fixture::variables["sv_jump_impulse"]=400;sample("ground_query_not_move_type",{0,0,400},.43f);
-    setup();field(pawn,"v_angle",foundation::vec3{});fixture::variables["sv_strafing_inaccuracy_enabled"]=1;
+    setup();field(pawn,"m_angEyeAngles",foundation::vec3{});fixture::variables["sv_strafing_inaccuracy_enabled"]=1;
     sample("strafe_front",{150,200,0},.17f);
-    setup();field(pawn,"v_angle",foundation::vec3{});fixture::variables["sv_strafing_inaccuracy_enabled"]=1;
+    setup();field(pawn,"m_angEyeAngles",foundation::vec3{});fixture::variables["sv_strafing_inaccuracy_enabled"]=1;
     fixture::variables["sv_strafing_inaccuracy_bias"]=.25;sample("strafe_bias",{150,200,0},.148181818f);
-    setup();field(pawn,"v_angle",foundation::vec3{0,90,0});fixture::variables["sv_strafing_inaccuracy_enabled"]=1;
+    setup();field(pawn,"m_angEyeAngles",foundation::vec3{0,90,0});fixture::variables["sv_strafing_inaccuracy_enabled"]=1;
     sample("rotated_strafe",{150,200,0},.15f);
+    setup();field(pawn,"v_angle",foundation::vec3{0,0,0});field(pawn,"m_angEyeAngles",foundation::vec3{0,90,0});
+    fixture::variables["sv_strafing_inaccuracy_enabled"]=1;sample("native_eye_angles_not_view_angles",{250,0,0},.23f);
     setup();field(weapon,"m_weaponMode",1);sample("secondary_mode",{250,0,0},.23f);
     setup();field(weapon,"m_weaponMode",2);sample("nonsecondary_mode",{250,0,0},.13f);
     setup();field(weapon,"m_fAccuracyPenalty",.95f);sample("total_clamp",{250,0,0},1);
@@ -100,7 +110,7 @@ int main() {
     setup();fixture::failed_variable="sv_strafing_inaccuracy_enabled";fixture::variables["weapon_accuracy_nospread"]=1;
     sample("nospread_early_return",{},0);
     setup();sample("nonfinite_velocity",{NAN,0,0},0,false);
-    setup();field(pawn,"v_angle",foundation::vec3{0,NAN,0});sample("nonfinite_strafe_angle",{},0,false);
+    setup();field(pawn,"m_angEyeAngles",foundation::vec3{0,NAN,0});sample("nonfinite_strafe_angle",{},0,false);
     setup();fixture::variables["weapon_air_spread_scale"]=NAN;field(pawn,"m_hGroundEntity",0xffffffffu);
     sample("nonfinite_air_scale",{0,0,300},0,false);
     setup();fixture::variables["weapon_accuracy_forcespread"]=NAN;sample("nonfinite_override",{},0,false);

@@ -47,13 +47,6 @@ restart Vesta.
 > The reliable way to avoid a cheat-related cooldown is not to play with cheats.
 > Vesta does not promise immunity from cooldowns or bans.
 
-## v1.1.7 — 24 September 2026
-
-- Updated Auto Accept for the current Panorama panel layout. It was confirmed
-  working in-game after the geometry fix.
-- Refreshed the public source and build files for the current game update.
-- Updated the detection notice above; no FPS setting or play style is presented
-  as protection from VACnet / VAC Live.
 ## Features
 
 Open a section only when you need its settings.

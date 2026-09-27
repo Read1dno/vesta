@@ -2,6 +2,7 @@
 
 #include <simulation/ballistics.hpp>
 #include <simulation/seed_reaction.hpp>
+#include <simulation/seed_timing.hpp>
 #include <config/settings.hpp>
 
 namespace features::aimbot {
@@ -61,11 +62,12 @@ namespace features::aimbot {
 			void sync_seed_phase( int tick,
 				std::chrono::steady_clock::time_point observed_at ) noexcept
 			{
-				if ( tick > 0 && tick != m_seed_phase_tick )
-				{
-					m_seed_phase_tick = tick;
-					m_seed_phase_tick_at = observed_at;
-				}
+                if (simulation::seed_timing::observe_phase(tick, observed_at,
+                    m_seed_phase_tick, m_seed_phase_tick_at, m_seed_phase_sampled_at,
+                    m_seed_phase_observation)) {
+                    m_seed_phase_receipt.feedback_valid = false;
+                    m_seed_network_window.early_streak = m_seed_network_window.late_streak = 0;
+                }
 			}
 
 		private:
@@ -86,7 +88,7 @@ namespace features::aimbot {
 			};
 
 			[[nodiscard]] target choose_target( const foundation::vec3& eye_pos, const foundation::vec3& view_angles, const std::vector<game::player_snapshot>& players, const config::combat_profile::resolved_config& cfg, bool enforce_fov = true ) const;
-			[[nodiscard]] foundation::vec3 get_aim_point( const foundation::vec3& eye_pos, const foundation::vec3& view_angles, const game::player_snapshot& player, const game::skeleton_reader::data& bones, const config::combat_profile::resolved_config& cfg, float& out_damage, int& out_hitbox, int& out_bone, bool& out_penetrated, foundation::vec3& out_offset ) const;
+			[[nodiscard]] foundation::vec3 get_aim_point( const foundation::vec3& eye_pos, const foundation::vec3& view_angles, const game::player_snapshot& player, const game::skeleton_reader::data& bones, const config::combat_profile::resolved_config& cfg, bool enforce_fov, float& out_damage, int& out_hitbox, int& out_bone, bool& out_penetrated, foundation::vec3& out_offset ) const;
 
 			[[nodiscard]] float get_fov( const foundation::vec3& view_angles, const foundation::vec3& eye_pos, const foundation::vec3& target_pos ) const;
 			[[nodiscard]] float screen_radius_for_fov( const foundation::vec3& eye_pos, const foundation::vec3& view_angles, float fov_degrees ) const;
@@ -155,7 +157,8 @@ namespace features::aimbot {
 			[[nodiscard]] std::optional<seed_shot_plan> build_seed_plan(
 				std::uintptr_t pawn, const foundation::vec3& view_angles,
 				bool host_session, int seed_tick,
-				std::chrono::steady_clock::time_point now, bool memoize );
+				std::chrono::steady_clock::time_point now, bool memoize,
+				const simulation::seed_window::recoil_pair* snapshot_recoil = nullptr );
 			[[nodiscard]] static bool possible_seed_match(
 				const seed_shot_plan& plan, const std::pair<bool, bool>& matches );
 			[[nodiscard]] static bool safe_seed_match(
@@ -179,8 +182,9 @@ namespace features::aimbot {
 			foundation::vec2 m_aim_error{};
 
 			int m_aim_last_input_sequence{ -1 };
-			foundation::vec3 m_aim_last_input_view{};
-			std::chrono::steady_clock::time_point m_aim_last_input_time{};
+			foundation::vec3 m_aim_last_camera_angles{};
+			foundation::vec3 m_aim_sent_since_sample{};
+			std::chrono::steady_clock::time_point m_aim_pending_since{};
 			foundation::vec3 m_aim_virtual_angles{};
 			bool m_aim_virtual_angles_valid{};
 			float m_aim_degrees_per_pixel{};
@@ -189,6 +193,12 @@ namespace features::aimbot {
 
 			// Humanize-СЃРѕСЃС‚РѕСЏРЅРёРµ Р°РёРјР±РѕС‚Р° (РѕРґРёРЅ В«Р·Р°С…РѕРґВ» РЅР° С†РµР»СЊ = СЃРІРѕРё РїР°СЂР°РјРµС‚СЂС‹)
 			std::uintptr_t m_aim_pawn{};
+			std::shared_ptr<const std::vector<game::player_snapshot>> m_aim_selection_world{};
+			target m_aim_selection_target{};
+			foundation::vec3 m_aim_selection_view{};
+			std::uintptr_t m_aim_selection_weapon{};
+			std::chrono::steady_clock::time_point m_aim_selection_at{};
+			int m_aim_last_bone{ -1 };
 			std::chrono::steady_clock::time_point m_aim_last_call{};
 			std::chrono::steady_clock::time_point m_aim_last_seen{};
 			std::chrono::steady_clock::time_point m_aim_reaction_until{};
@@ -250,6 +260,19 @@ namespace features::aimbot {
 			int m_seed_last_shots{ -1 };
 			int m_seed_pending_target_tick{ -1 };
 			std::chrono::steady_clock::time_point m_seed_pending_time{};
+            struct network_phase_receipt {
+                std::uintptr_t weapon{};
+                int selected_tick{};
+                int phase_us{};
+                float previous_shot_time{};
+                std::chrono::steady_clock::time_point pressed_at{};
+                bool shot_seen{};
+                int player_tick{};
+                bool feedback_valid{};
+            };
+            network_phase_receipt m_seed_phase_receipt{};
+            simulation::seed_timing::network_phase_window m_seed_network_window{};
+            simulation::seed_timing::api_call_budget m_seed_pointer_budget{}, m_seed_key_budget{};
 
 			simulation::seed_reaction m_seed_reaction{};
 			int m_seed_memo_sequence{ -1 };
@@ -263,12 +286,15 @@ namespace features::aimbot {
 			std::size_t m_seed_angle_history_count{};
 			int m_seed_phase_tick{ -1 };
 			std::chrono::steady_clock::time_point m_seed_phase_tick_at{};
+            std::chrono::steady_clock::time_point m_seed_phase_sampled_at{};
+            simulation::seed_timing::phase_observation m_seed_phase_observation{};
 			std::unordered_map<std::uintptr_t, seed_target_state> m_seed_targets{};
 
 			std::vector<game::player_snapshot> m_seed_player_buffer{};
 			std::uintptr_t m_seed_last_controller{};
 			std::uintptr_t m_seed_last_pawn{};
 			int m_seed_last_tick{ -1 };
+            int m_seed_last_host_mode{ -1 };
 			std::chrono::steady_clock::time_point m_seed_tick_observed_at{};
 
 			mutable std::shared_ptr<const config::runtime_snapshot> m_runtime_config{};

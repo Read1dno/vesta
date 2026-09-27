@@ -49,6 +49,7 @@ namespace platform::windows {
 			bool pressed{};
 		};
 
+        [[nodiscard]] static int last_injection_backend() noexcept { return s_last_injection_backend; }
 		[[nodiscard]] bool connect( ) noexcept;
 		bool pointer( int dx, int dy,
 			pointer_action actions ) const noexcept;
@@ -82,6 +83,7 @@ namespace platform::windows {
 		}
 
 	private:
+        static inline thread_local int s_last_injection_backend{};
 		static LRESULT CALLBACK gate_proc( int code, WPARAM message, LPARAM parameter );
 		void gate_thread_main( std::stop_token stop );
 		void stop_key_gate( ) noexcept;

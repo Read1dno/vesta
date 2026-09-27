@@ -4,6 +4,8 @@
 #include <app/startup_stage.hpp>
 #include <app/workers.hpp>
 #include <simulation/seed_diagnostics.hpp>
+#include <simulation/shot_trace.hpp>
+#include <simulation/trace_session.hpp>
 #include <render/overlay/ui.hpp>
 #include <scripting/runtime.hpp>
 
@@ -44,14 +46,16 @@ namespace
 
 int main(int argc, char** argv)
 {
+#if defined(VESTA_SHOT_TRACE_ENABLED) && VESTA_SHOT_TRACE_ENABLED
     if (argc == 3 && std::string_view(argv[1]) == "--seed-snapshot-report")
         return simulation::seed_diagnostics::report(argv[2]);
     if (argc == 3 && std::string_view(argv[1]) == "--compatibility-report")
         return game::compatibility::report(argv[2]);
     if (argc == 3 && std::string_view(argv[1]) == "--auto-accept-report")
         return features::misc::auto_accept_report(argv[2]);
+#endif
 	::SetProcessDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 );
-#if defined(VESTA_WINDOWED_PROFILE) && VESTA_WINDOWED_PROFILE
+#if (defined(VESTA_WINDOWED_PROFILE) && VESTA_WINDOWED_PROFILE) || (defined(VESTA_WINDOWED_SESSION) && VESTA_WINDOWED_SESSION)
 	constexpr DWORD ui_access_result = ERROR_SUCCESS;
 #elif defined(VESTA_INSTALLED_UIACCESS) && VESTA_INSTALLED_UIACCESS
 	if (!ui_access::enabled())
@@ -140,6 +144,7 @@ int main(int argc, char** argv)
 		}
 
 		config::publish_runtime_snapshot();
+        simulation::trace_session::initialize();
 
 		const auto game_process = static_cast<HANDLE>(
 			app::context().process.native_handle( ) );
@@ -166,7 +171,6 @@ int main(int argc, char** argv)
 		} ).detach( );
 
 		std::thread( app::workers::game ).detach( );
-		std::thread( app::workers::pose_sampler ).detach( );
 		std::thread( app::workers::movement ).detach( );
 		std::thread( app::workers::combat ).detach( );
 		std::thread( app::workers::nade_helper ).detach( );
@@ -185,10 +189,14 @@ int main(int argc, char** argv)
 		if ( !app::context().overlay.launch( ) )
 		{
 			scripting::runtime().shutdown( );
+            simulation::trace_session::shutdown();
+            simulation::shot_trace::shutdown();
 			::ExitProcess(EXIT_FAILURE);
 		}
 	}
 	scripting::runtime().shutdown( );
 
+    simulation::trace_session::shutdown();
+    simulation::shot_trace::shutdown();
 	::ExitProcess( EXIT_SUCCESS );
 }

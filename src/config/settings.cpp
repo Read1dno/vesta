@@ -1290,8 +1290,6 @@ static void to_json(json& j, const visual_profile::crosshair& c)
 {
 	j = json{
 		{"enabled", c.enabled},
-		{"copy_game", c.copy_game},
-		{"sync", c.sync},
 		{"dot", c.dot},
 		{"lines", c.lines},
 		{"t_style", c.t_style},
@@ -1312,8 +1310,6 @@ static void to_json(json& j, const visual_profile::crosshair& c)
 static void from_json(const json& j, visual_profile::crosshair& c)
 {
 	if (j.contains("enabled")) j.at("enabled").get_to(c.enabled);
-	if (j.contains("copy_game")) j.at("copy_game").get_to(c.copy_game);
-	if (j.contains("sync")) j.at("sync").get_to(c.sync);
 	if (j.contains("dot")) j.at("dot").get_to(c.dot);
 	if (j.contains("lines")) j.at("lines").get_to(c.lines);
 	if (j.contains("t_style")) j.at("t_style").get_to(c.t_style);
@@ -1799,6 +1795,33 @@ static void from_json(const json& j, general_profile::edge_jump& e)
 	else if (j.contains("key")) j.at("key").get_to(e.activation_key);
 }
 
+static void to_json(json& j, const game_controls& b)
+{
+	j = json{
+		{"forward", b.forward}, {"back", b.back},
+		{"left", b.left}, {"right", b.right},
+		{"walk", b.walk}, {"duck", b.duck},
+		{"jump", b.jump}, {"attack", b.attack},
+		{"attack2", b.attack2}
+	};
+}
+
+static void from_json(const json& j, game_controls& b)
+{
+	if (j.contains("forward")) j.at("forward").get_to(b.forward);
+	if (j.contains("back")) j.at("back").get_to(b.back);
+	if (j.contains("left")) j.at("left").get_to(b.left);
+	if (j.contains("right")) j.at("right").get_to(b.right);
+	if (j.contains("walk")) j.at("walk").get_to(b.walk);
+	if (j.contains("duck")) j.at("duck").get_to(b.duck);
+	if (j.contains("jump")) j.at("jump").get_to(b.jump);
+	if (j.contains("attack")) j.at("attack").get_to(b.attack);
+	if (j.contains("attack2")) j.at("attack2").get_to(b.attack2);
+	for (int* key : {&b.forward, &b.back, &b.left, &b.right,
+		&b.walk, &b.duck, &b.jump, &b.attack, &b.attack2})
+		*key = std::clamp(*key, 0, 255);
+}
+
 static void to_json(json& j, const general_profile::auto_stop& a)
 {
 	j = json{
@@ -1836,6 +1859,7 @@ static void to_json(json& j, const general_profile& m)
 		{"m_bomb_info", m.m_bomb_info},
 		{"m_bunny_hop", m.m_bunny_hop},
 		{"m_edge_jump", m.m_edge_jump},
+		{"m_game_controls", m.m_game_controls},
 		{"m_auto_stop", m.m_auto_stop},
 		{"language", m.language},
 		{"menu_scale", m.menu_scale},
@@ -1849,7 +1873,8 @@ static void to_json(json& j, const general_profile& m)
 		{"obs_bypass", m.obs_bypass},
 		{"lua_enabled", m.lua_enabled},
 		{"limit_fps", m.limit_fps},
-		{"fps_limit", m.fps_limit}
+		{"fps_limit", m.fps_limit},
+		{"use_gpu", m.use_gpu}
 	};
 }
 
@@ -1867,6 +1892,7 @@ static void from_json(const json& j, general_profile& m)
 	if (j.contains("m_bomb_info")) j.at("m_bomb_info").get_to(m.m_bomb_info);
 	if (j.contains("m_bunny_hop")) j.at("m_bunny_hop").get_to(m.m_bunny_hop);
 	if (j.contains("m_edge_jump")) j.at("m_edge_jump").get_to(m.m_edge_jump);
+	if (j.contains("m_game_controls")) j.at("m_game_controls").get_to(m.m_game_controls);
 	if (j.contains("m_auto_stop")) j.at("m_auto_stop").get_to(m.m_auto_stop);
 	if (j.contains("language")) j.at("language").get_to(m.language);
 	m.language = std::clamp(m.language, 0, static_cast<int>(render::localization::id::count) - 1);
@@ -1893,6 +1919,7 @@ static void from_json(const json& j, general_profile& m)
 	if (j.contains("lua_enabled")) j.at("lua_enabled").get_to(m.lua_enabled);
 	if (j.contains("limit_fps")) j.at("limit_fps").get_to(m.limit_fps);
 	if (j.contains("fps_limit")) j.at("fps_limit").get_to(m.fps_limit);
+	if (j.contains("use_gpu")) j.at("use_gpu").get_to(m.use_gpu);
 }
 
 combat_profile::resolved_config combat_profile::get( std::uint32_t weapon_type ) const

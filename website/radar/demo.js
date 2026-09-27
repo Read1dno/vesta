@@ -1,4 +1,4 @@
-
+/* The production radar frontend above, driven by a captured read-only Vesta snapshot. */
 poll = async function () {};
 loadMap = async function () {};
 

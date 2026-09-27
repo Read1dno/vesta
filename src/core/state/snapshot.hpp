@@ -62,7 +62,7 @@ public:
 	void seed_players_into( std::vector<player_snapshot>& destination,
 		std::uintptr_t local_pawn, std::uintptr_t local_controller,
 		int local_team, bool free_for_all,
-		std::uintptr_t only_pawn = 0 ) const;
+		std::uintptr_t only_pawn = 0, std::uintptr_t only_controller = 0 ) const;
 
 private:
 	void collect_players( const std::vector<entity_directory::cached>& raw );

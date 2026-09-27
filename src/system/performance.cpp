@@ -32,6 +32,10 @@ constexpr std::array names{"game_loop",
                            "auto_stop_tick",
                            "nade_helper_tick",
                            "seed_trigger_tick",
+                           "seed_plan_build",
+                           "seed_targets_read",
+                           "seed_weapon_read",
+                           "seed_penetration",
                            "render_frame",
                            "wait_frame_latency",
                            "chams",
@@ -49,8 +53,18 @@ constexpr std::array names{"game_loop",
                            "config_fingerprint",
                            "imgui_render",
                            "bloom_2d",
-                           "present"};
+                           "present",
+                           "map_load",
+                           "map_entities_refresh",
+                           "map_entities_scan",
+                           "map_entities_build",
+                           "map_entities_publish"};
 static_assert(names.size() == static_cast<std::size_t>(zone::count));
+
+constexpr std::array counter_names{"map_entity_slots", "map_entities_seen", "map_solid_entities",
+    "map_entity_instances", "map_scan_incomplete", "map_entity_changes", "map_geometry_published"};
+static_assert(counter_names.size() == static_cast<std::size_t>(counter::count));
+std::array<std::atomic<std::uint64_t>, counter_names.size()> counters{};
 
 struct aggregate
 {
@@ -216,6 +230,12 @@ void record_present() noexcept
 	presented.fetch_add(1, std::memory_order_relaxed);
 }
 
+void record_counter(const counter name, const std::uint64_t amount) noexcept
+{
+    const auto index = static_cast<std::size_t>(name);
+    if (index < counters.size()) counters[index].fetch_add(amount, std::memory_order_relaxed);
+}
+
 void flush_if_due(const bool force) noexcept
 {
 	static std::mutex writer_mutex;
@@ -282,6 +302,14 @@ void flush_if_due(const bool force) noexcept
 			       << ",\"total_ns\":" << to_ns(total) << ",\"avg_ns\":" << to_ns(total) / calls
 			       << ",\"p95_ns\":" << to_ns(p95_ticks) << ",\"max_ns\":" << to_ns(maximum) << "}\n";
 		}
+
+        for (std::size_t index{}; index < counters.size(); ++index)
+        {
+            const auto value = counters[index].exchange(0, std::memory_order_acq_rel);
+            if (value)
+                stream << "{\"type\":\"counter\",\"t_ms\":" << uptime_ms << ",\"name\":\""
+                       << counter_names[index] << "\",\"value\":" << value << "}\n";
+        }
 
 		const auto calls = rpm_calls.exchange(0, std::memory_order_acq_rel);
 		if (calls)

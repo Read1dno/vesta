@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include <render/draw.hpp>
+#include <config/game_controls.hpp>
 
 namespace config {
 
@@ -184,6 +185,8 @@ namespace config {
 			int activation_key{ VK_XBUTTON1 };
 		} m_edge_jump{};
 
+		game_controls m_game_controls{};
+
 		struct auto_stop
 		{
 			bool enabled{ false };
@@ -215,6 +218,7 @@ namespace config {
 		bool lua_enabled{ true };
 		bool limit_fps{ true };
 		int fps_limit{ 240 };
+		bool use_gpu{ true };
 	};
 
 } // namespace config

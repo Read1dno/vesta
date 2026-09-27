@@ -6,7 +6,6 @@
 namespace app::workers {
 
 	void game( );
-	void pose_sampler( );
 	void movement( );
 	void combat( );
 	void nade_helper( );

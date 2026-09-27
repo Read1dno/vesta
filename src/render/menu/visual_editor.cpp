@@ -103,11 +103,12 @@ void menu_t::draw_visual_editor()
         seen_model.empty() ? std::string{"agents/models/ctm_sas/ctm_sas.vmdl_c"} : seen_model;
 
     ID3D11ShaderResourceView *viewport_srv{};
-    static_cast<void>(chams::g_renderer.ensure_vpk());
-    if (chams::g_renderer.vpk_ready())
+    if (app::context().overlay.gpu_effects_enabled())
     {
-        viewport_srv = chams::g_preview.render(chams::g_renderer.vpk(), model_path, viewport_width,
-                                               viewport_height, chams_material);
+        static_cast<void>(chams::g_renderer.ensure_vpk());
+        if (chams::g_renderer.vpk_ready())
+            viewport_srv = chams::g_preview.render(chams::g_renderer.vpk(), model_path, viewport_width,
+                                                   viewport_height, chams_material);
     }
 
     const auto texture = viewport_srv ? viewport_srv : app::context().overlay.ct_preview_texture();

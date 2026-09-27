@@ -516,10 +516,15 @@ namespace platform::windows {
 					for ( std::size_t offset = 0;
 						offset + 0x18 <= data.size( ); offset += alignof( void* ) )
 					{
-						std::uint32_t candidate{};
+						std::uint32_t signature{}, subobject_offset{}, candidate{};
+						std::memcpy( &signature, data.data( ) + offset,
+							sizeof( signature ) );
+						std::memcpy( &subobject_offset, data.data( ) + offset + 4,
+							sizeof( subobject_offset ) );
 						std::memcpy( &candidate, data.data( ) + offset + 0x0c,
 							sizeof( candidate ) );
-						if ( candidate == descriptor_rva )
+						if ( signature == 1 && subobject_offset == 0
+							&& candidate == descriptor_rva )
 							return offset;
 					}
 					return std::numeric_limits<std::size_t>::max( );

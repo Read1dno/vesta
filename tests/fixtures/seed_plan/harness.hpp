@@ -91,7 +91,8 @@ public:
     };
     struct seed_angle_history_entry { int tick{-1}; foundation::vec3 hash_angles{}; };
     std::optional<seed_shot_plan> build_seed_plan(std::uintptr_t, const foundation::vec3&,
-        bool, int, std::chrono::steady_clock::time_point, bool);
+        bool, int, std::chrono::steady_clock::time_point, bool,
+        const simulation::seed_window::recoil_pair* = nullptr);
     static bool possible_seed_match(const seed_shot_plan&, const std::pair<bool,bool>&);
     static bool safe_seed_match(const seed_shot_plan&, const std::pair<bool,bool>&);
     std::array<seed_angle_history_entry,3> m_seed_angle_history{};

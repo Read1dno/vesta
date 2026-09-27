@@ -2,6 +2,7 @@
 #include <render/index_run.hpp>
 #include <render/chams/renderer.hpp>
 #include <render/chams/mesh_cache.hpp>
+#include <render/chams/effect_bounds.hpp>
 #include <features/visuals/visuals.hpp>
 
 #include <d3dcompiler.h>
@@ -1640,8 +1641,9 @@ namespace chams {
 		this->m_bloom_width = this->m_bloom_height = 0;
 	}
 
-	void renderer::begin_2d_bloom_frame( )
+	void renderer::begin_2d_bloom_frame( const bool enabled )
 	{
+		this->m_bloom_2d_enabled = enabled && this->m_ready;
 		this->m_bloom_2d_vertices.clear( );
 		this->m_bloom_2d_radius = 0.0f;
 	}
@@ -1650,7 +1652,7 @@ namespace chams {
 		const float x1, const float y1, const float thickness, const float radius,
 		const zdraw::rgba color )
 	{
-		if ( color.a == 0 || radius <= 0.0f ) return;
+		if ( !this->m_bloom_2d_enabled || color.a == 0 || radius <= 0.0f ) return;
 		const auto dx = x1 - x0;
 		const auto dy = y1 - y0;
 		const auto length = std::sqrt( dx * dx + dy * dy );
@@ -1687,7 +1689,7 @@ namespace chams {
 		const float x1, const float y1, const float x2, const float y2,
 		const float radius, const zdraw::rgba color )
 	{
-		if ( color.a == 0 || radius <= 0.0f
+		if ( !this->m_bloom_2d_enabled || color.a == 0 || radius <= 0.0f
 			|| !std::isfinite( x0 ) || !std::isfinite( y0 )
 			|| !std::isfinite( x1 ) || !std::isfinite( y1 )
 			|| !std::isfinite( x2 ) || !std::isfinite( y2 ) ) return;
@@ -1713,7 +1715,7 @@ namespace chams {
 		const UINT target_width, const UINT target_height )
 	{
 	    VESTA_PERF_SCOPE(chams_world_effects);
-	    if (!this->m_ready || !backbuffer_rtv || this->m_bloom_2d_vertices.empty() ||
+	    if (!this->m_bloom_2d_enabled || !this->m_ready || !backbuffer_rtv || this->m_bloom_2d_vertices.empty() ||
 	        !this->ensure_bloom_targets(target_width, target_height))
 		    return;
 
@@ -2643,7 +2645,8 @@ namespace chams {
 				if ( cfg.on_shot.enabled && has_fresh_pose )
 				{
 					this->m_shot_records.push_back( {
-						cached_pose->second.model_path, cached_pose->second.bones, pose_now } );
+						cached_pose->second.model_path, cached_pose->second.bones, pose_now,
+						cached_pose->second.bounds } );
 					consumed = true;
 				}
 				else if ( hit.timestamp.time_since_epoch( ).count( ) != 0
@@ -2721,11 +2724,24 @@ namespace chams {
 				this->update_bones( d.bone_buffer, skin_matrices );
 				if ( d.current )
 					this->m_last_death_poses[ d.current->pawn ] = {
-						d.current->model_path, skin_matrices, pose_now };
+						d.current->model_path, skin_matrices, pose_now, d.bounds };
 			}
 		}
 
-		if ( drawables.empty( ) )
+		const auto effect_now = std::chrono::steady_clock::now( );
+		const auto death_duration = std::max( cfg.kill_effect.duration, 0.2f );
+		std::erase_if( this->m_shot_records, [ & ]( const shot_record& shot )
+		{
+			return !cfg.on_shot.enabled || std::chrono::duration<float>(
+				effect_now - shot.spawn ).count( ) >= cfg.on_shot.duration;
+		} );
+		std::erase_if( this->m_death_records, [ & ]( const death_record& death )
+		{
+			return !cfg.kill_effect.enabled || std::chrono::duration<float>(
+				effect_now - death.spawn ).count( ) >= death_duration;
+		} );
+		if ( drawables.empty( ) && this->m_shot_records.empty( )
+			&& this->m_death_records.empty( ) )
 		{
 			return;
 		}
@@ -2823,14 +2839,13 @@ namespace chams {
 		ID3D11ShaderResourceView* null_srvs[ 2 ]{};
 		this->m_context->PSSetShaderResources( 0, 2, null_srvs );
 
-		const bool world_ready = this->ensure_world_geometry( )
-			&& this->ensure_world_depth_buffer( target_width, target_height );
-		if ( !world_ready )
-		{
-			return;
-		}
-		this->m_context->ClearDepthStencilView( this->m_world_dsv,
-			D3D11_CLEAR_DEPTH, 1.0f, 0 );
+		const bool world_ready = game::collision().valid()
+			&& this->ensure_world_geometry();
+		if (!this->ensure_world_depth_buffer(target_width, target_height)) return;
+		// Without a BVH, clear depth to the far plane and draw only the visible
+		// material. Occluded colouring resumes when map geometry is published.
+		this->m_context->ClearDepthStencilView(this->m_world_dsv,
+			D3D11_CLEAR_DEPTH, 1.0f, 0);
 
 		static thread_local std::vector<screen_volume> occlusion_volumes{};
 		occlusion_volumes.clear( );
@@ -2894,9 +2909,28 @@ namespace chams {
 			}
 			occlusion_volumes.push_back( volume );
 		}
-		if ( occlusion_volumes.empty( ) ) return;
-		this->draw_world_depth(
-			this->m_world_dsv, occlusion_volumes, view_projection );
+		if (world_ready && !occlusion_volumes.empty())
+			this->draw_world_depth(
+				this->m_world_dsv, occlusion_volumes, view_projection );
+		// Resolve bounds include transient geometry, not just currently living players.
+		static thread_local std::vector<screen_volume> resolve_volumes{};
+		resolve_volumes.assign( occlusion_volumes.begin( ), occlusion_volumes.end( ) );
+		const auto include_effect = [ & ]( const world_bounds& bounds )
+		{
+			const auto projected = render::project_depth_bounds( bounds, view_projection );
+			if ( !projected.valid ) return;
+			resolve_volumes.push_back( {
+				projected.min_x - ndc_margin_x, projected.min_y - ndc_margin_y,
+				projected.max_x + ndc_margin_x, projected.max_y + ndc_margin_y, 1.0f } );
+		};
+		for ( const auto& shot : this->m_shot_records ) include_effect( shot.bounds );
+		for ( const auto& death : this->m_death_records )
+		{
+			const auto progress = std::chrono::duration<float>(
+				effect_now - death.spawn ).count( ) / death_duration;
+			include_effect( detail::death_effect_bounds( death.bounds, progress ) );
+		}
+		if ( resolve_volumes.empty( ) ) return;
 		this->m_context->OMSetRenderTargets( 0, nullptr, nullptr );
 
 		const bool use_msaa = cfg.antialiasing
@@ -2933,7 +2967,7 @@ namespace chams {
 
 		D3D11_RECT bloom_scissor{ 0, 0,
 			static_cast<LONG>( target_width ), static_cast<LONG>( target_height ) };
-		bool bloom_ready = cfg.glow_effect.enabled
+		bool bloom_ready = !occlusion_volumes.empty( ) && cfg.glow_effect.enabled
 			&& cfg.glow_effect.strength > 0.0f
 			&& this->ensure_bloom_targets( target_width, target_height );
 		if ( bloom_ready )
@@ -3125,12 +3159,7 @@ namespace chams {
 			if ( cfg.visible.enabled ) draw_geometry_layer( 1, cfg.visible.wireframe );
 		}
 
-		const auto shot_now = std::chrono::steady_clock::now( );
-		std::erase_if( this->m_shot_records, [ & ]( const shot_record& shot )
-		{
-			return !cfg.on_shot.enabled || std::chrono::duration<float>(
-				shot_now - shot.spawn ).count( ) >= cfg.on_shot.duration;
-		} );
+		const auto shot_now = effect_now;
 		if ( cfg.on_shot.enabled && !this->m_shot_records.empty( ) )
 		{
 			this->m_context->OMSetDepthStencilState( this->m_depth_state_disabled, 0 );
@@ -3159,13 +3188,7 @@ namespace chams {
 			}
 		}
 
-		const auto death_now = std::chrono::steady_clock::now( );
-		const auto death_duration = std::max( cfg.kill_effect.duration, 0.2f );
-		std::erase_if( this->m_death_records, [ & ]( const death_record& record )
-		{
-			return !cfg.kill_effect.enabled || std::chrono::duration<float>(
-				death_now - record.spawn ).count( ) >= death_duration;
-		} );
+		const auto death_now = effect_now;
 		if ( cfg.kill_effect.enabled && !this->m_death_records.empty( ) )
 		{
 			this->m_context->OMSetDepthStencilState( this->m_depth_state_disabled, 0 );
@@ -3206,9 +3229,9 @@ namespace chams {
 		if ( use_msaa )
 		{
 			// A multisampled texture cannot be an RTV and SRV simultaneously. Detach
-			// it before the custom, player-bounds-only resolve samples it.
+			// it before the bounded player-and-effect resolve samples it.
 			this->m_context->OMSetRenderTargets( 0, nullptr, nullptr );
-			this->resolve_msaa( backbuffer_rtv, occlusion_volumes );
+			this->resolve_msaa( backbuffer_rtv, resolve_volumes );
 		}
 		if ( bloom_ready )
 		{

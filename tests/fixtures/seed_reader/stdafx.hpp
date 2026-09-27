@@ -58,16 +58,17 @@ struct player_snapshot {
     bones_t bones;hitboxes_t hitboxes;
 };
 struct directory {
+    bool player_controller_slots(std::array<std::uintptr_t,65>& out)const{out.fill(0);out[2]=0x20000;return true;}
     std::uintptr_t lookup_index(std::uint32_t index)const{return index==2?0x20000:0;}
     std::uintptr_t lookup(std::uint32_t handle)const{return handle==123?0x30000:0;}
 };
 struct skeleton_reader {bones_t get(std::uintptr_t)const{fixture::sampled=true;return {};}};
-struct hitbox_reader {hitboxes_t query(std::uintptr_t,bool)const{return {};}};
+struct hitbox_reader {hitboxes_t query(std::uintptr_t,bool use_cache)const{return {use_cache?3:0};}};
 inline directory& entity_index(){static directory value;return value;}
 inline skeleton_reader& skeletons(){static skeleton_reader value;return value;}
 inline hitbox_reader& hitbox_data(){static hitbox_reader value;return value;}
 class world_sampler {
 public:
- void seed_players_into(std::vector<player_snapshot>&,std::uintptr_t,std::uintptr_t,int,bool,std::uintptr_t=0)const;
+ void seed_players_into(std::vector<player_snapshot>&,std::uintptr_t,std::uintptr_t,int,bool,std::uintptr_t=0,std::uintptr_t=0)const;
 };
 }

@@ -47,29 +47,15 @@ namespace game {
 		}
 	};
 
-	class live_input_bindings
+	class configured_input_bindings
 	{
 	public:
-        void refresh();
-		[[nodiscard]] input_binding resolve( input_action action,
-			std::uint16_t preferred_virtual_key = 0 );
-		[[nodiscard]] std::vector<input_binding> candidates( input_action action );
-		[[nodiscard]] bool text_entry_active( );
+		[[nodiscard]] input_binding resolve(input_action action);
+		[[nodiscard]] std::vector<input_binding> candidates(input_action action);
+		[[nodiscard]] bool text_entry_active();
 
 	private:
-		void refresh_locked( std::chrono::steady_clock::time_point now );
-
 		std::mutex m_mutex{};
-        std::mutex m_refresh_mutex{};
-        std::string m_diagnostic_state{};
-		std::array<std::vector<input_binding>,
-			static_cast<std::size_t>( input_action::count )> m_bindings{};
-		std::uintptr_t m_input_service{};
-		std::uintptr_t m_binding_table{};
-		std::uintptr_t m_key_name_table{};
-		std::ptrdiff_t m_record_to_name_bias{};
-		bool m_binding_layout_valid{};
-		std::chrono::steady_clock::time_point m_next_refresh{};
 		std::uintptr_t m_hud_global{};
 		std::uintptr_t m_hud_chat{};
 		std::uintptr_t m_hud_chat_vtable{};
@@ -80,9 +66,9 @@ namespace game {
 		std::chrono::steady_clock::time_point m_next_chat_sample{};
 	};
 
-	inline live_input_bindings& input_bindings( )
+	inline configured_input_bindings& input_bindings( )
 	{
-		static live_input_bindings value{};
+		static configured_input_bindings value{};
 		return value;
 	}
 

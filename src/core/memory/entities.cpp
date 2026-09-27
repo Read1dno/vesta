@@ -173,6 +173,15 @@ namespace game {
 		return this->lookup_slot( index, false );
 	}
 
+	bool entity_directory::player_controller_slots(
+		std::array<std::uintptr_t, 65>& out ) const
+	{
+		return read_player_controller_slots( this->get_entity_list(), out,
+			[]( auto address, void* destination, auto size ) {
+				return app::context().process.copy( address, destination, size );
+			} );
+	}
+
 	std::uintptr_t entity_directory::lookup_slot(
 		std::uint32_t value, bool validate_serial ) const
 	{

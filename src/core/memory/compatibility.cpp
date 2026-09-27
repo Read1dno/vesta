@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include <core/input/bindings.hpp>
 #include <core/memory/compatibility.hpp>
 #include <core/memory/compatibility_contracts.hpp>
 #include <fstream>
@@ -20,23 +21,6 @@ std::uintptr_t unique(std::string_view name, std::string_view pattern)
     const auto address=process().scan_unique_code_signature(app::context().modules.client,pattern,count);
     if (!address) app::context().diagnostics.warning("[compat] {}: signature matches={}, feature unavailable",name,count);
     return address;
-}
-struct crosshair_addresses { std::uintptr_t sequence{}, buffers{}; };
-const crosshair_addresses& crosshair_source()
-{
-    static const auto source=[] {
-        crosshair_addresses result{};
-        const auto code=unique("crosshair publication",
-            "8B 05 ? ? ? ? 48 8D 4D ? FF C8 33 D2 83 E0 01 41 B8 10 04 00 00 "
-            "48 69 D8 10 04 00 00 48 8D 05 ? ? ? ? 48 03 D8 E8");
-        if (!code) return result;
-        const auto sequence=process().decode_rip(code,2,6);
-        const auto buffers=process().decode_rip(code+30);
-        if (inside(sequence,4) && inside(buffers,2*sizeof(crosshair_frame)))
-            result={sequence,buffers};
-        return result;
-    }();
-    return source;
 }
 }
 std::uint32_t shot_punch_offset()
@@ -127,47 +111,6 @@ std::uintptr_t hud_element(std::string_view wanted)
     return 0;
 }
 
-bool crosshair_dimensions(float& width, float& height)
-{
-    struct cached_hud { std::uintptr_t object{}, vtable{}; std::chrono::steady_clock::time_point refresh{}; };
-    static thread_local cached_hud cached;
-    const auto now=std::chrono::steady_clock::now();
-    if (now>=cached.refresh || !cached.object
-        || process().load<std::uintptr_t>(cached.object)!=cached.vtable) {
-        cached.object=hud_element("CCSGO_HudReticle");
-        cached.vtable=process().load<std::uintptr_t>(cached.object);
-        cached.refresh=now+std::chrono::seconds(1);
-    }
-    if (!cached.object || !inside(cached.vtable)) return false;
-    const auto locator=process().load<std::uintptr_t>(cached.vtable-8);
-    if (!inside(locator,24)) return false;
-    const auto adjustment=process().load<std::uint32_t>(locator+4);
-    if (adjustment>0x100) return false;
-    const auto ui=process().load<std::uintptr_t>(cached.object-adjustment+8);
-    const auto offsets=panel(ui);
-    if (!offsets) return false;
-    if (!process().copy(ui+offsets.width,&width,sizeof(width))
-        || !process().copy(ui+offsets.height,&height,sizeof(height))) return false;
-    return std::isfinite(width) && std::isfinite(height)
-        && width>=320 && height>=240 && width<=16384 && height<=16384;
-}
-bool crosshair_available() { return crosshair_source().buffers!=0; }
-bool read_crosshair(crosshair_frame& frame)
-{
-    frame={};
-    const auto& source=crosshair_source();
-    if (!source.buffers) return false;
-    std::uint32_t sequence{};
-    if (!detail::coherent_frame(source.sequence,source.buffers,
-        [](auto address,void* output,std::size_t size){return process().copy(address,output,size);},
-        frame,sequence)) return false;
-    static thread_local std::uint32_t last_sequence{};
-    static thread_local auto last_change=std::chrono::steady_clock::time_point{};
-    const auto now=std::chrono::steady_clock::now();
-    if (sequence!=last_sequence) { last_sequence=sequence; last_change=now; }
-    if (frame.count && now-last_change>std::chrono::milliseconds(250)) {frame={};return false;}
-    return true;
-}
 
 int report(const char* path)
 {
@@ -210,26 +153,11 @@ int report(const char* path)
         }
         check("panorama.getters",found);
     }
-    check("crosshair.publication",crosshair_available());
-    float width{},height{};
-    check("crosshair.dimensions",crosshair_dimensions(width,height));
-    out<<"crosshair.viewport="<<width<<','<<height<<'\n';
-    if(object && width>0 && height>0)
-        check("radar.live-layout",features::visuals::radar_t::diagnose(width,height,out));
-    crosshair_frame frame{};
-    out<<"crosshair.snapshot="<<(read_crosshair(frame)?"coherent":"not-published")
-        <<" pieces="<<frame.count<<'\n';
-    for(const auto name:{"cl_crosshair_screen_height","cl_crosshair_gap","cl_crosshair_length",
-        "cl_crosshair_thickness","cl_crosshaircolor_a","cl_crosshairstyle",
-        "cl_crosshaircolor_r","cl_crosshaircolor_g","cl_crosshaircolor_b"}) {
-        int value{};const auto valid=game::variables().try_get(game::variables().find(identity::of(name)),value);
-        check(name,valid);out<<"value="<<value<<'\n';
-    }
-    for(const auto name:{"cl_crosshairdot","cl_crosshair_t","cl_crosshair_drawoutline",
-        "sv_accelerate_use_weapon_speed"}) {
-        bool value{};
-        check(name,game::variables().try_get(game::variables().find(identity::of(name)),value));
-    }
+    const auto jump_bindings=game::input_bindings().candidates(game::input_action::jump);
+    check("controls.jump",!jump_bindings.empty());
+    out<<"controls.jump.count="<<jump_bindings.size()<<'\n';
+    for (const auto& binding:jump_bindings)
+        out<<"controls.jump.name="<<binding.name<<'\n';
     float forced{};
     check("weapon_accuracy_forcespread",game::variables().try_get(
         game::variables().find(identity::of("weapon_accuracy_forcespread")),forced));
@@ -249,13 +177,6 @@ int report(const char* path)
             ctx.spread,ctx.recoil_index,ctx.item_def_idx,ctx.fire_mode,ctx.num_bullets,0,ctx.pattern_seed);
         check("spread.live-sample",std::isfinite(sample.x)&&std::isfinite(sample.y));
         out<<"spread.xy="<<sample.x<<','<<sample.y<<'\n';
-    }
-    for(std::size_t i=0;i<frame.count;++i) {
-        const auto& p=frame.pieces[i];
-        out<<"crosshair.piece="<<p.type;
-        for(float v:p.geometry) out<<','<<v;
-        for(float v:p.color) out<<','<<v;
-        out<<'\n';
     }
     out<<"result="<<(ok?"PASS":"FAIL")<<'\n';
     return ok?0:2;

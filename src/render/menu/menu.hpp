@@ -22,6 +22,7 @@ class menu_t
     }
 
   private:
+    friend struct menu_render_test_access;
     void draw_sidebar();
     void draw_content();
     void draw_visual_editor();

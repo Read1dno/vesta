@@ -1,11 +1,13 @@
 #include <stdafx.hpp>
+#include <system/performance.hpp>
 
 namespace game {
 void world_sampler::seed_players_into(
 	std::vector<player_snapshot>& fresh,
 	std::uintptr_t local_pawn, std::uintptr_t local_controller,
-	int local_team, bool free_for_all, std::uintptr_t only_pawn ) const
+	int local_team, bool free_for_all, std::uintptr_t only_pawn, std::uintptr_t only_controller ) const
 {
+	VESTA_PERF_SCOPE( seed_targets_read );
 	// This is the standalone-equivalent reader: it owns every target input used by
 	// seed evaluation and never consumes/publishes the normal ESP snapshot.
 	static const auto controller_pawn =
@@ -30,10 +32,12 @@ void world_sampler::seed_players_into(
 	fresh.clear( );
 	if ( fresh.capacity( ) < 64 ) fresh.reserve( 64 );
 
+	std::array<std::uintptr_t, 65> controllers{};
+	if (only_pawn && only_controller) controllers[1] = only_controller;
+    else if ( !game::entity_index().player_controller_slots( controllers ) ) return;
 	for ( std::uint32_t index = 1; index <= 64; ++index )
 	{
-		// Controller enumeration supplies a plain slot index, not a serial CHandle.
-		const auto controller = game::entity_index().lookup_index( index );
+		const auto controller = controllers[ index ];
 		if ( !controller || controller == local_controller )
 		{
 			continue;
@@ -100,8 +104,9 @@ void world_sampler::seed_players_into(
 
 		value.has_helmet =
 			app::context().process.load<bool>( controller + controller_helmet );
+		// The model handle guards immutable hitbox geometry; bones remain freshly read.
 		value.hitboxes = game::hitbox_data().query(
-			value.game_scene_node, false );
+			value.game_scene_node, true );
 		if ( value.hitboxes.count < 3 )
 		{
 			continue;

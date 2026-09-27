@@ -9,6 +9,20 @@ namespace game {
 
 	namespace {
 
+        struct entity_scan_metrics
+        {
+            std::uint64_t slots{}, seen{}, solids{}, instances{}, incomplete{};
+            ~entity_scan_metrics()
+            {
+                using enum platform::performance::counter;
+                platform::performance::record_counter(map_entity_slots, slots);
+                platform::performance::record_counter(map_entities_seen, seen);
+                platform::performance::record_counter(map_solid_entities, solids);
+                platform::performance::record_counter(map_entity_instances, instances);
+                platform::performance::record_counter(map_scan_incomplete, incomplete);
+            }
+        };
+
 		[[nodiscard]] std::string base_map_name( std::string s )
 		{
 			for ( auto& c : s )
@@ -695,17 +709,36 @@ namespace game {
 		{
 			const auto collision = entity
 				+ SCHEMA( "C_BaseModelEntity", "m_Collision"_id );
-			std::uint16_t flags{};
-			std::uint8_t type{};
-			if ( !app::context().process.copy( collision
-					+ SCHEMA( "CCollisionProperty", "m_usSolidFlags"_id ),
-					&flags, sizeof( flags ) )
-				|| !app::context().process.copy( collision
-					+ SCHEMA( "CCollisionProperty", "m_nSolidType"_id ),
-					&type, sizeof( type ) ) )
-			{
-				return std::nullopt;
-			}
+            const auto flags_offset = static_cast<std::size_t>(
+                SCHEMA( "CCollisionProperty", "m_usSolidFlags"_id ) );
+            const auto type_offset = static_cast<std::size_t>(
+                SCHEMA( "CCollisionProperty", "m_nSolidType"_id ) );
+            std::uint16_t flags{};
+            std::uint8_t type{};
+            const auto begin = std::min( flags_offset, type_offset );
+            const auto end = std::max( flags_offset + sizeof( flags ),
+                type_offset + sizeof( type ) );
+            bool sampled{};
+            if ( end - begin <= 32 )
+            {
+                std::array<std::uint8_t, 32> bytes{};
+                sampled = app::context().process.copy( collision + begin,
+                    bytes.data(), end - begin );
+                if ( sampled )
+                {
+                    std::memcpy( &flags, bytes.data() + flags_offset - begin,
+                        sizeof( flags ) );
+                    std::memcpy( &type, bytes.data() + type_offset - begin,
+                        sizeof( type ) );
+                }
+            }
+            if ( !sampled && ( !app::context().process.copy(
+                    collision + flags_offset, &flags, sizeof( flags ) )
+                || !app::context().process.copy(
+                    collision + type_offset, &type, sizeof( type ) ) ) )
+            {
+                return std::nullopt;
+            }
 
 			constexpr std::uint16_t fsolid_not_solid{ 0x0004 };
 			if ( type == 0 || ( flags & fsolid_not_solid ) != 0 )
@@ -750,6 +783,9 @@ namespace game {
 			const std::string& map_name, const surface_ctx& sctx,
 			std::uint64_t known_state_hash, std::uint64_t& state_hash )
 		{
+            std::optional<platform::performance::scope> scan_profile;
+            scan_profile.emplace(platform::performance::zone::map_entities_scan);
+            entity_scan_metrics metrics;
 			// pak01 has 132k entries; open it once and reuse across refreshes. Only the
 			// parse worker calls this, so a function-static is single-threaded here.
 			static chams::vpk_archive pak{};
@@ -866,6 +902,7 @@ namespace game {
 					continue;
 				}
 
+                metrics.slots += 512;
 				for ( int slot = 0; slot < 512; ++slot )
 				{
 					std::uintptr_t entity{};
@@ -877,6 +914,7 @@ namespace game {
 						continue;
 					}
 
+                    ++metrics.seen;
 					const auto identity = entity_identity_token( entity );
 					auto cached_solid = solid_entity_cache.find( entity );
 					if ( cached_solid == solid_entity_cache.end( )
@@ -897,6 +935,7 @@ namespace game {
 					{
 						continue;
 					}
+                    ++metrics.solids;
 					const auto live_collision = has_live_collision(
 						entity, cached_solid->second.class_name );
 					if ( !live_collision )
@@ -930,21 +969,26 @@ namespace game {
 					}
 
 					entity_instance instance{ .identity = identity, .model = model };
-					if ( !app::context().process.copy( node + 200,
-							&instance.origin, sizeof( instance.origin ) )
-						|| !app::context().process.copy( node + 184,
-							&instance.angles, sizeof( instance.angles ) )
-						|| !app::context().process.copy( node + 196,
-							&instance.scale, sizeof( instance.scale ) ) )
+					std::array<std::byte, 28> transform{};
+					if ( !app::context().process.copy( node + 184,
+							transform.data(), transform.size() ) )
 					{
 						scan_complete = false;
 						continue;
 					}
+					std::memcpy( &instance.angles, transform.data(), sizeof(instance.angles) );
+					std::memcpy( &instance.scale, transform.data() + 12, sizeof(instance.scale) );
+					std::memcpy( &instance.origin, transform.data() + 16, sizeof(instance.origin) );
 					instances.push_back( std::move( instance ) );
+                    ++metrics.instances;
 				}
 			}
 
-			if ( !scan_complete ) return false;
+            if (!scan_complete)
+            {
+                metrics.incomplete = 1;
+                return false;
+            }
 
 			state_hash = 1469598103934665603ull;
 			const auto mix = [ & ]( std::uint32_t value )
@@ -967,6 +1011,9 @@ namespace game {
 			if ( known_state_hash != 0 && state_hash == known_state_hash )
 				return false;
 
+            platform::performance::record_counter(platform::performance::counter::map_entity_changes);
+            scan_profile.reset();
+            VESTA_PERF_SCOPE(map_entities_build);
 			for ( const auto& instance : instances )
 			{
 				const auto* local = model_local( instance.model );
@@ -1073,38 +1120,31 @@ namespace game {
 
 		const auto world_tris = fresh.size( );
 
-		std::vector<triangle> entity_geometry{};
-		std::uint64_t entity_hash{};
-		(void)append_entity_geometry(
-			entity_geometry, map, sctx, 0, entity_hash );
-		if ( stop.stop_requested( ) ) return false;
-
-		app::context().diagnostics.info( "[bvh] map geometry for {}: {} world + {} entity = {} triangles",
-			map, world_tris, entity_geometry.size( ), world_tris + entity_geometry.size( ) );
+		// Publish immutable world collision first. Dynamic entity geometry is built by
+		// refresh_map_entities after map_loader commits this world, so a heavy map
+		// cannot hold the combat path hostage to entity extraction.
+		app::context().diagnostics.info( "[bvh] map geometry for {}: {} world triangles",
+			map, world_tris );
 
 		collision_world built{};
 		built.m_triangles = std::move( fresh );
 		built.m_world_triangle_count = world_tris;
 		built.rebuild_accel( );
-		auto entities = std::make_shared<collision_world>( );
-		entities->m_triangles = std::move( entity_geometry );
-		entities->m_world_triangle_count = entities->m_triangles.size( );
-		entities->rebuild_accel( );
 		if ( stop.stop_requested( ) ) return false;
 		{
 			std::unique_lock lock( this->m_mutex );
 			this->m_world_triangle_count = world_tris;
 			this->m_map_name = map;
-			this->m_entity_triangle_count = entities->m_triangles.size( );
+			this->m_entity_triangle_count = 0;
 			this->m_triangles = std::move( built.m_triangles );
 			this->m_nodes = std::move( built.m_nodes );
 			this->m_indices = std::move( built.m_indices );
 			this->m_tri_bounds = std::move( built.m_tri_bounds );
 			this->m_centroids = std::move( built.m_centroids );
 			this->m_world_render = std::move( built.m_world_render );
-			this->m_entity_render = entities->m_world_render;
-			this->m_entity_collision = entities->m_triangles.empty( ) ? nullptr : entities;
-			this->m_entity_state_hash = entity_hash;
+			this->m_entity_render.reset( );
+			this->m_entity_collision.reset( );
+			this->m_entity_state_hash = 0;
 			++this->m_world_render_revision;
 			++this->m_entity_render_revision;
 			this->m_geometry_revision.fetch_add( 1, std::memory_order_release );
@@ -1114,6 +1154,7 @@ namespace game {
 
     void collision_world::refresh_map_entities(std::stop_token stop)
     {
+        VESTA_PERF_SCOPE(map_entities_refresh);
 	    if (stop.stop_requested())
 		    return;
 	    std::string map{};
@@ -1140,28 +1181,36 @@ namespace game {
 			return;
 		}
 
-		auto built = std::make_shared<collision_world>( );
-		built->m_triangles = std::move( entity_geometry );
-		built->m_world_triangle_count = built->m_triangles.size( );
-		built->rebuild_accel( );
+        auto built = std::make_shared<collision_world>();
+        {
+            VESTA_PERF_SCOPE(map_entities_build);
+            built->m_triangles = std::move(entity_geometry);
+            built->m_world_triangle_count = built->m_triangles.size();
+            built->rebuild_accel();
+        }
 
 	    if (stop.stop_requested())
 		    return;
-	    std::unique_lock lock( this->m_mutex );
-		if ( this->m_map_name != map )
-		{
-			return;
-		}
-		app::context().diagnostics.info( "[bvh] entity refresh for {}: {} entity triangles ({} total)",
-			map, built->m_triangles.size( ), this->m_triangles.size( ) + built->m_triangles.size( ) );
-		this->m_entity_triangle_count = built->m_triangles.size( );
-		// The compiled map is immutable. Preserve its already-uploaded renderer
-		// identity and publish only the small late-spawned entity mesh.
-		this->m_entity_render = built->m_world_render;
-		this->m_entity_collision = built->m_triangles.empty( ) ? nullptr : built;
-		this->m_entity_state_hash = entity_hash;
-		++this->m_entity_render_revision;
-		this->m_geometry_revision.fetch_add( 1, std::memory_order_release );
+        auto retired_render = built->m_world_render;
+        std::shared_ptr<const collision_world> retired_collision =
+            built->m_triangles.empty() ? nullptr : built;
+        std::size_t total_triangles{};
+        {
+            VESTA_PERF_SCOPE(map_entities_publish);
+            std::unique_lock lock(this->m_mutex);
+            if (this->m_map_name != map || stop.stop_requested()) return;
+            total_triangles = this->m_triangles.size() + built->m_triangles.size();
+            this->m_entity_triangle_count = built->m_triangles.size();
+            // The previous meshes retire after unlocking, including their large buffers.
+            this->m_entity_render.swap(retired_render);
+            this->m_entity_collision.swap(retired_collision);
+            this->m_entity_state_hash = entity_hash;
+            ++this->m_entity_render_revision;
+            this->m_geometry_revision.fetch_add(1, std::memory_order_release);
+        }
+        platform::performance::record_counter(platform::performance::counter::map_geometry_published);
+        app::context().diagnostics.info("[bvh] entity refresh for {}: {} entity triangles ({} total)",
+            map, built->m_triangles.size(), total_triangles);
 	}
 
 } // namespace game

@@ -310,11 +310,6 @@ namespace config {
 		struct crosshair
 		{
 			bool enabled{ false };
-			// Read the user's cl_crosshair* values from the game and mirror them in
-			// the overlay. This is independent of weapon type and is the default mode.
-			bool copy_game{ true };
-
-			bool sync{ true };
 			bool dot{ true };
 			bool lines{ true };
 			bool t_style{ false };

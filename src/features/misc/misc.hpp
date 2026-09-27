@@ -1,6 +1,7 @@
 #pragma once
 
 #include <core/input/bindings.hpp>
+#include <features/misc/input_lifecycle.hpp>
 
 namespace features::misc {
 
@@ -21,11 +22,7 @@ namespace features::misc {
 				complete,
 			};
 
-			struct owned_control
-			{
-				game::input_binding binding{};
-				bool pressed{};
-			};
+			using owned_control = input_lifecycle::owned_control;
 
 			// Detached copy of one table row. Strings point into the generated
 			// constexpr table, so they outlive any use of this struct.
@@ -109,6 +106,7 @@ namespace features::misc {
 			float m_lock_pitch{};
 			float m_lock_yaw{};
 			bool m_activation_latched{};
+			bool m_release_pending{};
 
 			// Distance the aim marker is projected out from the eye. Only affects
 			// where the marker is drawn, never the angles that are aimed at.
@@ -157,14 +155,13 @@ namespace features::misc {
 
 	        int m_reported_jump_key{-1};
 	        std::uint16_t m_jump_key{};
-	        std::uint16_t m_activation_key{};
-			std::chrono::steady_clock::time_point m_next_binding_refresh{};
 			bool m_jump_down{ false };
 			std::uint16_t m_owned_jump_key{};
 			bool m_gate_requested{};
 			bool m_edge_was_on_ground{ false };
 			bool m_edge_armed{ false };
 			float m_last_bunny_simulation_time{ -1.0f };
+			std::uintptr_t m_bunny_pawn{};
 			std::chrono::steady_clock::time_point m_last_bunny_tap{};
 			// Every transition is held long enough to cross a game input sample. If a
 			// held edge-jump press survives long enough for the game to sample it.

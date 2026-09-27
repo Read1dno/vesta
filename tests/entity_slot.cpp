@@ -30,5 +30,24 @@ int main() {
     VESTA_CHECK(!game::read_entity_slot(list,0x8000u,true,read));
     VESTA_CHECK(!game::read_entity_slot(0,0,true,read));
     VESTA_CHECK(!game::read_entity_slot(list+8,0,true,read));
-    std::cout<<"entity_slot: zero handle, serial reuse, invalid handles, read failures PASS\n";
+    constexpr std::uintptr_t list2=0x40000,chunk2=0x50000;
+    put(list2+0x10,chunk2);
+    for (unsigned i=0;i<65*112;++i) memory[chunk2+i]=0;
+    put(chunk2+112,entity);
+    put(chunk2+4*112,entity+0x1000);
+    put(chunk2+64*112,entity+0x2000);
+    std::array<std::uintptr_t,65> batch{};
+    unsigned reads{};
+    auto counting_read=[&](auto address,void* out,auto size){++reads;return read(address,out,size);};
+    VESTA_CHECK(game::read_player_controller_slots(list2,batch,counting_read));
+    VESTA_CHECK(reads==2 && batch[0]==0 && batch[1]==entity
+        && batch[4]==entity+0x1000 && batch[64]==entity+0x2000
+        && batch[2]==0 && batch[63]==0);
+    VESTA_CHECK(batch[1]==game::read_entity_slot(list2,1,false,read));
+    VESTA_CHECK(batch[64]==game::read_entity_slot(list2,64,false,read));
+    memory.erase(chunk2+64*112);
+    VESTA_CHECK(!game::read_player_controller_slots(list2,batch,read));
+    VESTA_CHECK(batch[1]==0 && batch[64]==0);
+    VESTA_CHECK(!game::read_player_controller_slots(0,batch,read));
+    std::cout<<"entity_slot: zero handle, serial reuse, invalid handles, batch read PASS\n";
 }

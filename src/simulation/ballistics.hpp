@@ -1,4 +1,5 @@
 #pragma once
+#include <simulation/seed_window.hpp>
 
 namespace simulation {
 
@@ -72,6 +73,11 @@ namespace simulation {
 				int postpone_fire_ready_tick;
 				float postpone_fire_ready_fraction;
 				int player_tick;
+				int seed_simulation_tick{ -1 };
+				foundation::vec3 seed_view_angles{};
+				seed_window::recoil_pair seed_recoil{};
+				std::chrono::steady_clock::time_point seed_snapshot_begin{}, seed_snapshot_end{};
+				bool seed_snapshot_valid{};
 				// BacktrackLocalPlayer adds this pre-shot offset to the selected
 				// attack timestamp before walking the weapon-history ring.
 				float wat_tick_offset;

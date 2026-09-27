@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include <system/performance.hpp>
 #include <simulation/ballistics.hpp>
 #include <simulation/penetration_solver.hpp>
 #include <core/math/ray_capsule.hpp>
@@ -118,6 +119,7 @@ namespace simulation {
 		bool allow_penetration, float minimum_damage,
 		int required_hitbox, result& out ) const
 	{
+		VESTA_PERF_SCOPE( seed_penetration );
 		if ( !game::collision().valid( )
 			|| this->m_weapon_data.damage <= 0.0f
 			|| this->m_weapon_data.range <= 0.0f )

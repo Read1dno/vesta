@@ -28,7 +28,7 @@ namespace chams {
 			const std::shared_ptr<const game::player_pose_frame>& frame );
 		void render_world_effects( ID3D11RenderTargetView* backbuffer_rtv,
 			UINT target_width, UINT target_height );
-		void begin_2d_bloom_frame( );
+		void begin_2d_bloom_frame( bool enabled = true );
 		void add_2d_bloom_segment( float x0, float y0, float x1, float y1,
 			float thickness, float radius, zdraw::rgba color );
 		void add_2d_bloom_triangle( float x0, float y0, float x1, float y1,
@@ -242,6 +242,7 @@ namespace chams {
 		ID3D11Buffer* m_bloom_2d_vertex_buffer{};
 		std::size_t m_bloom_2d_vertex_capacity{};
 		float m_bloom_2d_radius{};
+		bool m_bloom_2d_enabled{};
 
 		// World depth pre-pass. Geometry revisions keep map changes and moving
 		// collision entities from leaving a stale GPU vertex buffer behind.
@@ -261,6 +262,7 @@ namespace chams {
 			std::string model_path{};
 			std::vector<bone_matrix> bones{};
 			std::chrono::steady_clock::time_point spawn{};
+			world_bounds bounds{};
 		};
 		std::uint64_t m_last_hit_sequence{};
 		std::uint64_t m_last_kill_sequence{};
@@ -270,6 +272,7 @@ namespace chams {
 			std::string model_path{};
 			std::vector<bone_matrix> bones{};
 			std::chrono::steady_clock::time_point seen{};
+			world_bounds bounds{};
 		};
 		struct death_record : death_pose
 		{

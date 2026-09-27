@@ -6,14 +6,20 @@ void simulation::ballistics_t::penetration::prepare(std::uintptr_t, std::uintptr
     m_weapon_data={35.0f,2.0f,.98f,8192.0f,1.5f,4.0f};
 }
 namespace {
-constexpr std::uintptr_t pawn=0x10000,controller=0x20000,weapon=0x30000,vdata=0x40000,services=0x50000;
+constexpr std::uintptr_t pawn=0x10000,controller=0x20000,weapon=0x30000,vdata=0x40000,services=0x50000,punch_services=0x60000;
 template<class T> void field(std::uintptr_t p,std::string_view name,T value) {fixture::put(p+schema(name),value);}
 void setup() {
     fixture::memory.clear();fixture::clear_reads();
-    for(auto p:{pawn,controller,weapon,vdata,services})
+    for(auto p:{pawn,controller,weapon,vdata,services,punch_services})
         for(unsigned i=0;i<0x4000;++i)fixture::memory[p+i]=std::byte{};
     field(controller,"m_nTickBase",100);
+    field(pawn,"m_nSimulationTick",103);
+    field(pawn,"m_iEFlags",0u);
     field(pawn,"m_vecAbsVelocity",foundation::vec3{100,20,0});
+    field(pawn,"m_pAimPunchServices",punch_services);
+    simulation::seed_window::recoil_pair recoil{};
+    recoil.predictable.base.tick=100;recoil.unpredictable.base.tick=100;
+    fixture::put(punch_services,recoil);
     field(pawn,"m_pWeaponServices",services);
     field(services,"m_hActiveWeapon",std::uint32_t{17});
     field(weapon,"m_fLastShotTime",1.0f);
@@ -33,6 +39,7 @@ void setup() {
     field(pawn,"m_bIsWalking",false);
     field(pawn,"m_hGroundEntity",0u);
     field(pawn,"v_angle",foundation::vec3{0,30,0});
+    field(pawn,"m_angEyeAngles",foundation::vec3{0,30,0});
     field(weapon,"m_bInReload",false);
     field(weapon,"m_iClip1",30);
     field(weapon,"m_nPostponeFireReadyTicks",0);
@@ -52,7 +59,8 @@ int main() {
     };
     setup();expect(true);
     const auto required_reads=fixture::calls;
-    VESTA_CHECK(output.player_tick==100);
+    VESTA_CHECK(output.player_tick==100 && output.seed_simulation_tick==103 && output.seed_snapshot_valid);
+    VESTA_CHECK(output.seed_view_angles.y==30 && output.seed_recoil.predictable.base.tick==100);
     VESTA_CHECK(output.velocity.x==100 && output.velocity.y==20 && output.on_ground);
     VESTA_CHECK(output.weapon_ready && output.clip==30 && output.item_def_idx==7);
     const auto running_inaccuracy=output.inaccuracy;
@@ -60,8 +68,8 @@ int main() {
     for(unsigned i=1;i<=required_reads;++i) {
         setup();fixture::failure_call=i;expect(false);
     }
-    setup();velocity={};expect(true);VESTA_CHECK(std::abs(output.inaccuracy-.03f)<1e-6f);
-    setup();velocity={200,40,300};field(pawn,"m_hGroundEntity",0xffffffffu);expect(true);
+    setup();velocity={};field(pawn,"m_vecAbsVelocity",velocity);expect(true);VESTA_CHECK(std::abs(output.inaccuracy-.03f)<1e-6f);
+    setup();velocity={200,40,300};field(pawn,"m_vecAbsVelocity",velocity);field(pawn,"m_hGroundEntity",0xffffffffu);expect(true);
     VESTA_CHECK(!output.on_ground && output.inaccuracy>.4f);
     setup();velocity={100,20,0};field(pawn,"m_bIsWalking",true);expect(true);
     VESTA_CHECK(output.is_walking && output.inaccuracy<running_inaccuracy);

@@ -45,41 +45,5 @@ int main()
     VESTA_CHECK(float_getter(getter)==0x1b8);
     put(getter,4,0x2c0u);VESTA_CHECK(float_getter(getter)==0x2c0);
     getter[8]=std::byte{0xe9};VESTA_CHECK(!float_getter(getter));
-    crosshair_frame source{},out{};
-    source.count=1;source.pieces[0].geometry={959,539,959,539};
-    source.pieces[0].color={0,1,0,1};
-    VESTA_CHECK(valid_frame(source));
-    source.count=17;VESTA_CHECK(!valid_frame(source));source.count=1;
-    source.pieces[0].type=9;VESTA_CHECK(!valid_frame(source));source.pieces[0].type=0;
-    source.pieces[0].geometry[0]=NAN;VESTA_CHECK(!valid_frame(source));
-    source.pieces[0].geometry[0]=959;
-    source.pieces[0].color[3]=2;VESTA_CHECK(!valid_frame(source));source.pieces[0].color[3]=1;
-    VESTA_CHECK(std::abs(linear_to_srgb(0.21404114f)-0.5f)<1e-6f);
-    VESTA_CHECK(linear_to_srgb(0)==0 && std::abs(linear_to_srgb(1)-1)<1e-6f);
-    std::uint32_t sequence{},reads{},published{};
-    const auto reader=[&](std::uintptr_t address,void* target,std::size_t bytes) {
-        ++reads;
-        if(address==0x100) {std::memcpy(target,&sequence,bytes);return true;}
-        VESTA_CHECK(address==0x1000+(sequence&1)*sizeof(source));
-        std::memcpy(target,&source,bytes);return true;
-    };
-    VESTA_CHECK(!coherent_frame(0x100,0x1000,reader,out,published));
-    sequence=11;reads=0;
-    VESTA_CHECK(coherent_frame(0x100,0x1000,reader,out,published));
-    VESTA_CHECK(published==11 && reads==3 && out.count==1);
-    int races{};
-    auto raced=[&](auto address,void* target,std::size_t bytes) {
-        const bool ok=reader(address,target,bytes);
-        if(address!=0x100 && races++==0) ++sequence;
-        return ok;
-    };
-    VESTA_CHECK(coherent_frame(0x100,0x1000,raced,out,published) && published==12);
-    auto unstable=[&](auto address,void* target,std::size_t bytes) {
-        const bool ok=reader(address,target,bytes);
-        if(address!=0x100) ++sequence;
-        return ok;
-    };
-    reads=0;VESTA_CHECK(!coherent_frame(0x100,0x1000,unstable,out,published));
-    VESTA_CHECK(reads==9 && out.count==0 && published==0);
-    std::cout<<"update_contracts: typed values, layout drift, invalid data and frame races PASS\n";
+    std::cout<<"update_contracts: typed values and layout drift PASS\n";
 }

@@ -1,4 +1,5 @@
 #include <system/latest_job.hpp>
+#include <app/map_absence.hpp>
 #include <cstdio>
 #include <future>
 #include <thread>
@@ -33,5 +34,13 @@ int main()
 		queue.request(std::to_string(i), [] {});
 	if (queue.next({})->key != "9999")
 		return 7;
-	std::puts("PASS map jobs: cancel, coalesce, reject stale publication, interrupt idle wait");
+	app::map_absence_guard absence;
+    const auto t0 = std::chrono::steady_clock::time_point{} + std::chrono::seconds(1);
+    if (absence.observe(false, t0)) return 8;
+    if (absence.observe(false, t0 + std::chrono::milliseconds(1499))) return 9;
+    if (!absence.observe(false, t0 + std::chrono::milliseconds(1500))) return 10;
+    if (absence.observe(true, t0 + std::chrono::milliseconds(1600))) return 11;
+    if (absence.observe(false, t0 + std::chrono::milliseconds(1700))) return 12;
+    if (absence.observe(false, t0 + std::chrono::milliseconds(1800))) return 13;
+    std::puts("PASS map jobs and transient map absence grace");
 }

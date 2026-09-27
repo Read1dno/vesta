@@ -73,8 +73,11 @@ void map_loader::run(std::stop_token stop)
 			continue;
 		try
 		{
+            bool from_file{};
+            {
+            VESTA_PERF_SCOPE(map_load);
 			game::collision_world built;
-			const auto from_file = built.build_from_map_file(job->key, job->stop);
+			from_file = built.build_from_map_file(job->key, job->stop);
 			if (!from_file && !job->stop.stop_requested())
 			{
 				log_map("live_fallback", job->key.c_str());
@@ -87,6 +90,7 @@ void map_loader::run(std::stop_token stop)
 			blast.parse(job->stop);
 			if (!queue_.commit(job->stop, [&] { game::blast_damage().replace_with(blast); }))
 				continue;
+            }
 			if (from_file)
 			{
 				std::mutex wait_mutex;

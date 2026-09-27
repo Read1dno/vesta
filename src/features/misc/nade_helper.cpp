@@ -611,7 +611,17 @@ namespace features::misc {
 
 	void nade_helper_t::tick( )
 	{
-	const auto runtime_settings = config::get_runtime_snapshot();
+		if ( this->m_release_pending )
+		{
+			this->cancel_throw( this->m_activation_latched );
+			if ( this->m_release_pending ) return;
+		}
+		const auto runtime_settings = config::get_runtime_snapshot();
+		if ( !runtime_settings )
+		{
+			this->cancel_throw( false );
+			return;
+		}
 		const auto& cfg = runtime_settings->general.m_nade_helper;
 		if ( !cfg.enabled )
 		{
@@ -630,8 +640,8 @@ namespace features::misc {
 			return;
 		}
 		const auto now = std::chrono::steady_clock::now( );
-		const auto activation_held = cfg.aim_key > 0
-			&& ( ::GetAsyncKeyState( cfg.aim_key ) & 0x8000 ) != 0;
+		const auto activation_held = input_lifecycle::activation_held( cfg.aim_key,
+			[]( const std::uint16_t key ) { return app::context().input.physical_key_down( key ); } );
 		if ( !activation_held )
 		{
 
@@ -777,44 +787,41 @@ namespace features::misc {
 
 	bool nade_helper_t::set_control( owned_control& control, const bool pressed )
 	{
-		if ( control.pressed == pressed )
-			return true;
-		if ( !control.binding )
-			return false;
-
-		using platform::windows::pointer_action;
-		auto success = false;
-		switch ( control.binding.device )
+		return input_lifecycle::transition( control, pressed,
+			[]( const game::input_binding& binding, const bool pressed )
 		{
-		case game::input_device::keyboard:
-			success = app::context().input.key( control.binding.virtual_key, pressed );
-			break;
-		case game::input_device::mouse_primary:
-			success = app::context().input.pointer( 0, 0,
-				pressed ? pointer_action::primary_down : pointer_action::primary_up );
-			break;
-		case game::input_device::mouse_secondary:
-			success = app::context().input.pointer( 0, 0,
-				pressed ? pointer_action::secondary_down : pointer_action::secondary_up );
-			break;
-		case game::input_device::mouse_middle:
-			success = app::context().input.pointer( 0, 0,
-				pressed ? pointer_action::middle_down : pointer_action::middle_up );
-			break;
-		case game::input_device::mouse_auxiliary1:
-			success = app::context().input.pointer( 0, 0,
-				pressed ? pointer_action::auxiliary1_down : pointer_action::auxiliary1_up );
-			break;
-		case game::input_device::mouse_auxiliary2:
-			success = app::context().input.pointer( 0, 0,
-				pressed ? pointer_action::auxiliary2_down : pointer_action::auxiliary2_up );
-			break;
-		default:
-			break;
-		}
-		if ( success )
-			control.pressed = pressed;
-		return success;
+			using platform::windows::pointer_action;
+			auto success = false;
+			switch ( binding.device )
+			{
+			case game::input_device::keyboard:
+				success = app::context().input.key( binding.virtual_key, pressed );
+				break;
+			case game::input_device::mouse_primary:
+				success = app::context().input.pointer( 0, 0,
+					pressed ? pointer_action::primary_down : pointer_action::primary_up );
+				break;
+			case game::input_device::mouse_secondary:
+				success = app::context().input.pointer( 0, 0,
+					pressed ? pointer_action::secondary_down : pointer_action::secondary_up );
+				break;
+			case game::input_device::mouse_middle:
+				success = app::context().input.pointer( 0, 0,
+					pressed ? pointer_action::middle_down : pointer_action::middle_up );
+				break;
+			case game::input_device::mouse_auxiliary1:
+				success = app::context().input.pointer( 0, 0,
+					pressed ? pointer_action::auxiliary1_down : pointer_action::auxiliary1_up );
+				break;
+			case game::input_device::mouse_auxiliary2:
+				success = app::context().input.pointer( 0, 0,
+					pressed ? pointer_action::auxiliary2_down : pointer_action::auxiliary2_up );
+				break;
+			default:
+				break;
+			}
+			return success;
+		} );
 	}
 
 	void nade_helper_t::release_movement( const bool include_jump )
@@ -847,14 +854,14 @@ namespace features::misc {
 	{
 		this->release_attacks( );
 		this->release_movement( );
-		app::context().input.set_movement_gate( {}, false );
-		this->m_gated_keys.clear( );
-		this->m_forward = {};
-		this->m_walk = {};
-		this->m_duck = {};
-		this->m_jump = {};
-		this->m_attack = {};
-		this->m_attack2 = {};
+		const std::array controls{ &this->m_forward, &this->m_walk, &this->m_duck,
+			&this->m_jump, &this->m_attack, &this->m_attack2 };
+		this->m_release_pending = !input_lifecycle::discard_released( controls );
+		if ( !this->m_release_pending )
+		{
+			app::context().input.set_movement_gate( {}, false );
+			this->m_gated_keys.clear( );
+		}
 		this->m_active_lineup = {};
 		this->m_active_pawn = 0;
 		this->m_active_weapon = 0;
@@ -874,6 +881,7 @@ namespace features::misc {
 		const std::uint32_t tick, const std::chrono::steady_clock::time_point now )
 	{
 		this->cancel_throw( false );
+		if ( this->m_release_pending ) return false;
 		this->m_active_lineup = lineup;
 		this->m_active_pawn = pawn;
 		this->m_active_weapon = weapon;
@@ -908,14 +916,16 @@ namespace features::misc {
 		};
 		for ( const auto action : movement_actions )
 		{
-			const auto binding = bindings.resolve( action );
-			if ( binding.device != game::input_device::keyboard || !binding.virtual_key
-				|| std::ranges::find( this->m_gated_keys, binding.virtual_key )
-					!= this->m_gated_keys.end( ) )
+			for ( const auto& binding : bindings.candidates( action ) )
 			{
-				continue;
+				if ( binding.device != game::input_device::keyboard || !binding.virtual_key
+					|| std::ranges::find( this->m_gated_keys, binding.virtual_key )
+						!= this->m_gated_keys.end( ) )
+				{
+					continue;
+				}
+				this->m_gated_keys.push_back( binding.virtual_key );
 			}
-			this->m_gated_keys.push_back( binding.virtual_key );
 		}
 		if ( !this->m_gated_keys.empty( ) )
 			app::context().input.set_movement_gate( this->m_gated_keys, true );

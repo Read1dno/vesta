@@ -1,6 +1,7 @@
 #include <stdafx.hpp>
 #include <features/visuals/visuals.hpp>
 #include <core/memory/compatibility.hpp>
+#include <features/visuals/radar_geometry.hpp>
 
 namespace {
 	[[nodiscard]] bool radar_active( )
@@ -207,14 +208,15 @@ namespace {
 			return {};
 		}
 
-		// The first square ancestor smaller than the map image is its clipping radar viewport.
+		// Shape is measured in Panorama layout units, before 4:3 stretch or DPI scaling.
 		for ( std::size_t depth = 0; depth < std::min<std::size_t>( 24, chain.count ); ++depth )
 		{
 			const auto candidate = chain_rect( chain, depth );
 			if ( candidate.valid( display_w, display_h ) )
 			{
-				const auto aspect = candidate.w / candidate.h;
-				if ( aspect > 0.80f && aspect < 1.20f && candidate.w <= result.image.w + 2.0f && candidate.h <= result.image.h + 2.0f )
+				const auto& node = chain.nodes[ depth ];
+				if ( features::visuals::detail::square_radar_layout( node.width, node.height )
+					&& candidate.w <= result.image.w + 2.0f && candidate.h <= result.image.h + 2.0f )
 				{
 					result.viewport = candidate;
 				}
