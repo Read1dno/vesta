@@ -19,6 +19,8 @@ jobs:
         run: cmake --preset release -DBUILD_TESTING=ON
       - name: Build
         run: cmake --build --preset release --parallel
+      - name: Build menu-render integration test
+        run: cmake --build --preset release --target vesta_menu_render_test --parallel
       - name: Test
         run: ctest --test-dir build/release -C Release --output-on-failure
       - name: Package forum archive
