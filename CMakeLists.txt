@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(vesta VERSION 1.1.8 LANGUAGES C CXX)
+project(vesta VERSION 1.1.9 LANGUAGES C CXX)
 
 if(NOT DEFINED VESTA_OUTPUT_NAME)
     set(VESTA_OUTPUT_NAME "vesta")

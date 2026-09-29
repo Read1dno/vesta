@@ -2009,14 +2009,15 @@ namespace features::aimbot {
         const auto api_reserve = transferred_press ? std::chrono::microseconds::zero() : api_budget.reserve();
         const auto start_phase = micros(submission_started_at - m_seed_phase_tick_at);
         const auto projected_phase = start_phase + api_reserve;
-        const bool has_submission_budget = final_host_session
+        const bool has_submission_budget = simulation::seed_timing::within_delivery_deadline(
+            submission_started_at - m_seed_phase_tick_at + api_reserve) && (final_host_session
             ? simulation::seed_timing::fresh_decision(micros(submission_started_at - final_now),
                 micros(submission_started_at - terminal_guard_at),
                 micros(final_now - m_seed_phase_tick_at), projected_phase)
             : simulation::seed_timing::fresh_network_decision(micros(submission_started_at - final_now),
                 micros(submission_started_at - terminal_guard_at),
                 micros(final_now - m_seed_phase_tick_at), start_phase, m_seed_network_window)
-                && m_seed_network_window.contains(projected_phase);
+                && m_seed_network_window.contains(projected_phase));
         if (!has_submission_budget) {
             trace.reason = trace_reason::stale_delivery;
             m_seed_held_proxy = false;

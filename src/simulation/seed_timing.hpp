@@ -9,6 +9,16 @@
 #include <limits>
 
 namespace simulation::seed_timing {
+    inline constexpr auto tick_interval = std::chrono::microseconds(15625);
+    inline constexpr auto maximum_delivery_phase = tick_interval * 3 / 5;
+
+    template<class Rep, class Period>
+    [[nodiscard]] constexpr bool within_delivery_deadline(
+        std::chrono::duration<Rep, Period> age) noexcept
+    {
+        return age >= decltype(age)::zero() && age <= maximum_delivery_phase;
+    }
+
 	[[nodiscard]] constexpr int select_tick( bool host_session, int host_tick,
 		int simulation_tick, int tick_base ) noexcept
 	{
@@ -61,7 +71,6 @@ namespace simulation::seed_timing {
     {
         using clock = std::chrono::steady_clock;
         constexpr auto maximum_gap = std::chrono::microseconds(4000);
-        constexpr auto tick_interval = std::chrono::microseconds(15625);
         const auto gap = observed_at - sampled_at;
         const bool timely = sampled_at != clock::time_point{}
             && gap >= clock::duration::zero() && gap <= maximum_gap;
@@ -159,9 +168,8 @@ namespace simulation::seed_timing {
 
     [[nodiscard]] constexpr int phase(std::chrono::microseconds age) noexcept
     {
-        if (age.count() < 0 || age.count() >= 14625) return -1;
-        if (age.count() <= 6000) return 0;
-        return age.count() >= 11000 ? 2 : 1;
+        if (!within_delivery_deadline(age)) return -1;
+        return age.count() <= 6000 ? 0 : 1;
     }
     [[nodiscard]] constexpr bool fresh_decision(std::chrono::microseconds evaluation_age,
         std::chrono::microseconds terminal_age, std::chrono::microseconds prepared_phase,
@@ -173,19 +181,20 @@ namespace simulation::seed_timing {
     }
     struct network_phase_window {
         int minimum_us{5000};
-        int maximum_us{10500};
+        int maximum_us{static_cast<int>(maximum_delivery_phase.count())};
         int early_streak{};
         int late_streak{};
 
         [[nodiscard]] constexpr bool contains(std::chrono::microseconds age) const noexcept
         {
-            return age.count() >= minimum_us && age.count() <= maximum_us;
+            return within_delivery_deadline(age)
+                && age.count() >= minimum_us && age.count() <= maximum_us;
         }
 
         // Feedback is the observed client shot tick, never an additional ray condition.
         constexpr void observe(int phase_us, int actual_minus_selected) noexcept
         {
-            if (phase_us < 0 || phase_us > 14000 || actual_minus_selected < -1
+            if (!within_delivery_deadline(std::chrono::microseconds(phase_us)) || actual_minus_selected < -1
                 || actual_minus_selected > 1) return;
             if (actual_minus_selected == 0) { early_streak = late_streak = 0; return; }
             if (actual_minus_selected < 0) {
@@ -195,8 +204,9 @@ namespace simulation::seed_timing {
                 const int lower = std::max(minimum_us, phase_us + 500);
                 if (lower + 1000 <= maximum_us) minimum_us = lower;
                 else {
-                    minimum_us = std::min(lower, 12000);
-                    maximum_us = std::min(14000, minimum_us + 2000);
+                    const auto ceiling = static_cast<int>(maximum_delivery_phase.count());
+                    minimum_us = std::min(lower, ceiling - 1000);
+                    maximum_us = std::min(ceiling, minimum_us + 2000);
                 }
             } else {
                 early_streak = 0;

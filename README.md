@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src=".github/assets/vesta-header.gif" alt="VESTA" width="800">
+<img src=".github/assets/vesta-visuals.png" alt="Vesta Visuals menu" width="100%">
 
 **A feature-complete external cheat for Counter-Strike 2.**
 

@@ -25,6 +25,13 @@ namespace
 
 	static_assert( sizeof( registry_entry ) == 0x20 );
 
+	struct panel_class_storage
+	{
+		std::uint32_t count{};
+		std::uint32_t data{};
+		[[nodiscard]] explicit operator bool( ) const { return count && data; }
+	};
+
 	struct panorama_runtime
 	{
 		std::uintptr_t engine{};
@@ -33,6 +40,7 @@ namespace
 		std::uintptr_t class_symbol_table{};
 		std::uint32_t registry_offset{};
 		bool attempted{};
+		panel_class_storage class_storage{};
 	};
 
 	struct panel_geometry
@@ -119,13 +127,49 @@ namespace
 		return 0;
 	}
 
+	[[nodiscard]] panel_class_storage decode_class_storage(
+		const std::span<const std::uint8_t> code )
+	{
+		panel_class_storage result{};
+		const auto compare = [&]( const std::size_t at, const std::uint8_t opcode,
+			const std::uint32_t offset )
+		{
+			if ( at + 7 > code.size( ) || code[at] != 0x41
+				|| code[at + 1] != opcode || code[at + 2] != 0xb5 ) return false;
+			std::uint32_t field{};
+			std::memcpy( &field, code.data( ) + at + 3, sizeof( field ) );
+			return field == offset;
+		};
+		for ( std::size_t index = 0; index + 7 <= code.size( ); ++index )
+		{
+			if ( code[index] != 0x49 || code[index + 1] != 0x8b
+				|| code[index + 2] != 0x85 ) continue;
+			std::uint32_t data{};
+			std::memcpy( &data, code.data( ) + index + 3, sizeof( data ) );
+			if ( data < 0x108 || data > 0x800 || ( data & 7 ) ) continue;
+			const auto count = data - 8;
+			bool before{}, after{};
+			// Match both bounds of the serializer's uint16 class-vector loop.
+			for ( auto at = index > 128 ? index - 128 : 0; at < index; ++at )
+				before |= compare( at, 0x39, count );
+			for ( auto at = index + 7; at < std::min( code.size( ), index + 512 ); ++at )
+				after |= compare( at, 0x3b, count );
+			if ( !before || !after ) continue;
+			if ( result && ( result.count != count || result.data != data ) ) return {};
+			result = { count, data };
+		}
+		return result;
+	}
+
 	[[nodiscard]] std::uintptr_t decode_class_symbol_table(
 		const platform::windows::process_session& process,
-		const std::uintptr_t method )
+		const std::uintptr_t method, panel_class_storage& storage )
 	{
 
 		std::array<std::uint8_t, 0x1200> code{};
 		if ( !process.copy( method, code.data( ), code.size( ) ) ) return 0;
+		storage = decode_class_storage( code );
+		if ( !storage ) return 0;
 		for ( std::size_t index = 0; index + 13 <= code.size( ); ++index )
 		{
 			if ( code[index] != 0x48 || code[index + 1] != 0x8d
@@ -165,8 +209,9 @@ namespace
 		if ( !readable_pointer( indices ) || shift == 0 || shift >= 32
 			|| !mask || !readable_pointer( pools ) )
 			return {};
-		const auto packed = process.load<std::uint32_t>(
-			indices + static_cast<std::uintptr_t>( symbol ) * sizeof( std::uint32_t ) );
+		std::uint32_t packed{};
+		if ( !process.copy( indices + static_cast<std::uintptr_t>( symbol )
+			* sizeof( packed ), &packed, sizeof( packed ) ) ) return {};
 		const auto pool = packed >> shift;
 		if ( pool >= pool_count ) return {};
 		const auto pool_base = process.load<std::uintptr_t>(
@@ -179,12 +224,15 @@ namespace
 		const panorama_runtime& runtime, const std::string_view expected )
 	{
 		const auto& process = app::context().process;
-		const auto count = process.load<std::uint32_t>( panel + 0x148 );
-		const auto data = process.load<std::uintptr_t>( panel + 0x150 );
+		std::uint32_t count{};
+		std::uintptr_t data{};
+		if ( !runtime.class_storage || !process.copy( panel + runtime.class_storage.count,
+			&count, sizeof( count ) ) ) return true;
 		if ( count == 0 ) return false;
-		// A normal Panorama panel has only a handful of classes. Fail closed on
-		// malformed/unresolved storage so a stale pointer can never be clicked.
-		if ( count > 64 || !readable_pointer( data )
+		// Unresolved CSS state must not turn a hidden panel into a click target.
+		if ( count > 64 || !process.copy( panel + runtime.class_storage.data,
+			&data, sizeof( data ) )
+			|| !readable_pointer( data )
 			|| !runtime.class_symbol_table )
 			return true;
 		std::array<std::uint16_t, 64> symbols{};
@@ -192,7 +240,8 @@ namespace
 			return true;
 		for ( std::uint32_t index = 0; index < count; ++index )
 		{
-			if ( panorama_symbol_text( runtime, symbols[index] ) == expected )
+			const auto text = panorama_symbol_text( runtime, symbols[index] );
+			if ( text.empty( ) || text == expected )
 				return true;
 		}
 		return false;
@@ -201,7 +250,7 @@ namespace
 	[[nodiscard]] panorama_runtime& panorama( )
 	{
 		static panorama_runtime runtime{};
-		if ( runtime.engine ) return runtime;
+		if ( runtime.engine && runtime.class_symbol_table && runtime.class_storage ) return runtime;
 		static auto next_retry = std::chrono::steady_clock::time_point{};
 		const auto now = std::chrono::steady_clock::now();
 		if ( now < next_retry ) return runtime;
@@ -222,7 +271,7 @@ namespace
 		const auto panel_serializer = process.load<std::uintptr_t>(
 			runtime.ui_panel_vtable + 315 * sizeof( std::uintptr_t ) );
 		runtime.class_symbol_table = decode_class_symbol_table(
-			process, panel_serializer );
+			process, panel_serializer, runtime.class_storage );
 		const auto interface_object = process.locate_vtable_object(
 			panorama_module, "CPanoramaUIEngine" );
 		const auto interface_table = process.load<std::uintptr_t>( interface_object );
@@ -282,13 +331,15 @@ namespace
 			current = ancestor.parent;
 		}
 
-		// Geometry verifies current visibility; the panel may be registered while hidden.
+		// Keep hidden candidates: Panorama can reuse the same button on the next ready-up.
 		return accept_layout;
 	}
 
 	[[nodiscard]] panel_geometry inspect_geometry( const std::uintptr_t panel )
 	{
 		const auto& process = app::context().process;
+		const auto& runtime = panorama( );
+		if ( !runtime.class_symbol_table || !runtime.class_storage ) return {};
 		panel_geometry result{};
 		std::uintptr_t current = panel;
 		std::uintptr_t root = panel;
@@ -303,6 +354,7 @@ namespace
 			const auto visibility = process.load<std::uint8_t>(
 				current + layout.visible );
 			if ( ( visibility & 0x08 ) == 0 ) return {};
+			if ( panel_has_class( current, runtime, "hidden" ) ) return {};
 
 			const auto x = process.load<float>( current + layout.x );
 			const auto y = process.load<float>( current + layout.y );
