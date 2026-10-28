@@ -318,7 +318,10 @@ bool aimbot_t::select_and_aim(const combat_frame& frame, const config::combat_pr
         m_next_visual_scan = std::chrono::steady_clock::now() + indicator_period;
     }
     if (selected_target.player)
+    {
+        note_view_engaged(selected_target.player->pawn);
         aimbot(frame.eye, frame.view_angles, selected_target, cfg.aimbot);
+    }
     return true;
 }
 
@@ -342,9 +345,11 @@ void aimbot_t::tick()
 
     const auto now = std::chrono::steady_clock::now();
     const auto requested_cfg = runtime_config()->combat.get(game::local_player().weapon_type());
+    const auto walk_autofire = g_walk_autofire.load(std::memory_order_acquire);
     const auto trigger_activation_active =
-        requested_cfg.triggerbot.enabled && config::combat_profile::activation_active(
-                                                requested_cfg.triggerbot.activation_mode, requested_cfg.triggerbot.key);
+        walk_autofire || (requested_cfg.triggerbot.enabled &&
+                          config::combat_profile::activation_active(requested_cfg.triggerbot.activation_mode,
+                                                                    requested_cfg.triggerbot.key));
 
     update_revolver_pre_cock(ctx, requested_cfg.triggerbot);
 
@@ -373,9 +378,11 @@ void aimbot_t::tick()
     }
     // With an independent seed mode the seed thread presses; this trigger bot stays idle.
     const auto independent_seed = requested_cfg.triggerbot.seed_type != config::combat_profile::seed_mode::none;
-    const auto trigger_requested = requested_cfg.triggerbot.enabled && !independent_seed &&
-                                   config::combat_profile::activation_active(requested_cfg.triggerbot.activation_mode,
-                                                                             requested_cfg.triggerbot.key);
+    const auto trigger_requested =
+        !independent_seed &&
+        (walk_autofire || (requested_cfg.triggerbot.enabled &&
+                           config::combat_profile::activation_active(requested_cfg.triggerbot.activation_mode,
+                                                                     requested_cfg.triggerbot.key)));
     const auto dynamic_fov_visualization_requested =
         requested_cfg.aimbot.enabled && requested_cfg.aimbot.draw_fov &&
         requested_cfg.aimbot.fov_config.selection != config::combat_profile::fov_settings::fixed;
@@ -461,9 +468,12 @@ void aimbot_t::tick()
         return;
     }
 
-    if (cfg.triggerbot.enabled && cfg.triggerbot.seed_type == config::combat_profile::seed_mode::none)
+    if ((cfg.triggerbot.enabled || walk_autofire) &&
+        cfg.triggerbot.seed_type == config::combat_profile::seed_mode::none)
         triggerbot(frame.eye, frame.view_angles, *frame.targets, cfg.triggerbot);
 
+    if (m_trigger_held)
+        note_view_engaged(m_trigger_target_valid ? m_trigger_target.pawn : 0);
     if (cfg.aimbot.enabled && !m_trigger_held)
     {
         if (!config::combat_profile::activation_active(cfg.aimbot.activation_mode, cfg.aimbot.key))

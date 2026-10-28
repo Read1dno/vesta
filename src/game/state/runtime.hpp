@@ -74,6 +74,10 @@ public:
     [[nodiscard]] bool valid() const { return m_pawn.load() != 0 || m_observer_pawn.load() != 0; }
     [[nodiscard]] bool alive() const { return m_alive.load(); }
     [[nodiscard]] std::uintptr_t view_pawn() const { return m_alive.load() ? m_pawn.load() : m_observer_pawn.load(); }
+    // The player the local one watches as a spectator (0 when not spectating). Read from the observer services every
+    // update, independently of which pawn resolve_local_pawn() picked: after death that can be the observer pawn,
+    // which has health, so alive() alone does not tell that the camera sits in someone else's head.
+    [[nodiscard]] std::uintptr_t spectated_pawn() const { return m_spectated_pawn.load(); }
 
     [[nodiscard]] std::uintptr_t weapon() const { return m_weapon.load(); }
     [[nodiscard]] std::uintptr_t weapon_vdata() const { return m_weapon_vdata.load(); }
@@ -100,6 +104,7 @@ private:
     std::atomic<std::uintptr_t> m_pawn{};
     std::atomic<std::uint32_t> m_pawn_handle{};
     std::atomic<std::uintptr_t> m_observer_pawn{};
+    std::atomic<std::uintptr_t> m_spectated_pawn{};
     std::atomic<std::int32_t> m_team{};
     std::atomic<std::int32_t> m_view_team{};
     std::atomic<std::int32_t> m_crosshair_id{};

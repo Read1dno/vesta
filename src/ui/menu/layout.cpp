@@ -345,7 +345,16 @@ void draw_section_title(ImDrawList* draw, ImVec2 position, float line_end_x, std
 
 void begin_row(const char* label, float control_width)
 {
-    ImGui::PushID(label);
+    // "text###id": the text is shown, the id keeps the row (and its popup) the same while the text changes.
+    if (const auto* split = std::strstr(label, "###"))
+    {
+        ImGui::PushID(split + 3);
+        thread_local std::string shown;
+        shown.assign(label, split);
+        label = shown.c_str();
+    }
+    else
+        ImGui::PushID(label);
     const auto y = ImGui::GetCursorPosY();
     g_row_start_y_stack.push_back(y);
     ImGui::SetCursorPosY(y + 13.0f);

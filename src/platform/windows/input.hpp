@@ -107,6 +107,14 @@ public:
         return (m_injected_pointer_down.load(std::memory_order_acquire) &
                 static_cast<std::uint32_t>(pointer_action::primary_down)) != 0;
     }
+    // Relative pointer movement on behalf of the route walker: unlike every other sender it does not count as
+    // "someone else turned the view", which is what the walker itself watches for.
+    bool walker_pointer(int dx, int dy) const noexcept;
+    // When another feature last sent relative pointer movement (steady_clock ticks, 0 = never).
+    [[nodiscard]] std::int64_t foreign_pointer_ticks() const noexcept
+    {
+        return m_foreign_pointer_ticks.load(std::memory_order_acquire);
+    }
     bool key(std::uint16_t virtual_key, bool pressed) const noexcept;
     bool keys(std::span<const key_transition> transitions) const noexcept;
 
@@ -124,6 +132,7 @@ public:
     {
         auto_stop,
         nade_helper,
+        walk_bot,
         count
     };
     void set_movement_gate(gate_owner owner, std::span<const std::uint16_t> virtual_keys, bool enabled) noexcept;
@@ -174,6 +183,8 @@ private:
     inject_pointer_fn m_pointer_injector{};
     inject_key_fn m_key_injector{};
     mutable std::atomic<std::uint32_t> m_injected_pointer_down{};
+    mutable std::atomic<std::int64_t> m_foreign_pointer_ticks{};
+    static inline thread_local bool s_walker_pointer{};
     std::jthread m_gate_thread{};
     std::atomic<DWORD> m_gate_thread_id{};
     std::atomic<bool> m_gate_thread_ready{};

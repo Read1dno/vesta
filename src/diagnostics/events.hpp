@@ -112,6 +112,13 @@ namespace diagnostics
     X(autoaccept_click, "autoaccept.click")                                                                            \
     X(autoaccept_blocked, "autoaccept.blocked")                                                                        \
     X(autoaccept_scan, "autoaccept.scan")                                                                              \
+    X(navmesh_ready, "navmesh.ready")                                                                                  \
+    X(navmesh_unavailable, "navmesh.unavailable")                                                                      \
+    X(walkbot_idle, "walkbot.idle")                                                                                    \
+    X(walkbot_route, "walkbot.route")                                                                                  \
+    X(walkbot_obstacle, "walkbot.obstacle")                                                                            \
+    X(matchflow_action, "matchflow.action")                                                                            \
+    X(matchflow_missing, "matchflow.missing")                                                                          \
     X(diagnostic_warning, "diagnostic.warning")
 
 enum class event : std::uint16_t

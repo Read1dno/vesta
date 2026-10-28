@@ -795,7 +795,8 @@ void bullet_impacts_t::resolve_action_feedback()
         if (!m_hit_confirmations.empty())
         {
             auto closest = std::ranges::min_element(m_hit_confirmations,
-                                                    [&](const auto left, const auto right) {
+                                                    [&](const auto left, const auto right)
+                                                    {
                                                         return std::chrono::abs(left - feedback->timestamp) <
                                                                std::chrono::abs(right - feedback->timestamp);
                                                     });

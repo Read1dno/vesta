@@ -106,7 +106,7 @@ public:
     [[nodiscard]] static const char* state_name(script_state state) noexcept;
 
 private:
-    std::unique_ptr<implementation> m_impl{};
+    std::unique_ptr<implementation> m_impl;
 };
 
 inline runtime_t& runtime()

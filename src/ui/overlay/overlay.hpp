@@ -57,9 +57,15 @@ public:
     [[nodiscard]] std::uint32_t ui_reference_height() const noexcept { return m_ui_reference_height; }
     [[nodiscard]] bool ui_uses_fullscreen_canvas() const noexcept { return m_ui_fullscreen_canvas; }
     [[nodiscard]] HWND hwnd() const { return m_hwnd; }
+    // The game is in front and in play. A game screen over the world (pause menu, team select, buy menu, console,
+    // popups) shows the system cursor, which the game hides in play: aim, triggers and scripted input stay off then.
     [[nodiscard]] bool combat_input_ready() const noexcept
     {
-        return m_combat_input_ready.load(std::memory_order_acquire);
+        if (!m_combat_input_ready.load(std::memory_order_acquire))
+            return false;
+        CURSORINFO cursor{};
+        cursor.cbSize = sizeof(cursor);
+        return !(::GetCursorInfo(&cursor) && (cursor.flags & CURSOR_SHOWING) != 0 && cursor.hCursor != nullptr);
     }
     [[nodiscard]] explicit operator bool() const { return m_hwnd != nullptr; }
 
@@ -104,6 +110,7 @@ private:
     void set_menu_hit_testing(bool enabled);
     void synchronize_content_visibility();
     void apply_capture_policy();
+    void apply_resource_priority();
     void synchronize_window_bounds();
     void route_overlay_input();
     bool initialize_graphics();
@@ -142,6 +149,11 @@ private:
     bool m_input_visible{false};
     bool m_obs_bypass_observed{};
     bool m_obs_bypass_initialized{};
+    // Misc > Engine priority levels as applied (-1: not yet), and the game's CPU class they were planned against.
+    int m_cpu_priority_applied{-1};
+    int m_gpu_priority_applied{-1};
+    int m_game_priority_rank{-1};
+    std::chrono::steady_clock::time_point m_next_priority_check{};
     bool m_overlay_visible{};
     bool m_content_suppressed{};
     bool m_window_tracking_active{};

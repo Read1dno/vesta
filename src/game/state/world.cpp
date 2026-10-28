@@ -763,7 +763,10 @@ bool world_sampler::read_player(const player_pass& pass, const entity_directory:
         return false;
 
     const auto player_pawn = game::entity_index().lookup(player_pawn_handle);
-    if (!player_pawn || player_pawn == game::local_player().view_pawn())
+    // Neither the player's own body nor the one it spectates: the camera sits in that head, and its box and chams
+    // would cover the whole screen.
+    if (!player_pawn || player_pawn == game::local_player().view_pawn() ||
+        player_pawn == game::local_player().spectated_pawn())
         return false;
 
     const auto collision_mins_offset = o.pawn_collision + o.collision_mins;

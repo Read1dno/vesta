@@ -25,11 +25,13 @@ constexpr std::size_t k_name_capacity = 128;
 [[nodiscard]] bool is_valid_cvar_name(const std::string_view name) noexcept
 {
     return name.size() >= 2 && name.size() < k_name_capacity - 1 &&
-           std::ranges::all_of(name,
-                               [](const char c) {
-                                   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                                          c == '_' || c == '.';
-                               });
+           std::ranges::all_of(
+               name,
+               [](const char c)
+               {
+                   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
+                          c == '.';
+               });
 }
 } // namespace
 

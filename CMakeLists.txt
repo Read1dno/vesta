@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(vesta VERSION 1.2.1 LANGUAGES C CXX)
+project(vesta VERSION 1.2.2 LANGUAGES C CXX)
 
 # Lua (compiled as C) reports errors with longjmp through Vesta's C++ API functions. With /EHsc MSVC assumes that
 # extern "C" functions never throw and skips the destructors of those frames, leaving locks held and memory leaked;
@@ -98,6 +98,7 @@ set(vesta_sources
     src/simulation/grenade.cpp
     src/game/body/hitboxes.cpp
     src/simulation/map_collision.cpp
+    src/simulation/nav_mesh.cpp
     src/simulation/penetration.cpp
     src/game/body/skeleton.cpp
 
@@ -128,6 +129,15 @@ set(vesta_sources
 	 src/features/misc/auto_stop.cpp
     src/features/misc/bhop.cpp
     src/features/misc/nade_helper.cpp
+    src/features/misc/walk_bot.cpp
+    src/features/misc/walk_bot_path.cpp
+    src/features/misc/walk_bot_drive.cpp
+    src/features/misc/walk_bot_view.cpp
+    src/features/misc/walk_bot_combat.cpp
+    src/features/misc/walk_bot_extras.cpp
+    src/features/misc/walk_bot_render.cpp
+    src/features/misc/match_flow.cpp
+    src/game/panorama/panorama.cpp
 
     # render
     src/features/chams/animation.cpp

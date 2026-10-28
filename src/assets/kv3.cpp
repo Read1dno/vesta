@@ -350,8 +350,9 @@ object read_value(context& ctx, std::uint8_t raw_type, buffers& lane)
         case node_type::array_type_byte_length:
         case node_type::array_type_auxiliary_buffer:
         {
-            const std::int32_t length = type == node_type::array_typed ? buf.bytes4.read_pod<std::int32_t>()
-                                                                       : static_cast<std::int32_t>(buf.bytes1.read(1)[0]);
+            const std::int32_t length = type == node_type::array_typed
+                                            ? buf.bytes4.read_pod<std::int32_t>()
+                                            : static_cast<std::int32_t>(buf.bytes1.read(1)[0]);
             const auto [sub_type, sub_flag] = read_type(ctx);
             (void)sub_flag;
             auto& element_lane = type == node_type::array_type_auxiliary_buffer ? *ctx.auxiliary : buf;
@@ -672,7 +673,8 @@ struct decoded_storage
 [[nodiscard]] cursor decode_v5_buffers(cursor& input, const header& h, decoded_storage& storage, context& ctx)
 {
     storage.buffer1 = decode_frame(input, h.method, h.buffer1_compressed, h.buffer1_uncompressed);
-    static_cast<void>(layout_pools(storage.buffer1, 0, {h.bytes1, h.bytes2, h.bytes4, h.bytes8}, storage.pools1, h.version));
+    static_cast<void>(
+        layout_pools(storage.buffer1, 0, {h.bytes1, h.bytes2, h.bytes4, h.bytes8}, storage.pools1, h.version));
     const auto string_count = checked_count(storage.pools1.bytes4.read_pod<std::int32_t>(), "string count");
     ctx.strings.resize(string_count);
     for (auto& text : ctx.strings)
@@ -683,9 +685,9 @@ struct decoded_storage
     ctx.auxiliary = &storage.pools1;
     const auto lengths_size = h.buffer2_objects * 4;
     ctx.object_lengths = slice(storage.buffer2, 0, lengths_size);
-    auto offset =
-        layout_pools(storage.buffer2, lengths_size,
-                     {h.buffer2_bytes1, h.buffer2_bytes2, h.buffer2_bytes4, h.buffer2_bytes8}, storage.pools2, h.version);
+    auto offset = layout_pools(storage.buffer2, lengths_size,
+                               {h.buffer2_bytes1, h.buffer2_bytes2, h.buffer2_bytes4, h.buffer2_bytes8}, storage.pools2,
+                               h.version);
     ctx.types = slice(storage.buffer2, offset, h.types);
     offset += h.types;
     if (h.blob_count == 0)

@@ -868,6 +868,7 @@ void nade_helper_t::cancel_throw(const bool latch)
     m_active_pawn = 0;
     m_active_weapon = 0;
     m_throw_phase = throw_phase::idle;
+    m_movement_taken.store(false, std::memory_order_release);
     m_phase_tick = 0;
     m_run_start_tick = 0;
     m_jump_tick = 0;
@@ -929,6 +930,7 @@ bool nade_helper_t::begin_throw(const lineup_view& lineup, const std::uintptr_t 
     if (!m_gated_keys.empty())
         platform::windows::bound_input().set_movement_gate(platform::windows::input_gateway::gate_owner::nade_helper,
                                                            m_gated_keys, true);
+    m_movement_taken.store(true, std::memory_order_release);
 
     const auto missing =
         ((lineup.actions & nd::action_run) && !m_forward.binding) ||

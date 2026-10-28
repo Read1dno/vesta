@@ -2007,7 +2007,8 @@ int runtime_t::implementation::script_instance::api_log(lua_State* state)
     auto* script = self(state);
     size_t length{};
     const auto* text = luaL_checklstring(state, 1, &length);
-    game::bound_memory().log.info("[lua:{}] {}", script->id, std::string_view(text, std::min(length, k_max_text_bytes)));
+    game::bound_memory().log.info("[lua:{}] {}", script->id,
+                                  std::string_view(text, std::min(length, k_max_text_bytes)));
     return 0;
 }
 
@@ -2384,7 +2385,8 @@ int runtime_t::implementation::script_instance::api_config_patch(lua_State* stat
         }
         json value{};
         json_budget budget{};
-        if (!lua_to_json(state, -1, value, budget) || !script->owner.queue_config(lua_tostring(state, -2), std::move(value)))
+        if (!lua_to_json(state, -1, value, budget) ||
+            !script->owner.queue_config(lua_tostring(state, -2), std::move(value)))
         {
             lua_pop(state, 2);
             lua_pushboolean(state, false);
@@ -2629,8 +2631,15 @@ runtime_t::implementation::script_instance* add_or_find_control(lua_State* state
                 limit_reached = true;
             else
                 script->controls.push_back({std::string(id, id_length),
-                                            std::string(label, std::min(label_length, k_max_label_bytes)), kind,
-                                            initial, {}, minimum, maximum, step, std::move(options), 0});
+                                            std::string(label, std::min(label_length, k_max_label_bytes)),
+                                            kind,
+                                            initial,
+                                            {},
+                                            minimum,
+                                            maximum,
+                                            step,
+                                            std::move(options),
+                                            0});
         }
     }
     if (limit_reached)
@@ -2768,7 +2777,8 @@ int runtime_t::implementation::script_instance::api_ui_consume(lua_State* state)
     bool result{};
     {
         std::scoped_lock lock(script->controls_mutex);
-        if (const auto found = script->button_presses.find(id); found != script->button_presses.end() && found->second > 0)
+        if (const auto found = script->button_presses.find(id);
+            found != script->button_presses.end() && found->second > 0)
         {
             --found->second;
             result = true;
@@ -2950,8 +2960,7 @@ int runtime_t::implementation::script_instance::api_draw_panel(lua_State* state)
 int runtime_t::implementation::script_instance::api_input_is_down(lua_State* state)
 {
     const auto key = static_cast<int>(luaL_checkinteger(state, 1));
-    lua_pushboolean(state, key > 0 && key < 256 && game_foreground_window() &&
-                               (::GetAsyncKeyState(key) & 0x8000) != 0);
+    lua_pushboolean(state, key > 0 && key < 256 && game_foreground_window() && (::GetAsyncKeyState(key) & 0x8000) != 0);
     return 1;
 }
 
@@ -3051,8 +3060,7 @@ int runtime_t::implementation::script_instance::api_input_mouse_button(lua_State
     const auto pressed = lua_toboolean(state, 2) != 0;
     // A click needs the pointer over the game window too: a click elsewhere would hand the focus to another program.
     const auto window = game_foreground_window();
-    if (script->provisional ||
-        (pressed && (!script->input_allowed() || !window || !cursor_inside(window))))
+    if (script->provisional || (pressed && (!script->input_allowed() || !window || !cursor_inside(window))))
     {
         lua_pushboolean(state, false);
         return 1;

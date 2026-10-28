@@ -2556,13 +2556,14 @@ void renderer::render_frame(ID3D11RenderTargetView* backbuffer_rtv, const UINT t
             return left.model_path < right.model_path;
         };
         std::ranges::sort(next_identity, identity_less);
-        const auto same_identity =
-            roster_identity.size() == next_identity.size() &&
-            std::ranges::equal(roster_identity, next_identity,
-                               [](const drawable_identity& left, const drawable_identity& right) {
-                                   return left.pawn == right.pawn && left.bone_cache == right.bone_cache &&
-                                          left.model_path == right.model_path;
-                               });
+        const auto same_identity = roster_identity.size() == next_identity.size() &&
+                                   std::ranges::equal(roster_identity, next_identity,
+                                                      [](const drawable_identity& left, const drawable_identity& right)
+                                                      {
+                                                          return left.pawn == right.pawn &&
+                                                                 left.bone_cache == right.bone_cache &&
+                                                                 left.model_path == right.model_path;
+                                                      });
 
         rebuild_drawables = !same_identity || drawables.size() != next_identity.size();
         if (rebuild_drawables)

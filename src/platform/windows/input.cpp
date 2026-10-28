@@ -123,6 +123,14 @@ bool input_gateway::connect() noexcept
     return true;
 }
 
+bool input_gateway::walker_pointer(const int dx, const int dy) const noexcept
+{
+    s_walker_pointer = true;
+    const auto sent = pointer(dx, dy, pointer_action::relative_move);
+    s_walker_pointer = false;
+    return sent;
+}
+
 bool input_gateway::pointer(int dx, int dy, pointer_action actions) const noexcept
 {
     if (!connected())
@@ -173,6 +181,9 @@ bool input_gateway::pointer(int dx, int dy, pointer_action actions) const noexce
     }
     if (injected)
     {
+        if (contains(actions, pointer_action::relative_move) && (dx || dy) && !s_walker_pointer)
+            m_foreign_pointer_ticks.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                                          std::memory_order_release);
         if ((static_cast<std::uint32_t>(actions) & pointer_button_action_mask) != 0)
         {
             auto previous = m_injected_pointer_down.load(std::memory_order_relaxed);

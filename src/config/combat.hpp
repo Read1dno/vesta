@@ -51,7 +51,7 @@ struct combat_profile
     {
         float gravity{9.0f};
         float wind{0.8f};
-        float max_step{8.0f};
+        float max_step{24.0f};
         float damping{0.85f};
         int reaction_min_ms{25};
         int reaction_max_ms{60};

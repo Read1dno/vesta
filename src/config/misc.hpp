@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <array>
 
 #include <foundation/color.hpp>
 #include <config/game_controls.hpp>
@@ -189,6 +190,90 @@ struct general_profile
         int activation_key{VK_XBUTTON1};
     } m_edge_jump{};
 
+    // Walk bot (its own Misc tab): walks the player along routes over the map's navigation mesh by pressing the
+    // movement keys and turning the view like a player, plus round and match automation around it.
+    struct walk_bot
+    {
+        // Where the routes come from. Jumps and ladders are always used; the game keys (use, reload, buy menu) are the
+        // game binds in Misc > General.
+        enum mode_t : int
+        {
+            random_points = 0,
+            recorded = 1,
+            mode_count
+        };
+        bool enabled{false};
+        int mode{random_points};
+        bool hunt{false}; // heads for a known enemy instead, back to the route source when there is none
+        bool look{true};  // turns the view along the way, yielding to aim, triggers, the menu and the player's mouse
+        bool breakables{true};       // breaks vents, boards and glass on the way with attack (doors are always opened)
+        int record_key{VK_F8};       // starts and stops recording a route
+        bool show_recordings{false}; // draws the recorded routes of this map and side
+        // Fighting: its own aim (a player's hand: a quick smooth turn onto the head, then exact tracking), the
+        // trigger bot as autofire (its settings from the Triggerbot tab), and turning towards hits from unseen enemies.
+        bool aim{true};
+        float aim_speed{1.0f}; // the hand's speed: 1 is a quick player, 2 a very fast one
+        bool autofire{true};
+        bool react_to_hits{true};
+        bool show_path{true};
+        foundation::rgba path_color{120, 170, 255, 220};
+        float path_thickness{2.0f};
+        bool show_mesh{true};
+        foundation::rgba mesh_color{235, 240, 255, 46};
+        float mesh_distance{1400.0f};
+
+        bool auto_buy{false};
+        // Buy presets: the default one and one per mode (used instead of the default when `custom`). Each item is a
+        // buy-menu code (the digits pressed in the menu), a side and a money condition; fixed buffers keep the
+        // settings trivially copyable (the overlay watches them byte by byte).
+        struct buy_item
+        {
+            bool enabled{};
+            std::array<char, 4> code{};
+            int side{};       // 0 both, 1 T, 2 CT
+            int money_rule{}; // 0 any amount, 1 less than `money`, 2 at least `money`
+            int money{2000};
+        };
+        static constexpr int k_buy_items = 10;
+        struct buy_preset
+        {
+            bool custom{};     // a mode preset is used only when set; otherwise the default applies
+            bool random_one{}; // buy one of the items that apply, at random, instead of all of them
+            int count{};       // items in use, the first `count` of `items`
+            std::array<buy_item, k_buy_items> items{};
+        };
+        enum buy_mode : int
+        {
+            buy_default,
+            buy_premier,
+            buy_competitive,
+            buy_wingman,
+            buy_casual,
+            buy_deathmatch,
+            buy_mode_count
+        };
+        [[nodiscard]] static constexpr std::array<buy_preset, buy_mode_count> default_buy_presets()
+        {
+            std::array<buy_preset, buy_mode_count> presets{};
+            // Armour with helmet, then the AK-47 / M4.
+            presets[buy_default].items[0] = {true, {'1', '2', '\0', '\0'}, 0, 0, 2000};
+            presets[buy_default].items[1] = {true, {'4', '2', '\0', '\0'}, 0, 0, 2000};
+            presets[buy_default].count = 2;
+            return presets;
+        }
+        std::array<buy_preset, buy_mode_count> buy_presets{default_buy_presets()};
+        int buy_edit{}; // the preset the menu shows
+        bool auto_reload{true};
+
+        bool auto_rejoin{false};
+        int game_mode{0}; // match_logic::game_mode: deathmatch, casual, competitive, wingman, premier
+        int team{0};      // 0 T, 1 CT
+        bool auto_disconnect{false};
+        int disconnect_score{450};
+        int disconnect_minutes{4};
+        int disconnect_spread{20}; // percent of random extra time
+    } m_walk_bot{};
+
     game_controls m_game_controls{};
 
     struct auto_stop
@@ -224,6 +309,10 @@ struct general_profile
     bool limit_fps{true};
     int fps_limit{240};
     bool use_gpu{true};
+    // ui::resource_priority levels: 0 game first, 1 balanced, 2 overlay first. The defaults are the long-standing
+    // behaviour: the same CPU class as the game, GPU work below it.
+    int cpu_priority{1};
+    int gpu_priority{0};
 };
 
 } // namespace config

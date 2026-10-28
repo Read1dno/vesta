@@ -7,6 +7,7 @@
 #include <features/aimbot/command_ring.hpp>
 #include <diagnostics/rate_gate.hpp>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -32,6 +33,9 @@ struct ray_sample;
 
 namespace features::aimbot
 {
+// The walk bot's autofire: while set, the trigger bot runs (with its own settings) as if enabled and held.
+inline std::atomic<bool> g_walk_autofire{false};
+
 using simulation::ballistics_t;
 
 enum class combat_block_reason : std::uint8_t
@@ -78,6 +82,17 @@ public:
         return m_seed_tick_observed_at;
     }
     [[nodiscard]] bool seed_input_pending() const noexcept { return m_trigger_held; }
+    // When the aimbot last held a target or the trigger (steady_clock ticks, 0 = never). Features that also turn the
+    // view keep their hands off around it.
+    [[nodiscard]] std::int64_t view_engaged_ticks() const noexcept
+    {
+        return m_view_engaged_ticks.load(std::memory_order_acquire);
+    }
+    // The pawn the aimbot or the trigger last held (0 = none).
+    [[nodiscard]] std::uintptr_t view_engaged_target() const noexcept
+    {
+        return m_view_engaged_target.load(std::memory_order_acquire);
+    }
     void sync_seed_phase(int tick, std::chrono::steady_clock::time_point observed_at) noexcept
     {
         if (simulation::seed_timing::observe_phase(tick, observed_at, m_seed_phase_tick, m_seed_phase_tick_at,
@@ -285,7 +300,13 @@ private:
     std::chrono::steady_clock::time_point m_aim_last_call{};
     std::chrono::steady_clock::time_point m_aim_last_seen{};
     std::chrono::steady_clock::time_point m_aim_reaction_until{};
-    float m_aim_ramp{};          // hand acceleration 0..1
+    float m_aim_ramp{};        // hand acceleration 0..1
+    float m_aim_flick_speed{}; // deg/s of the current large turn
+    // The current flick: a planned hand movement over the angle the target was away when it started.
+    bool m_flick_active{};
+    float m_flick_progress{};    // 0..1 of its duration
+    float m_flick_duration{};    // s
+    float m_flick_bias{};        // where the hand lands: below 0 short of the target, above past it
     float m_aim_initial_dist{};  // angular distance when the target was acquired
     float m_aim_curve{};         // arc magnitude and side
     float m_aim_overshoot{1.0f}; // overshoot multiplier
@@ -322,6 +343,15 @@ private:
     int m_aim_velocity_samples{};
 
     bool m_trigger_held{false};
+    std::atomic<std::int64_t> m_view_engaged_ticks{};
+    std::atomic<std::uintptr_t> m_view_engaged_target{};
+    void note_view_engaged(const std::uintptr_t target) noexcept
+    {
+        if (target)
+            m_view_engaged_target.store(target, std::memory_order_release);
+        m_view_engaged_ticks.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                                   std::memory_order_release);
+    }
     std::chrono::steady_clock::time_point m_trigger_release_time{};
     int m_trigger_press_shots{-1};
     bool m_trigger_shot_scheduled{false};

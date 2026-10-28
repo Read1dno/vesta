@@ -14,6 +14,8 @@
 #include <assets/resource.hpp>
 #include <assets/kv3.hpp>
 
+#include <mutex>
+
 namespace simulation
 {
 
@@ -690,6 +692,9 @@ struct entity_transform
     return 0;
 }
 
+std::mutex g_interactive_mutex;
+std::shared_ptr<const std::vector<interactive_entity>> g_interactive{};
+
 [[nodiscard]] bool is_solid_entity(const std::string& name)
 {
     return name.find("FuncBrush") != std::string::npos || name.find("Prop") != std::string::npos ||
@@ -852,6 +857,7 @@ bool append_entity_geometry(entity_geometry_sources& sources, std::vector<collis
     };
     std::vector<entity_instance> instances{};
     instances.reserve(256);
+    std::vector<interactive_entity> interactive{};
     bool scan_complete = true;
     constexpr std::size_t k_entries_per_chunk{512};
     constexpr std::size_t k_entry_stride{0x70};
@@ -928,6 +934,28 @@ bool append_entity_geometry(entity_geometry_sources& sources, std::vector<collis
                 continue;
             }
 
+            // Doors and breakables for the walk bot, whether or not they have a model of their own (breakable glass,
+            // boards and vents are mostly brushes without one, and would be skipped just below).
+            {
+                const auto& name = cached_solid->second.class_name;
+                const bool door = name.find("Door") != std::string::npos;
+                // Props break when they have health (boards, vents, crates); plain props have none.
+                const bool breakable_prop =
+                    name.find("Prop") != std::string::npos && game::bound_memory().process.load<std::int32_t>(
+                                                                  entity + SCHEMA("C_BaseEntity", "m_iHealth"_id)) > 0;
+                if (door || breakable_prop || name.find("Breakable") != std::string::npos ||
+                    name.find("Glass") != std::string::npos || name.find("Shatter") != std::string::npos)
+                {
+                    std::array<std::byte, 28> placement{};
+                    if (game::bound_memory().process.copy(node + 184, placement.data(), placement.size()))
+                    {
+                        interactive_entity found{.entity = entity, .door = door};
+                        std::memcpy(&found.angles, placement.data(), sizeof(found.angles));
+                        std::memcpy(&found.origin, placement.data() + 16, sizeof(found.origin));
+                        interactive.push_back(found);
+                    }
+                }
+            }
             auto model = cached_solid->second.model_path;
             if (model.empty())
             {
@@ -959,6 +987,11 @@ bool append_entity_geometry(entity_geometry_sources& sources, std::vector<collis
     {
         metrics.incomplete = 1;
         return false;
+    }
+    {
+        auto published = std::make_shared<const std::vector<interactive_entity>>(std::move(interactive));
+        std::scoped_lock lock(g_interactive_mutex);
+        g_interactive = std::move(published);
     }
 
     state_hash = 1469598103934665603ull;
@@ -1232,4 +1265,13 @@ void collision_world::refresh_map_entities(std::stop_token stop)
                                   built->m_triangles.size(), total_triangles);
 }
 
+} // namespace simulation
+
+namespace simulation
+{
+std::shared_ptr<const std::vector<interactive_entity>> interactive_entities()
+{
+    std::scoped_lock lock(g_interactive_mutex);
+    return g_interactive;
+}
 } // namespace simulation

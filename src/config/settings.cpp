@@ -1830,6 +1830,145 @@ static void from_json(const json& j, general_profile::bunny_hop& b)
         j.at("key").get_to(b.activation_key);
 }
 
+static json buy_presets_json(const general_profile::walk_bot& w)
+{
+    auto presets = json::array();
+    for (const auto& preset : w.buy_presets)
+    {
+        auto items = json::array();
+        for (int i = 0; i < std::clamp(preset.count, 0, general_profile::walk_bot::k_buy_items); ++i)
+            if (const auto& item = preset.items[static_cast<std::size_t>(i)]; true)
+                items.push_back({{"enabled", item.enabled},
+                                 {"code", std::string{item.code.data()}},
+                                 {"side", item.side},
+                                 {"money_rule", item.money_rule},
+                                 {"money", item.money}});
+        presets.push_back({{"custom", preset.custom}, {"random_one", preset.random_one}, {"items", items}});
+    }
+    return presets;
+}
+
+static void read_buy_presets(const json& j, general_profile::walk_bot& w)
+{
+    const auto found = j.find("buy_presets");
+    if (found == j.end() || !found->is_array())
+        return;
+    for (std::size_t p = 0; p < w.buy_presets.size() && p < found->size(); ++p)
+    {
+        const auto& source = (*found)[p];
+        auto& preset = w.buy_presets[p];
+        read_field(source, "custom", preset.custom);
+        read_field(source, "random_one", preset.random_one);
+        const auto items = source.find("items");
+        if (items == source.end() || !items->is_array())
+            continue;
+        preset.count = static_cast<int>(std::min<std::size_t>(items->size(), preset.items.size()));
+        for (std::size_t i = 0; i < preset.items.size(); ++i)
+        {
+            auto& item = preset.items[i];
+            if (i >= items->size())
+            {
+                item = {};
+                continue;
+            }
+            const auto& entry = (*items)[i];
+            read_field(entry, "enabled", item.enabled);
+            std::string code{item.code.data()};
+            read_field(entry, "code", code);
+            item.code.fill('\0');
+            std::memcpy(item.code.data(), code.data(), std::min(code.size(), item.code.size() - 1));
+            read_field(entry, "side", item.side);
+            item.side = std::clamp(item.side, 0, 2);
+            read_field(entry, "money_rule", item.money_rule);
+            item.money_rule = std::clamp(item.money_rule, 0, 2);
+            read_field(entry, "money", item.money);
+            item.money = std::clamp(item.money, 0, 16000);
+        }
+    }
+}
+
+static void to_json(json& j, const general_profile::walk_bot& w)
+{
+    j = json{{"enabled", w.enabled},
+             {"route", w.mode},
+             {"hunt", w.hunt},
+             {"show_recordings", w.show_recordings},
+             {"aim", w.aim},
+             {"aim_speed", w.aim_speed},
+             {"autofire", w.autofire},
+             {"react_to_hits", w.react_to_hits},
+             {"look", w.look},
+             {"breakables", w.breakables},
+             {"record_key", w.record_key},
+             {"auto_buy", w.auto_buy},
+             {"buy_edit", w.buy_edit},
+             {"buy_presets", buy_presets_json(w)},
+             {"auto_reload", w.auto_reload},
+             {"auto_rejoin", w.auto_rejoin},
+             {"game_mode", w.game_mode},
+             {"team", w.team},
+             {"auto_disconnect", w.auto_disconnect},
+             {"disconnect_score", w.disconnect_score},
+             {"disconnect_minutes", w.disconnect_minutes},
+             {"disconnect_spread", w.disconnect_spread},
+             {"show_path", w.show_path},
+             {"path_color", w.path_color},
+             {"path_thickness", w.path_thickness},
+             {"show_mesh", w.show_mesh},
+             {"mesh_color", w.mesh_color},
+             {"mesh_distance", w.mesh_distance}};
+}
+
+static void from_json(const json& j, general_profile::walk_bot& w)
+{
+    read_field(j, "enabled", w.enabled);
+    if (j.contains("route"))
+        read_field(j, "route", w.mode);
+    else if (int old_mode{}; j.contains("mode"))
+    {
+        // Older settings: 0 random, 1 hunt, 2 recorded (hunt is a flag now).
+        read_field(j, "mode", old_mode);
+        w.hunt = old_mode == 1;
+        w.mode = old_mode == 2 ? general_profile::walk_bot::recorded : general_profile::walk_bot::random_points;
+    }
+    w.mode = std::clamp(w.mode, 0, general_profile::walk_bot::mode_count - 1);
+    read_field(j, "hunt", w.hunt);
+    read_field(j, "show_recordings", w.show_recordings);
+    read_field(j, "aim", w.aim);
+    read_field(j, "aim_speed", w.aim_speed);
+    w.aim_speed = std::isfinite(w.aim_speed) ? std::clamp(w.aim_speed, 0.4f, 2.5f) : 1.0f;
+    read_field(j, "autofire", w.autofire);
+    read_field(j, "react_to_hits", w.react_to_hits);
+    read_field(j, "breakables", w.breakables);
+    read_field(j, "record_key", w.record_key);
+    read_field(j, "auto_buy", w.auto_buy);
+    read_field(j, "buy_edit", w.buy_edit);
+    w.buy_edit = std::clamp(w.buy_edit, 0, static_cast<int>(general_profile::walk_bot::buy_mode_count) - 1);
+    read_buy_presets(j, w);
+    read_field(j, "auto_reload", w.auto_reload);
+    read_field(j, "auto_rejoin", w.auto_rejoin);
+    read_field(j, "game_mode", w.game_mode);
+    w.game_mode = std::clamp(w.game_mode, 0, 4);
+    read_field(j, "team", w.team);
+    w.team = std::clamp(w.team, 0, 1);
+    read_field(j, "auto_disconnect", w.auto_disconnect);
+    read_field(j, "disconnect_score", w.disconnect_score);
+    w.disconnect_score = std::clamp(w.disconnect_score, 0, 10000);
+    read_field(j, "disconnect_minutes", w.disconnect_minutes);
+    w.disconnect_minutes = std::clamp(w.disconnect_minutes, 0, 120);
+    read_field(j, "disconnect_spread", w.disconnect_spread);
+    w.disconnect_spread = std::clamp(w.disconnect_spread, 0, 100);
+    read_field(j, "show_path", w.show_path);
+    read_field(j, "path_color", w.path_color);
+    read_field(j, "path_thickness", w.path_thickness);
+    w.path_thickness = std::isfinite(w.path_thickness) ? std::clamp(w.path_thickness, 0.5f, 6.0f) : 2.0f;
+    read_field(j, "look", w.look);
+    read_field(j, "show_mesh", w.show_mesh);
+    read_field(j, "mesh_color", w.mesh_color);
+    read_field(j, "mesh_distance", w.mesh_distance);
+    w.mesh_distance = std::isfinite(w.mesh_distance) ? std::clamp(w.mesh_distance, 200.0f, 4000.0f) : 1400.0f;
+}
+
 static void to_json(json& j, const general_profile::edge_jump& e)
 {
     j = json{{"enabled", e.enabled}, {"activation_key", e.activation_key}};
@@ -1846,8 +1985,9 @@ static void from_json(const json& j, general_profile::edge_jump& e)
 
 static void to_json(json& j, const game_controls& b)
 {
-    j = json{{"forward", b.forward}, {"back", b.back}, {"left", b.left},     {"right", b.right},    {"walk", b.walk},
-             {"duck", b.duck},       {"jump", b.jump}, {"attack", b.attack}, {"attack2", b.attack2}};
+    j = json{{"forward", b.forward}, {"back", b.back}, {"left", b.left},     {"right", b.right},
+             {"walk", b.walk},       {"duck", b.duck}, {"jump", b.jump},     {"attack", b.attack},
+             {"attack2", b.attack2}, {"use", b.use},   {"reload", b.reload}, {"buy_menu", b.buy_menu}};
 }
 
 static void from_json(const json& j, game_controls& b)
@@ -1861,7 +2001,11 @@ static void from_json(const json& j, game_controls& b)
     read_field(j, "jump", b.jump);
     read_field(j, "attack", b.attack);
     read_field(j, "attack2", b.attack2);
-    for (int* key : {&b.forward, &b.back, &b.left, &b.right, &b.walk, &b.duck, &b.jump, &b.attack, &b.attack2})
+    read_field(j, "use", b.use);
+    read_field(j, "reload", b.reload);
+    read_field(j, "buy_menu", b.buy_menu);
+    for (int* key : {&b.forward, &b.back, &b.left, &b.right, &b.walk, &b.duck, &b.jump, &b.attack, &b.attack2, &b.use,
+                     &b.reload, &b.buy_menu})
         *key = std::clamp(*key, 0, 255);
 }
 
@@ -1901,6 +2045,7 @@ static void to_json(json& j, const general_profile& m)
              {"m_edge_jump", m.m_edge_jump},
              {"m_game_controls", m.m_game_controls},
              {"m_auto_stop", m.m_auto_stop},
+             {"m_walk_bot", m.m_walk_bot},
              {"language", m.language},
              {"menu_scale", m.menu_scale},
              {"palette", json{{"background", m.palette.background},
@@ -1916,7 +2061,9 @@ static void to_json(json& j, const general_profile& m)
              {"obs_bypass", m.obs_bypass},
              {"limit_fps", m.limit_fps},
              {"fps_limit", m.fps_limit},
-             {"use_gpu", m.use_gpu}};
+             {"use_gpu", m.use_gpu},
+             {"cpu_priority", m.cpu_priority},
+             {"gpu_priority", m.gpu_priority}};
 }
 
 static void from_json(const json& j, general_profile& m)
@@ -1935,6 +2082,7 @@ static void from_json(const json& j, general_profile& m)
     read_field(j, "m_edge_jump", m.m_edge_jump);
     read_field(j, "m_game_controls", m.m_game_controls);
     read_field(j, "m_auto_stop", m.m_auto_stop);
+    read_field(j, "m_walk_bot", m.m_walk_bot);
     read_field(j, "language", m.language);
     m.language = std::clamp(m.language, 0, general_profile::k_language_count - 1);
     // The config is the only persistent home for the language, so applying it
@@ -1959,6 +2107,10 @@ static void from_json(const json& j, general_profile& m)
     read_field(j, "limit_fps", m.limit_fps);
     read_field(j, "fps_limit", m.fps_limit);
     read_field(j, "use_gpu", m.use_gpu);
+    read_field(j, "cpu_priority", m.cpu_priority);
+    m.cpu_priority = std::clamp(m.cpu_priority, 0, 2);
+    read_field(j, "gpu_priority", m.gpu_priority);
+    m.gpu_priority = std::clamp(m.gpu_priority, 0, 2);
 }
 
 combat_profile::resolved_config combat_profile::get(std::uint32_t weapon_type) const

@@ -3,7 +3,6 @@
 
 namespace ui
 {
-inline constexpr int overlay_gpu_priority = -2;
 struct feature_plan
 {
     bool sample_players{};

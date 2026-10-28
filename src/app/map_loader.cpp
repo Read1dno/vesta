@@ -2,6 +2,7 @@
 #include <diagnostics/performance.hpp>
 #include <simulation/collision.hpp>
 #include <simulation/blast.hpp>
+#include <simulation/nav_mesh.hpp>
 #include <app/map_loader.hpp>
 #include <app/context.hpp>
 #include <diagnostics/journal.hpp>
@@ -44,6 +45,7 @@ void map_loader::request(std::string map)
                         }
                         simulation::collision().clear();
                         simulation::blast_damage().clear();
+                        simulation::nav_mesh().clear();
                     });
 }
 
@@ -96,6 +98,13 @@ void map_loader::run(std::stop_token stop)
                     m_geometry.publish(job->serial, readiness::state::waiting_dependency,
                                        readiness::reason::geometry_missing);
                     diagnostics::emit(diagnostics::event::map_geometry_unavailable, diagnostics::severity::warning);
+                }
+                // The navigation mesh measures ceilings against the geometry committed above.
+                auto nav = simulation::load_nav_mesh(job->key, job->stop);
+                if (!m_queue.commit(job->stop, [&] { simulation::nav_mesh().replace(std::move(nav)); }))
+                {
+                    diagnostics::emit(diagnostics::event::map_geometry_cancelled);
+                    continue;
                 }
                 simulation::blast_model blast;
                 blast.parse(job->stop);

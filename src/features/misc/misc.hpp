@@ -3,6 +3,7 @@
 #include <game/input/bindings.hpp>
 #include <game/memory/memory_services.hpp>
 #include <features/misc/input_lifecycle.hpp>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <iosfwd>
@@ -22,6 +23,8 @@ class nade_helper_t
 public:
     void on_render(render::draw::draw_list& draw_list);
     void tick();
+    // True while a lineup throw drives the movement keys; other movement features stand back.
+    [[nodiscard]] bool movement_taken() const noexcept { return m_movement_taken.load(std::memory_order_acquire); }
 
 private:
     enum class throw_phase : std::uint8_t
@@ -119,6 +122,7 @@ private:
     float m_lock_yaw{};
     bool m_activation_latched{};
     bool m_release_pending{};
+    std::atomic<bool> m_movement_taken{};
     std::uintptr_t m_game_rules{};
     std::chrono::steady_clock::time_point m_next_rules_scan{};
 

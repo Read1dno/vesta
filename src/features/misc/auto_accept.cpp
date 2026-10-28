@@ -9,67 +9,24 @@
 #include <game/memory/compatibility.hpp>
 #include <diagnostics/journal.hpp>
 #include <expected>
+#include <game/panorama/panorama.hpp>
 
 namespace
 {
 constexpr std::string_view k_accept_button_id{"AcceptMatchBtn"};
 constexpr std::string_view k_accept_popup_id{"id-accept-match"};
+using game::panorama::active_root_window;
+using game::panorama::decode_engine_member;
+using game::panorama::decode_registry_offset;
+using game::panorama::geometry_failure;
+using game::panorama::inspect_geometry;
+using game::panorama::panel_header;
+using game::panorama::registry_entry;
+using panorama_runtime = game::panorama::runtime;
+using panorama_resolver = game::panorama::resolver;
+constexpr auto k_panorama_scan_chunk = game::panorama::k_scan_chunk;
+constexpr auto k_panorama_max_capacity = game::panorama::k_max_capacity;
 // The registry holds 131 072 slots in current CS2 (it grows with the session); a pass takes 128 worker ticks.
-constexpr std::uint32_t k_panorama_scan_chunk{1024};
-constexpr std::uint32_t k_panorama_max_capacity{1u << 20};
-
-struct panel_header
-{
-    std::uintptr_t vtable{};
-    std::uintptr_t client{};
-    std::uintptr_t id{};
-    std::uintptr_t parent{};
-};
-
-struct registry_entry
-{
-    std::array<std::byte, 0x10> metadata{};
-    std::uintptr_t panel{};
-    std::uintptr_t generation{};
-};
-
-static_assert(sizeof(registry_entry) == 0x20);
-
-struct panel_class_storage
-{
-    std::uint32_t count{};
-    std::uint32_t data{};
-    [[nodiscard]] explicit operator bool() const { return count && data; }
-};
-
-struct panorama_runtime
-{
-    std::uintptr_t engine{};
-    std::uintptr_t ui_panel_vtable{};
-    std::uintptr_t button_vtable{};
-    std::uintptr_t class_symbol_table{};
-    std::uint32_t registry_offset{};
-    bool attempted{};
-    panel_class_storage class_storage{};
-};
-
-struct panel_geometry
-{
-    float x{};
-    float y{};
-    float width{};
-    float height{};
-    float root_width{};
-    float root_height{};
-};
-
-[[nodiscard]] HWND active_root_window()
-{
-    GUITHREADINFO gui{};
-    gui.cbSize = sizeof(gui);
-    return ::GetGUIThreadInfo(0, &gui) ? ::GetAncestor(gui.hwndActive, GA_ROOT) : nullptr;
-}
-
 template<typename... arguments_t>
 void trace_auto_accept(std::format_string<arguments_t...> format, arguments_t&&... arguments)
 {
@@ -85,236 +42,6 @@ void trace_auto_accept(std::format_string<arguments_t...> format, arguments_t&&.
     static_cast<void>(format);
     (static_cast<void>(arguments), ...);
 #endif
-}
-
-[[nodiscard]] std::uint32_t decode_registry_offset(const platform::windows::process_session& process,
-                                                   const std::uintptr_t method)
-{
-    std::array<std::uint8_t, 48> code{};
-    if (!process.copy(method, code.data(), code.size()))
-        return 0;
-    for (std::size_t index = 0; index + 7 <= code.size(); ++index)
-    {
-        if (code[index] == 0x48 && code[index + 1] == 0x81 && code[index + 2] == 0xc1)
-        {
-            std::uint32_t offset{};
-            std::memcpy(&offset, code.data() + index + 3, sizeof(offset));
-            return offset;
-        }
-        if (code[index] == 0x48 && code[index + 1] == 0x83 && code[index + 2] == 0xc1)
-            return code[index + 3];
-    }
-    return 0;
-}
-
-[[nodiscard]] std::uintptr_t decode_engine_member(const platform::windows::process_session& process,
-                                                  const std::uintptr_t object, const std::uintptr_t method)
-{
-    std::array<std::uint8_t, 32> code{};
-    if (!process.copy(method, code.data(), code.size()))
-        return 0;
-    for (std::size_t index = 0; index + 7 <= code.size(); ++index)
-    {
-        std::int32_t offset{};
-        if (code[index] == 0x48 && code[index + 1] == 0x8b && code[index + 2] == 0x81)
-        {
-            std::memcpy(&offset, code.data() + index + 3, sizeof(offset));
-            return process.load<std::uintptr_t>(object + offset);
-        }
-        if (code[index] == 0x48 && code[index + 1] == 0x8b && code[index + 2] == 0x41)
-            return process.load<std::uintptr_t>(object + code[index + 3]);
-    }
-    return 0;
-}
-
-[[nodiscard]] panel_class_storage decode_class_storage(const std::span<const std::uint8_t> code)
-{
-    panel_class_storage result{};
-    const auto compare = [&](const std::size_t at, const std::uint8_t opcode, const std::uint32_t offset)
-    {
-        if (at + 7 > code.size() || code[at] != 0x41 || code[at + 1] != opcode || code[at + 2] != 0xb5)
-            return false;
-        std::uint32_t field{};
-        std::memcpy(&field, code.data() + at + 3, sizeof(field));
-        return field == offset;
-    };
-    for (std::size_t index = 0; index + 7 <= code.size(); ++index)
-    {
-        if (code[index] != 0x49 || code[index + 1] != 0x8b || code[index + 2] != 0x85)
-            continue;
-        std::uint32_t data{};
-        std::memcpy(&data, code.data() + index + 3, sizeof(data));
-        if (data < 0x108 || data > 0x800 || (data & 7))
-            continue;
-        const auto count = data - 8;
-        bool before{}, after{};
-        // Match both bounds of the serializer's uint16 class-vector loop.
-        for (auto at = index > 128 ? index - 128 : 0; at < index; ++at)
-            before |= compare(at, 0x39, count);
-        for (auto at = index + 7; at < std::min(code.size(), index + 512); ++at)
-            after |= compare(at, 0x3b, count);
-        if (!before || !after)
-            continue;
-        if (result && (result.count != count || result.data != data))
-            return {};
-        result = {count, data};
-    }
-    return result;
-}
-
-[[nodiscard]] std::uintptr_t decode_class_symbol_table(const platform::windows::process_session& process,
-                                                       const std::uintptr_t method, panel_class_storage& storage)
-{
-    std::array<std::uint8_t, 0x1200> code{};
-    if (!process.copy(method, code.data(), code.size()))
-        return 0;
-    storage = decode_class_storage(code);
-    if (!storage)
-        return 0;
-    for (std::size_t index = 0; index + 13 <= code.size(); ++index)
-    {
-        if (code[index] != 0x48 || code[index + 1] != 0x8d || code[index + 2] != 0x0d || code[index + 7] != 0xff ||
-            code[index + 8] != 0x15)
-            continue;
-        std::int32_t displacement{};
-        std::memcpy(&displacement, code.data() + index + 3, sizeof(displacement));
-        const auto candidate = method + index + 7 + displacement;
-        const auto indices = process.load<std::uintptr_t>(candidate + 0x28);
-        const auto shift = process.load<std::uint32_t>(candidate + 0x38);
-        const auto mask = process.load<std::uint32_t>(candidate + 0x3c);
-        const auto pool_count = process.load<std::uint32_t>(candidate + 0x40);
-        const auto external_pools = process.load<std::uint32_t>(candidate + 0x44);
-        const auto pools = process.load<std::uintptr_t>(candidate + 0x48);
-        if (game::is_user_pointer(indices) && shift > 0 && shift < 32 && mask && pool_count > 0 && pool_count < 4096 &&
-            (external_pools & 0x7fffffffu) != 0 && game::is_user_pointer(pools))
-            return candidate;
-    }
-    return 0;
-}
-
-[[nodiscard]] std::string panorama_symbol_text(const panorama_runtime& runtime, const std::uint16_t symbol)
-{
-    if (symbol == 0xffff || !runtime.class_symbol_table)
-        return {};
-    const auto& process = game::bound_memory().process;
-    const auto table = runtime.class_symbol_table;
-    const auto indices = process.load<std::uintptr_t>(table + 0x28);
-    const auto shift = process.load<std::uint32_t>(table + 0x38);
-    const auto mask = process.load<std::uint32_t>(table + 0x3c);
-    const auto pool_count = process.load<std::uint32_t>(table + 0x40);
-    const auto pools = process.load<std::uintptr_t>(table + 0x48);
-    if (!game::is_user_pointer(indices) || shift == 0 || shift >= 32 || !mask || !game::is_user_pointer(pools))
-        return {};
-    std::uint32_t packed{};
-    if (!process.copy(indices + static_cast<std::uintptr_t>(symbol) * sizeof(packed), &packed, sizeof(packed)))
-        return {};
-    const auto pool = packed >> shift;
-    if (pool >= pool_count)
-        return {};
-    const auto pool_base = process.load<std::uintptr_t>(pools + static_cast<std::uintptr_t>(pool) * 0x10 + 0x08);
-    if (!game::is_user_pointer(pool_base))
-        return {};
-    return process.load_text(pool_base + (packed & mask), 64);
-}
-
-[[nodiscard]] bool panel_has_class(const std::uintptr_t panel, const panorama_runtime& runtime,
-                                   const std::string_view expected)
-{
-    const auto& process = game::bound_memory().process;
-    std::uint32_t count{};
-    std::uintptr_t data{};
-    if (!runtime.class_storage || !process.copy(panel + runtime.class_storage.count, &count, sizeof(count)))
-        return true;
-    if (count == 0)
-        return false;
-    // Unresolved CSS state must not turn a hidden panel into a click target.
-    if (count > 64 || !process.copy(panel + runtime.class_storage.data, &data, sizeof(data)) ||
-        !game::is_user_pointer(data) || !runtime.class_symbol_table)
-        return true;
-    std::array<std::uint16_t, 64> symbols{};
-    if (!process.copy(data, symbols.data(), count * sizeof(symbols[0])))
-        return true;
-    for (std::uint32_t index = 0; index < count; ++index)
-    {
-        const auto text = panorama_symbol_text(runtime, symbols[index]);
-        if (text.empty() || text == expected)
-            return true;
-    }
-    return false;
-}
-
-// Finds the Panorama engine, its panel registry and the class symbol table. Retried every two seconds until it
-// succeeds, then cached for the rest of the game session.
-class panorama_resolver
-{
-public:
-    const panorama_runtime& get();
-
-private:
-    panorama_runtime m_runtime{};
-    std::chrono::steady_clock::time_point m_next_retry{};
-    std::uint32_t m_reported_stages{0xffffffffu};
-};
-
-const panorama_runtime& panorama_resolver::get()
-{
-    auto& runtime = m_runtime;
-    if (runtime.engine && runtime.class_symbol_table && runtime.class_storage)
-        return runtime;
-    const auto now = std::chrono::steady_clock::now();
-    if (now < m_next_retry)
-        return runtime;
-    m_next_retry = now + std::chrono::seconds(2);
-
-    const auto& process = game::bound_memory().process;
-    const auto panorama_module = game::bound_memory().modules.panorama ? game::bound_memory().modules.panorama
-                                                                       : process.module_base("panorama.dll");
-    const auto client_module = game::bound_memory().modules.client;
-    if (!panorama_module || !client_module)
-        return runtime;
-    runtime.attempted = true;
-
-    runtime.ui_panel_vtable = process.locate_vtable(panorama_module, "CUIPanel@panorama");
-    runtime.button_vtable = process.locate_vtable(client_module, "CButton@panorama");
-    const auto panel_serializer = process.load<std::uintptr_t>(runtime.ui_panel_vtable + 315 * sizeof(std::uintptr_t));
-    runtime.class_symbol_table = decode_class_symbol_table(process, panel_serializer, runtime.class_storage);
-    const auto interface_object = process.locate_vtable_object(panorama_module, "CPanoramaUIEngine");
-    const auto interface_table = process.load<std::uintptr_t>(interface_object);
-    const auto engine_getter = process.load<std::uintptr_t>(interface_table + 13 * sizeof(std::uintptr_t));
-    runtime.engine = decode_engine_member(process, interface_object, engine_getter);
-    const auto engine_table = process.load<std::uintptr_t>(runtime.engine);
-    const auto valid_panel_method = process.load<std::uintptr_t>(engine_table + 32 * sizeof(std::uintptr_t));
-    runtime.registry_offset = decode_registry_offset(process, valid_panel_method);
-
-    // Journal which resolver stages worked (only when the picture changes): bit0 panorama.dll, bit1 client.dll,
-    // bit2 CUIPanel vtable, bit3 CButton vtable, bit4 class symbol table, bit5 class storage, bit6 panorama
-    // interface object, bit7 engine pointer, bit8 registry offset in range.
-    {
-        const auto stages = (panorama_module ? 1u : 0u) | (client_module ? 2u : 0u) |
-                            (runtime.ui_panel_vtable ? 4u : 0u) | (runtime.button_vtable ? 8u : 0u) |
-                            (runtime.class_symbol_table ? 16u : 0u) | (runtime.class_storage ? 32u : 0u) |
-                            (interface_object ? 64u : 0u) | (game::is_user_pointer(runtime.engine) ? 128u : 0u) |
-                            (runtime.registry_offset >= 0x40 && runtime.registry_offset <= 0x1000 ? 256u : 0u);
-        if (stages != m_reported_stages)
-        {
-            m_reported_stages = stages;
-            diagnostics::emit(diagnostics::event::autoaccept_resolver,
-                              stages == 511u ? diagnostics::severity::information : diagnostics::severity::warning,
-                              diagnostics::code_domain::mode, stages);
-        }
-    }
-    if (!game::is_user_pointer(runtime.engine) || !runtime.ui_panel_vtable || !runtime.button_vtable ||
-        runtime.registry_offset < 0x40 || runtime.registry_offset > 0x1000)
-    {
-        runtime = {};
-        game::bound_memory().log.warning("[auto-accept] Panorama object resolver initialization failed");
-    }
-    else
-    {
-        game::bound_memory().log.info("[auto-accept] Panorama Button resolver ready (registry +{:#x})",
-                                      runtime.registry_offset);
-    }
-    return runtime;
 }
 
 using scan_stats = features::misc::auto_accept_t::scan_stats;
@@ -362,112 +89,14 @@ using scan_stats = features::misc::auto_accept_t::scan_stats;
     return accept_layout;
 }
 
-// Why a panel has no usable geometry, as journaled with autoaccept.blocked: 1 no layout probe for a panel,
-// 2 visibility bit clear, 3 "hidden" class, 4 position not finite, 5 no root layout (the ancestor depth is in bits
-// 8 and up); 6 size too small, with the button width in bits 16-27, its height in bits 4-15 and the root width's
-// high bits in 0-3. 0 means the panel is not the accept button or the window has no client area.
-using geometry_failure = std::uint32_t;
-
-[[nodiscard]] geometry_failure failure_at(const std::uint32_t reason, const int depth)
-{
-    return reason | (static_cast<std::uint32_t>(depth) << 8);
-}
-
-[[nodiscard]] std::expected<panel_geometry, geometry_failure> inspect_geometry(const panorama_runtime& runtime,
-                                                                               const std::uintptr_t panel)
-{
-    const auto& process = game::bound_memory().process;
-    if (!runtime.class_symbol_table || !runtime.class_storage)
-        return std::unexpected(0u);
-    panel_geometry result{};
-    std::uintptr_t current = panel;
-    std::uintptr_t root = panel;
-    game::compatibility::panel_layout root_layout{};
-    std::unordered_set<std::uintptr_t> visited{};
-
-    for (int depth = 0; depth < 40 && game::is_user_pointer(current); ++depth)
-    {
-        if (!visited.emplace(current).second)
-            return std::unexpected(0u);
-        const auto layout = game::compatibility::panel(current);
-        if (!layout)
-            return std::unexpected(failure_at(1, depth));
-        const auto visibility = process.load<std::uint8_t>(current + layout.visible);
-        if ((visibility & 0x08) == 0)
-            return std::unexpected(failure_at(2, depth));
-        if (panel_has_class(current, runtime, "hidden"))
-            return std::unexpected(failure_at(3, depth));
-
-        const auto x = process.load<float>(current + layout.x);
-        const auto y = process.load<float>(current + layout.y);
-        if (!std::isfinite(x) || !std::isfinite(y) || std::abs(x) > 30000.0f || std::abs(y) > 30000.0f)
-            return std::unexpected(failure_at(4, depth));
-        result.x += x;
-        result.y += y;
-        if (current == panel)
-        {
-            result.width = process.load<float>(current + layout.width);
-            result.height = process.load<float>(current + layout.height);
-        }
-
-        root = current;
-        root_layout = layout;
-        const auto parent = process.load<std::uintptr_t>(current + 0x18);
-        if (!game::is_user_pointer(parent) || parent == current)
-            break;
-        current = parent;
-    }
-
-    if (!root_layout)
-        return std::unexpected(5u);
-    result.root_width = process.load<float>(root + root_layout.width);
-    result.root_height = process.load<float>(root + root_layout.height);
-    if (!std::isfinite(result.width) || !std::isfinite(result.height) || !std::isfinite(result.root_width) ||
-        !std::isfinite(result.root_height) || result.width < 24.0f || result.height < 16.0f ||
-        result.root_width < 320.0f || result.root_height < 240.0f)
-    {
-        const auto pixels = [](const float value)
-        { return static_cast<std::uint32_t>(std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 4095.0f)); };
-        return std::unexpected((6u << 28) | (pixels(result.width) << 16) | (pixels(result.height) << 4) |
-                               (pixels(result.root_width) >> 8));
-    }
-    return result;
-}
-
 // Screen point to click on the accept button, or why there is none.
 [[nodiscard]] std::expected<POINT, geometry_failure> button_center(const panorama_runtime& runtime,
                                                                    const std::uintptr_t panel, const HWND hwnd)
 {
     if (!is_accept_button(runtime, panel))
         return std::unexpected(0u);
-    const auto inspected = inspect_geometry(runtime, panel);
-    if (!inspected)
-        return std::unexpected(inspected.error());
-    const auto& geometry = *inspected;
-    if (geometry.width <= 0.0f || geometry.height <= 0.0f)
-        return std::unexpected(0u);
-
-    RECT client{};
-    if (!::GetClientRect(hwnd, &client))
-        return std::unexpected(0u);
-    const auto client_width = client.right - client.left;
-    const auto client_height = client.bottom - client.top;
-    if (client_width <= 0 || client_height <= 0)
-        return std::unexpected(0u);
-
-    const auto scale_x = static_cast<float>(client_width) / geometry.root_width;
-    const auto scale_y = static_cast<float>(client_height) / geometry.root_height;
-
-    constexpr auto click_y_fraction = 0.60f;
-    POINT point{static_cast<LONG>(std::lround((geometry.x + geometry.width * 0.5f) * scale_x)),
-                static_cast<LONG>(std::lround((geometry.y + geometry.height * click_y_fraction) * scale_y))};
-    if (point.x < client.left || point.x >= client.right || point.y < client.top || point.y >= client.bottom)
-        return std::unexpected(0u);
-    if (!::ClientToScreen(hwnd, &point))
-        return std::unexpected(0u);
-    return point;
+    return game::panorama::screen_point(runtime, panel, hwnd, 0.5f, 0.60f);
 }
-
 
 // Advances the registry walk by one chunk. Returns the newest accept button found, at the end of a full pass or right
 // away when a recently registered panel turns into one.

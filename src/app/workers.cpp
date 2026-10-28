@@ -16,6 +16,8 @@
 #include <features/aimbot/aimbot.hpp>
 #include <features/misc/misc.hpp>
 #include <features/misc/auto_stop.hpp>
+#include <features/misc/walk_bot.hpp>
+#include <features/misc/match_flow.hpp>
 #include <features/trigger/seed_trigger.hpp>
 #include <simulation/shot_state.hpp>
 #include <simulation/seed_schedule.hpp>
@@ -210,6 +212,7 @@ void game(control control)
             VESTA_PERF_SCOPE(auto_accept);
             features::misc::auto_accept().tick();
         }
+        features::misc::match_flow().tick();
 
         std::uintptr_t global_vars{0};
         std::string current_map{};
@@ -418,11 +421,13 @@ void movement(control control)
                 VESTA_PERF_SCOPE(auto_stop_tick);
                 features::misc::auto_stop().tick();
             }
+            features::misc::walk_bot().tick();
         }
         const auto snapshot = config::get_runtime_snapshot();
         const auto active =
             snapshot && (snapshot->general.m_bunny_hop.enabled || snapshot->general.m_edge_jump.enabled ||
-                         snapshot->general.m_auto_stop.enabled || features::misc::auto_stop().active());
+                         snapshot->general.m_auto_stop.enabled || snapshot->general.m_walk_bot.enabled ||
+                         features::misc::auto_stop().active());
         control.sleep_for(active ? active_interval : idle_interval);
     }
 }

@@ -16,6 +16,17 @@
 namespace simulation
 {
 
+// Doors and breakables (vents, boards, glass) with live collision, from the map geometry's scan of the whole entity
+// list. The general entity catalogue only covers the first slots, where map props mostly are not.
+struct interactive_entity
+{
+    std::uintptr_t entity{};
+    bool door{};
+    foundation::vec3 origin{};
+    foundation::vec3 angles{};
+};
+[[nodiscard]] std::shared_ptr<const std::vector<interactive_entity>> interactive_entities();
+
 class collision_world
 {
 public:

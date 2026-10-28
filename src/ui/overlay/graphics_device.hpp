@@ -3,14 +3,39 @@
 #include <dxgi1_5.h>
 #include <wrl/client.h>
 #include <ui/overlay/render_policy.hpp>
+#include <ui/overlay/resource_priority.hpp>
+#include <algorithm>
 
 namespace ui
 {
-[[nodiscard]] inline HRESULT set_overlay_gpu_priority(ID3D11Device* device)
+// Orders the overlay's GPU work against the game's: the scheduling class is process-wide (gdi32
+// D3DKMTSetProcessSchedulingPriorityClass), the thread priority orders this device within the class. A refused class
+// falls back to normal so a failure can never leave the overlay above the game by accident.
+[[nodiscard]] inline HRESULT set_overlay_gpu_priority(ID3D11Device* device, const gpu_priority_plan plan)
 {
+    using set_class_fn = LONG(APIENTRY*)(HANDLE, INT);
+    static const auto set_class = []
+    {
+        const auto gdi32 = ::LoadLibraryExW(L"gdi32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        return gdi32
+                   ? reinterpret_cast<set_class_fn>(::GetProcAddress(gdi32, "D3DKMTSetProcessSchedulingPriorityClass"))
+                   : nullptr;
+    }();
+    HRESULT result = S_OK;
+    if (set_class && set_class(::GetCurrentProcess(), static_cast<INT>(plan.scheduling_class)) < 0)
+    {
+        result = E_ACCESSDENIED;
+        set_class(::GetCurrentProcess(), static_cast<INT>(gpu_scheduling_class::normal));
+    }
     Microsoft::WRL::ComPtr<IDXGIDevice> dxgi;
-    const auto result = device->QueryInterface(IID_PPV_ARGS(&dxgi));
-    return FAILED(result) ? result : dxgi->SetGPUThreadPriority(overlay_gpu_priority);
+    if (const auto queried = device->QueryInterface(IID_PPV_ARGS(&dxgi)); FAILED(queried))
+        return queried;
+    if (const auto priority = dxgi->SetGPUThreadPriority(plan.thread_priority); FAILED(priority))
+    {
+        (void)dxgi->SetGPUThreadPriority(std::min(plan.thread_priority, 0));
+        return priority;
+    }
+    return result;
 }
 
 [[nodiscard]] inline HRESULT create_overlay_device(HMONITOR monitor, ID3D11Device** device,

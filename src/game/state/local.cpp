@@ -144,6 +144,12 @@ void local_state::update()
     const auto binding = resolve_local_pawn(controller_address);
     if (!binding)
         return reset();
+    {
+        const auto target = observer_target_handle(controller_address);
+        const auto spectated = target && target != 0xffffffffu ? entity_index().lookup(target) : 0;
+        // Controlling a bot exposes the taken pawn as the target too: that is the player's own body, not a spectate.
+        m_spectated_pawn.store(spectated != binding.pawn ? spectated : 0);
+    }
 
     const auto snapshot = config::get_runtime_snapshot();
     if (!snapshot)
@@ -269,6 +275,7 @@ std::shared_ptr<const local_snapshot> local_state::snapshot() const
 
 void local_state::reset()
 {
+    m_spectated_pawn.store(0);
     publish(0, 0, 0, 0, 0, 0, 0, false, true, 0, 0, 0, 0, 0, 0.0f, 0.0f);
 }
 

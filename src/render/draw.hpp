@@ -3,6 +3,7 @@
 #include <foundation/color.hpp>
 
 #include <imgui.h>
+#include <render/stroke.hpp>
 #include <render/text/esp_text.hpp>
 #include <backends/imgui_impl_dx11.h>
 #include <backends/imgui_impl_win32.h>
@@ -226,13 +227,19 @@ public:
                                             to_im_color(scaled(color)));
     }
 
+    // Cleaned first (render/stroke.hpp): world lines projected at some view angles otherwise wobble or spike.
     void add_polyline(std::span<const float> points, rgba color, bool closed = false, float thickness = 1.0f)
     {
         if (!m_im_draw_list || points.size() < 4)
             return;
-        const size_t count = points.size() / 2;
-        m_im_draw_list->AddPolyline(reinterpret_cast<const ImVec2*>(points.data()), static_cast<int>(count),
-                                    to_im_color(scaled(color)), closed ? ImDrawFlags_Closed : 0, thickness);
+        thread_local clean_stroke stroke;
+        clean_polyline(points, closed, stroke);
+        static_assert(sizeof(stroke_point) == sizeof(ImVec2));
+        const auto im_color = to_im_color(scaled(color));
+        for (const auto& run : stroke.runs)
+            m_im_draw_list->AddPolyline(reinterpret_cast<const ImVec2*>(stroke.points.data() + run.first),
+                                        static_cast<int>(run.count), im_color, stroke.closed ? ImDrawFlags_Closed : 0,
+                                        thickness);
     }
 
     void add_circle(float x, float y, float radius, rgba color, int segments = 32, float thickness = 1.0f)

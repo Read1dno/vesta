@@ -158,7 +158,8 @@ void aimbot_t::triggerbot(const foundation::vec3& eye_pos, const foundation::vec
         features::misc::auto_stop().cancel_request(features::misc::auto_stop_source::advanced_trigger);
     };
 
-    if (!config::combat_profile::activation_active(cfg.activation_mode, cfg.key))
+    if (!g_walk_autofire.load(std::memory_order_acquire) &&
+        !config::combat_profile::activation_active(cfg.activation_mode, cfg.key))
     {
         cancel_scheduled();
         return;

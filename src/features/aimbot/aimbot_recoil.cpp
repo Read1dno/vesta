@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include <features/aimbot/flick_profile.hpp>
 #include <diagnostics/performance.hpp>
 #include <simulation/collision.hpp>
 #include <features/aimbot/aimbot_internal.hpp>
@@ -375,6 +376,8 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
     {
         m_aim_pawn = tgt.player->pawn;
         m_aim_tracking_lag = 0.0f;
+        m_aim_flick_speed = 0.0f;
+        m_flick_active = false;
         m_aim_velocity_valid = false;
         m_aim_relative_acceleration = {};
         m_aim_simulation_tick = -1;
@@ -405,7 +408,6 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
         return;
 
     auto factor = cfg.smoothing > 1 ? static_cast<float>(cfg.smoothing) : 1.0f;
-    const auto overshoot_response = h > 0.0f ? m_aim_overshoot : 1.0f;
     if (h > 0.0f)
         m_aim_ramp = std::min(1.0f, m_aim_ramp + dt / 0.055f);
     const auto response_ramp = h > 0.0f ? 0.75f + 0.25f * m_aim_ramp : 1.0f;
@@ -413,7 +415,7 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
     const auto command_fraction = std::clamp(dt / game::rules::simulation_step, 0.01f, 4.0f);
     const auto response_alpha =
         command_response >= 1.0f ? 1.0f : 1.0f - std::pow(1.0f - command_response, command_fraction);
-    const auto prediction_response = std::clamp(response_alpha * overshoot_response, 0.001f, 1.0f);
+    const auto prediction_response = std::clamp(response_alpha, 0.001f, 1.0f);
 
     if (cfg.prediction.enabled)
     {
@@ -526,33 +528,63 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
             wander_amp * 0.7f * std::cos(m_aim_wander_phase * 1.3f) + micro_amp * std::cos(m_aim_wander_phase * 1.47f);
     }
 
-    delta_x *= response_alpha;
-    delta_y *= response_alpha;
     const auto max_step = std::clamp(cfg.humanizer.max_step, 1.0f, 90.0f);
-    const auto sampled_max_step = max_step * command_fraction;
-    const auto step_length = std::sqrt(delta_x * delta_x + delta_y * delta_y);
-    if (h > 0.0f && step_length > sampled_max_step)
+    // A large turn is one hand movement, timed and shaped like a person's flick: the duration grows with the logarithm
+    // of the angle (Fitts: a 180 degree turn takes only about twice as long as a 10 degree one), the speed follows the
+    // minimum-jerk profile (smooth start, peak in the middle, smooth stop: no jump to full speed, no shake), and each
+    // tick covers its share of what is still left, so a moving target is followed. The hand lands a little short (or
+    // now and then past); the fine smoothing below finishes, and a miss of more than the fine zone is a second, shorter
+    // flick, the way a person corrects. Max Step scales the speed (24 is the reference).
+    constexpr float k_fine_zone = 4.0f;
+    const auto flick = h > 0.0f && dist > k_fine_zone;
+    if (flick)
     {
-        delta_x *= sampled_max_step / step_length;
-        delta_y *= sampled_max_step / step_length;
+        if (!m_flick_active)
+        {
+            m_flick_duration = flick::duration(dist, std::sqrt(max_step / 24.0f)) * m_rng.uniform(0.9f, 1.12f);
+            m_flick_progress = 0.0f;
+            // Mostly a little short; past the target as often as the overshoot settings ask (their amount caps it).
+            m_flick_bias = m_aim_overshoot > 1.0f ? std::min(m_aim_overshoot - 1.0f, 0.08f) * m_rng.uniform(0.4f, 1.0f)
+                                                  : -m_rng.uniform(0.01f, 0.06f);
+            m_aim_overshoot = 1.0f; // used up by this flick
+            m_flick_active = true;
+        }
+        const auto from = m_flick_progress;
+        const auto to = std::min(1.0f, from + dt / std::max(m_flick_duration, 1e-3f));
+        auto share = flick::share(from, to);
+        m_flick_progress = to;
+        if (to >= 1.0f)
+        {
+            share *= 1.0f + m_flick_bias;
+            m_flick_active = false;
+        }
+        delta_x *= share;
+        delta_y *= share;
+        m_aim_flick_speed = dt > 0.0f ? std::sqrt(delta_x * delta_x + delta_y * delta_y) / dt : 0.0f;
+    }
+    else
+    {
+        m_flick_active = false;
+        delta_x *= response_alpha;
+        delta_y *= response_alpha;
+        const auto sampled_max_step = max_step * command_fraction;
+        const auto step_length = std::sqrt(delta_x * delta_x + delta_y * delta_y);
+        if (h > 0.0f && step_length > sampled_max_step)
+        {
+            delta_x *= sampled_max_step / step_length;
+            delta_y *= sampled_max_step / step_length;
+        }
+        // Hand the speed back to the next flick so it does not restart from rest mid-motion.
+        m_aim_flick_speed = dt > 0.0f ? std::sqrt(delta_x * delta_x + delta_y * delta_y) / dt : 0.0f;
     }
 
-    if (h > 0.0f)
+    if (h > 0.0f && flick)
     {
-        // Occasional overshoot with correction on fast flicks.
-        delta_x *= m_aim_overshoot;
-        delta_y *= m_aim_overshoot;
-        if (m_aim_overshoot > 1.0f && dist < 1.0f)
+        // Arc: a flick does not travel in a straight line; each step is bent sideways, peaking mid-flick and exactly
+        // zero at its end, so it never leaves the crosshair above or below the hitbox (the fine phase is straight).
         {
-            m_aim_overshoot = std::max(1.0f, m_aim_overshoot - dt * 2.0f);
-        }
-
-        // Arc: the path to the target is not straight; each step is bent sideways,
-        // peaking mid-way and zero at both ends.
-        if (m_aim_initial_dist > 0.5f)
-        {
-            const auto progress = 1.0f - std::clamp(dist / m_aim_initial_dist, 0.0f, 1.0f);
-            const auto arc = m_aim_curve * std::sin(progress * std::numbers::pi_v<float>);
+            const auto arc =
+                m_aim_curve * std::sin(std::clamp(m_flick_progress, 0.0f, 1.0f) * std::numbers::pi_v<float>);
             const auto base_x = delta_x;
             const auto base_y = delta_y;
             const auto curved_x = base_x - base_y * arc;

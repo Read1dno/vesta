@@ -22,6 +22,7 @@
 #include <features/aimbot/aimbot.hpp>
 #include <features/misc/misc.hpp>
 #include <features/misc/auto_stop.hpp>
+#include <features/misc/walk_bot.hpp>
 #include <features/visuals/visuals.hpp>
 #include <features/visuals/event_log.hpp>
 #include <features/chams/preview.hpp>
@@ -438,6 +439,7 @@ void overlay_t::update_frame_state()
                               static_cast<std::uint32_t>(std::max(0, config::general_settings.fps_limit))));
     synchronize_menu_focus();
     apply_capture_policy();
+    apply_resource_priority();
 }
 
 // Carries out a file chosen in the config/Lua dialog (which runs on its own thread). Failures are logged by the
@@ -534,6 +536,7 @@ void overlay_t::draw_world(render::draw::draw_list& draw_list)
         features::visuals::crosshair().on_render(draw_list);
         features::visuals::grenade_prediction().on_render(draw_list);
         features::misc::nade_helper().on_render(draw_list);
+        features::misc::walk_bot().on_render(draw_list);
         features::visuals::bullet_impacts().on_render(draw_list);
         features::aimbot::aim().on_render(draw_list);
     }
@@ -924,6 +927,89 @@ void overlay_t::apply_capture_policy()
     ::SetWindowDisplayAffinity(m_hwnd, affinity);
     m_obs_bypass_observed = enabled;
     m_obs_bypass_initialized = true;
+}
+
+namespace
+{
+// The game's CPU priority class as a rank; normal while no game is attached or the class cannot be read.
+[[nodiscard]] ui::cpu_class_rank game_priority_rank()
+{
+    const auto process_id = game::bound_memory().process.process_id();
+    if (!process_id)
+        return ui::cpu_class_rank::normal;
+    const foundation::unique_handle process(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id));
+    switch (process.get() ? ::GetPriorityClass(process.get()) : 0)
+    {
+        case IDLE_PRIORITY_CLASS:
+            return ui::cpu_class_rank::idle;
+        case BELOW_NORMAL_PRIORITY_CLASS:
+            return ui::cpu_class_rank::below_normal;
+        case ABOVE_NORMAL_PRIORITY_CLASS:
+            return ui::cpu_class_rank::above_normal;
+        case HIGH_PRIORITY_CLASS:
+        case REALTIME_PRIORITY_CLASS:
+            return ui::cpu_class_rank::high;
+        default:
+            return ui::cpu_class_rank::normal;
+    }
+}
+
+[[nodiscard]] DWORD windows_priority_class(const ui::cpu_class_rank rank) noexcept
+{
+    switch (rank)
+    {
+        case ui::cpu_class_rank::idle:
+        case ui::cpu_class_rank::below_normal:
+            return BELOW_NORMAL_PRIORITY_CLASS;
+        case ui::cpu_class_rank::above_normal:
+            return ABOVE_NORMAL_PRIORITY_CLASS;
+        case ui::cpu_class_rank::high:
+            return HIGH_PRIORITY_CLASS;
+        case ui::cpu_class_rank::normal:
+        default:
+            return NORMAL_PRIORITY_CLASS;
+    }
+}
+} // namespace
+
+// Misc > Engine CPU and GPU priorities. Runs on the render thread, so the render-thread boost lands on the right
+// thread. The game's class is re-read every two seconds, since it can be changed in Task Manager while both run.
+void overlay_t::apply_resource_priority()
+{
+    const auto& general = config::general_settings;
+    const auto now = std::chrono::steady_clock::now();
+    const bool recheck_game = now >= m_next_priority_check;
+    if (!recheck_game && general.cpu_priority == m_cpu_priority_applied &&
+        general.gpu_priority == m_gpu_priority_applied)
+        return;
+
+    if (recheck_game)
+        m_next_priority_check = now + std::chrono::seconds(2);
+    const auto game_rank = recheck_game || m_game_priority_rank < 0
+                               ? game_priority_rank()
+                               : static_cast<ui::cpu_class_rank>(m_game_priority_rank);
+    if (general.cpu_priority != m_cpu_priority_applied || static_cast<int>(game_rank) != m_game_priority_rank)
+    {
+        const auto plan = ui::plan_cpu_priority(ui::to_resource_priority(general.cpu_priority), game_rank);
+        ::SetPriorityClass(::GetCurrentProcess(), windows_priority_class(plan.priority_class));
+        // ControlMask 0 hands the decision back to Windows; EXECUTION_SPEED with StateMask 0 opts out of EcoQoS.
+        PROCESS_POWER_THROTTLING_STATE throttling{
+            PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+            plan.disable_power_throttling ? static_cast<ULONG>(PROCESS_POWER_THROTTLING_EXECUTION_SPEED) : 0ul, 0ul};
+        (void)::SetProcessInformation(::GetCurrentProcess(), ProcessPowerThrottling, &throttling, sizeof(throttling));
+        ::SetThreadPriority(::GetCurrentThread(),
+                            plan.raise_render_thread ? THREAD_PRIORITY_ABOVE_NORMAL : THREAD_PRIORITY_NORMAL);
+        m_cpu_priority_applied = general.cpu_priority;
+        m_game_priority_rank = static_cast<int>(game_rank);
+    }
+    if (general.gpu_priority != m_gpu_priority_applied && m_device)
+    {
+        const auto result = ui::set_overlay_gpu_priority(
+            m_device, ui::plan_gpu_priority(ui::to_resource_priority(general.gpu_priority)));
+        if (FAILED(result))
+            write_overlay_lifecycle_event(diagnostics::event::graphics_low_priority_failed, result);
+        m_gpu_priority_applied = general.gpu_priority;
+    }
 }
 
 void overlay_t::synchronize_window_bounds()
@@ -1765,9 +1851,6 @@ bool overlay_t::initialize_graphics()
         return false;
     }
 
-    const auto priority_result = ui::set_overlay_gpu_priority(m_device);
-    if (FAILED(priority_result))
-        write_overlay_lifecycle_event(diagnostics::event::graphics_low_priority_failed, priority_result);
     IDXGIDevice1* dxgi_device1{};
     if (SUCCEEDED(m_device->QueryInterface(IID_PPV_ARGS(&dxgi_device1))))
     {

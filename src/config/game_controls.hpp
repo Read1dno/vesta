@@ -15,6 +15,9 @@ struct game_controls
     int jump{VK_SPACE};
     int attack{VK_LBUTTON};
     int attack2{VK_RBUTTON};
+    int use{'E'}; // doors
+    int reload{'R'};
+    int buy_menu{'B'};
 };
 
 } // namespace config
