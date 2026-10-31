@@ -252,16 +252,8 @@ struct general_profile
             buy_deathmatch,
             buy_mode_count
         };
-        [[nodiscard]] static constexpr std::array<buy_preset, buy_mode_count> default_buy_presets()
-        {
-            std::array<buy_preset, buy_mode_count> presets{};
-            // Armour with helmet, then the AK-47 / M4.
-            presets[buy_default].items[0] = {true, {'1', '2', '\0', '\0'}, 0, 0, 2000};
-            presets[buy_default].items[1] = {true, {'4', '2', '\0', '\0'}, 0, 0, 2000};
-            presets[buy_default].count = 2;
-            return presets;
-        }
-        std::array<buy_preset, buy_mode_count> buy_presets{default_buy_presets()};
+        // Every preset starts empty: the user adds the items a mode needs ("Add Item").
+        std::array<buy_preset, buy_mode_count> buy_presets{};
         int buy_edit{}; // the preset the menu shows
         bool auto_reload{true};
 

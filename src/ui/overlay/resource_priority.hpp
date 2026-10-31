@@ -76,7 +76,9 @@ struct gpu_priority_plan
     int thread_priority{}; // IDXGIDevice::SetGPUThreadPriority, -7..7
 };
 
-// The game runs in the normal scheduling class. Game first is the long-standing default (-2 within the normal class).
+// The game runs in the normal scheduling class and, as the foreground window, gets the scheduler's foreground boost;
+// the overlay never is the foreground window, so overlay first takes the high class. Realtime is never used: it can
+// starve the desktop compositor. Game first is the default (-2 within the normal class).
 [[nodiscard]] constexpr gpu_priority_plan plan_gpu_priority(const resource_priority level) noexcept
 {
     switch (level)
@@ -84,7 +86,7 @@ struct gpu_priority_plan
         case resource_priority::balanced:
             return {gpu_scheduling_class::normal, 0};
         case resource_priority::overlay_first:
-            return {gpu_scheduling_class::above_normal, 7};
+            return {gpu_scheduling_class::high, 7};
         case resource_priority::game_first:
         default:
             return {gpu_scheduling_class::normal, -2};

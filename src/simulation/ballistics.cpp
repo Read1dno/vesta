@@ -420,13 +420,9 @@ float ballistics_t::estimate_hit_probability(const foundation::vec3& eye_pos, co
             continue;
         }
 
-        const auto& bone = bones.bones[hb.bone];
-
         // mins/maxs are the two capsule axis points in bone space.
-        const auto capsule_start = bone.position + bone.rotation.apply(hb.mins);
-        const auto capsule_end = bone.position + bone.rotation.apply(hb.maxs);
-
-        capsules[capsule_count++] = {capsule_start, capsule_end, hb.radius};
+        const auto placed = game::place_hitbox(bones.bones[hb.bone], hb);
+        capsules[capsule_count++] = {placed.start, placed.end, placed.radius};
     }
 
     if (capsule_count == 0)

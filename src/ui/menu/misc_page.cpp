@@ -101,9 +101,12 @@ void open_log_folder()
 void draw_general_tab()
 {
     auto& p = config::general_settings;
+    // Left: automation first, then the movement binds; right: the action binds and support. Both columns stay below the
+    // page height (568) with the support status line shown, so nothing scrolls.
+    card_in_column("automation", "AUTOMATION", 1, 0, [&] { toggle_row("Auto Accept Match", p.auto_accept); });
     // The game's own binds: what the features press (movement, attack, use, reload, buy menu) has to match them.
     auto& keys = p.m_game_controls;
-    card_in_column("game_keyboard", "GAME KEY BINDS", 10, 0,
+    card_in_column("game_movement", "GAME MOVEMENT BINDS", 7, 0,
                    [&]
                    {
                        keybind_row("Forward", keys.forward, true, true);
@@ -113,19 +116,18 @@ void draw_general_tab()
                        keybind_row("Walk", keys.walk, true, true);
                        keybind_row("Duck", keys.duck, true, true);
                        keybind_row("Jump", keys.jump, true, true);
-                       keybind_row("Use", keys.use, true, true);
-                       keybind_row("Reload Weapon", keys.reload, true, true);
-                       keybind_row("Buy Menu", keys.buy_menu, true, true);
                    });
-    card_in_column("game_attack", "GAME ATTACK BINDS", 3, 1,
+    card_in_column("game_actions", "GAME ACTION BINDS", 6, 1,
                    [&]
                    {
                        keybind_row("Attack", keys.attack, false, true);
                        keybind_row("Secondary Attack", keys.attack2, false, true);
+                       keybind_row("Use", keys.use, true, true);
+                       keybind_row("Reload Weapon", keys.reload, true, true);
+                       keybind_row("Buy Menu", keys.buy_menu, true, true);
                        if (button_row("Reset Game Binds", "Reset", row_action_icon::none))
                            keys = {};
                    });
-    card_in_column("automation", "AUTOMATION", 1, 1, [&] { toggle_row("Auto Accept Match", p.auto_accept); });
     // A short status under the engine rows: the last report, or a crash of the previous session.
     const char* status{};
     bool status_failed{};

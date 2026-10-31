@@ -98,10 +98,10 @@ aimbot_t::trigger_result aimbot_t::trace_direction(const foundation::vec3& eye_p
             {
                 continue;
             }
-            const auto start = bone.position + bone.rotation.apply(hitbox.mins);
-            const auto end = bone.position + bone.rotation.apply(hitbox.maxs);
+            const auto capsule = game::place_hitbox(bone, hitbox);
             float distance{};
-            if (foundation::ray_capsule_entry(eye_pos, direction, start, end, hitbox.radius, distance) &&
+            if (foundation::ray_capsule_entry(eye_pos, direction, capsule.start, capsule.end, capsule.radius,
+                                              distance) &&
                 distance < best.distance)
             {
                 best = {&player, bones, distance, hitbox.index, hitgroup};

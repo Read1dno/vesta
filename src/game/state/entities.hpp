@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -164,6 +166,47 @@ struct projectile_snapshot
     std::vector<foundation::vec3> fire_points{};
     float expire_time{};
 };
+
+// An active smoke cloud, shared by the aim/visibility checks, chams and No Smoke: an ellipsoid centred on the detonation
+// point, wider than high (the cloud spreads along the ground: 187 across, 145 up). The size is fixed: the voxel stream
+// flags (m_bSmokeVolumeDataReceived, m_nVoxelFrameDataSize) switch on and off many times a second while the volume
+// updates, so they do not change it.
+inline constexpr float k_smoke_zone_radius = 187.0f; // horizontal half-axis
+inline constexpr float k_smoke_zone_height = 145.0f; // vertical half-axis
+
+struct smoke_zone
+{
+    foundation::vec3 center{};
+    float radius{k_smoke_zone_radius};
+    float height{k_smoke_zone_height};
+
+    // A point in the space where the cloud is a sphere of `radius` around the origin.
+    [[nodiscard]] foundation::vec3 squashed(const foundation::vec3& point) const noexcept
+    {
+        return {point.x - center.x, point.y - center.y, (point.z - center.z) * (radius / height)};
+    }
+    [[nodiscard]] bool contains(const foundation::vec3& point) const noexcept
+    {
+        return squashed(point).length_sqr() <= radius * radius;
+    }
+    // Whether the segment from `start` to `end` passes through the cloud.
+    [[nodiscard]] bool crosses(const foundation::vec3& start, const foundation::vec3& end) const noexcept
+    {
+        const auto a = squashed(start);
+        const auto segment = squashed(end) - a;
+        const auto length_sqr = segment.length_sqr();
+        const auto t = length_sqr > 1e-6f ? std::clamp(-a.dot(segment) / length_sqr, 0.0f, 1.0f) : 0.0f;
+        return (a + segment * t).length_sqr() <= radius * radius;
+    }
+};
+
+[[nodiscard]] inline smoke_zone smoke_zone_of(const projectile_snapshot& projectile)
+{
+    auto center = projectile.smoke_detonation_pos;
+    if (!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z) || center.length_sqr() < 1.0f)
+        center = projectile.origin;
+    return {center};
+}
 
 struct spectator_snapshot
 {

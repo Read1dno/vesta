@@ -253,7 +253,19 @@ private:
     // collision entities from leaving a stale GPU vertex buffer behind.
     ID3D11VertexShader* m_world_vertex_shader{};
     ID3D11PixelShader* m_world_pixel_shader{};
+    ID3D11GeometryShader* m_world_geometry_shader{};
     ID3D11InputLayout* m_world_input_layout{};
+
+    // No Flash / No Smoke sun shadows: a depth map of the static map seen from the sun, drawn once per map revision.
+    [[nodiscard]] bool ensure_world_shadow_map();
+    void release_world_shadow_map();
+    ID3D11Texture2D* m_shadow_texture{};
+    ID3D11DepthStencilView* m_shadow_dsv{};
+    ID3D11ShaderResourceView* m_shadow_srv{};
+    ID3D11SamplerState* m_shadow_sampler{};
+    ID3D11RasterizerState* m_rs_shadow{};
+    std::uint64_t m_shadow_revision{~0ull}; // the static map revision the shadow map shows; none yet
+    float m_shadow_matrix[4][4]{};
 
     // LESS_EQUAL with depth writes: redraw the nearest surface established by
     // the model depth pre-pass without allowing back faces to punch through.

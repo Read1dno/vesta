@@ -84,19 +84,6 @@ namespace
     return result;
 }
 
-[[nodiscard]] bool segment_intersects_sphere(const foundation::vec3& start, const foundation::vec3& end,
-                                             const foundation::vec3& center, const float radius)
-{
-    const auto segment = end - start;
-    const auto length_sqr = segment.length_sqr();
-    if (length_sqr <= 0.0001f)
-    {
-        return (start - center).length_sqr() <= radius * radius;
-    }
-    const auto t = std::clamp((center - start).dot(segment) / length_sqr, 0.0f, 1.0f);
-    return (start + segment * t - center).length_sqr() <= radius * radius;
-}
-
 [[nodiscard]] bool line_through_active_smoke(const foundation::vec3& start, const foundation::vec3& end)
 {
     const auto projectiles = game::world().projectiles();
@@ -108,15 +95,7 @@ namespace
         {
             continue;
         }
-        auto center = projectile.smoke_detonation_pos;
-        if (!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z) ||
-            center.length_sqr() < 1.0f)
-        {
-            center = projectile.origin;
-        }
-        center.z += 45.0f;
-        const auto radius = projectile.smoke_volume_received && projectile.smoke_voxel_size > 0 ? 145.0f : 160.0f;
-        if (segment_intersects_sphere(start, end, center, radius))
+        if (smoke_zone_of(projectile).crosses(start, end))
         {
             return true;
         }

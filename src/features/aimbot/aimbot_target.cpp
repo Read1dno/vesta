@@ -174,8 +174,7 @@ foundation::vec3 aimbot_t::get_aim_point(const foundation::vec3& eye_pos, const 
             out_bone = hb.bone;
             out_penetrated = penetrated;
 
-            const foundation::rotation inverse{-bone.rotation.x, -bone.rotation.y, -bone.rotation.z, bone.rotation.w};
-            out_offset = inverse.apply(base_pos - bone.position);
+            out_offset = bone.to_local(base_pos);
         }
     }
 
@@ -296,7 +295,7 @@ void aimbot_t::draw_fov_ring(render::draw::draw_list& draw_list, const foundatio
                 if (selected_bone < 128 && player.bones.is_valid())
                 {
                     const auto& bone = player.bones.bones[selected_bone];
-                    point = bone.position + bone.rotation.apply(selected_offset);
+                    point = bone.to_world(selected_offset);
                     refreshed = true;
                 }
                 break;
@@ -308,7 +307,7 @@ void aimbot_t::draw_fov_ring(render::draw::draw_list& draw_list, const foundatio
             if (selected_bone < 128 && bones.is_valid())
             {
                 const auto& bone = bones.bones[selected_bone];
-                point = bone.position + bone.rotation.apply(selected_offset);
+                point = bone.to_world(selected_offset);
             }
         }
     }

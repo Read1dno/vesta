@@ -20,6 +20,22 @@ public:
         {
             foundation::vec3 position{};
             foundation::rotation rotation{};
+            // Uniform scale of the bone's space, 1 normally. The big head mutator (casual) scales head_0 by the
+            // player's m_flBigHeadScale, and the eyes under it inherit it: the head mesh and the head hitbox grow
+            // or shrink around the bone, on the server as well.
+            float scale{1.0f};
+
+            // A point given in the bone's own space (a hitbox capsule end, a remembered aim offset), in the world.
+            [[nodiscard]] foundation::vec3 to_world(const foundation::vec3& local) const noexcept
+            {
+                return position + rotation.apply(local * scale);
+            }
+            // A world point in the bone's own space: the inverse of to_world().
+            [[nodiscard]] foundation::vec3 to_local(const foundation::vec3& world) const noexcept
+            {
+                const foundation::rotation inverse{-rotation.x, -rotation.y, -rotation.z, rotation.w};
+                return inverse.apply(world - position) / scale;
+            }
         };
 
         std::array<bone, 128> bones{};
@@ -30,6 +46,7 @@ public:
         [[nodiscard]] bool is_valid() const;
         [[nodiscard]] foundation::vec3 get_position(std::uint32_t id) const;
         [[nodiscard]] foundation::rotation get_rotation(std::uint32_t id) const;
+        [[nodiscard]] float get_scale(std::uint32_t id) const;
     };
 
     [[nodiscard]] data get(std::uintptr_t bone_array) const;
@@ -104,5 +121,22 @@ private:
     // Index of the pointer chain (scene node -> hitbox set) that last worked, -1 before the first success.
     mutable std::atomic<int> m_active_chain{-1};
 };
+
+// A hitbox capsule placed on its bone: both axis ends and the radius in world units. The bone's scale applies to
+// all three (a big head's hitbox is longer and wider, not only moved).
+struct world_capsule
+{
+    foundation::vec3 start{};
+    foundation::vec3 end{};
+    float radius{};
+
+    [[nodiscard]] foundation::vec3 center() const noexcept { return (start + end) * 0.5f; }
+};
+
+[[nodiscard]] inline world_capsule place_hitbox(const skeleton_reader::data::bone& bone,
+                                                const hitbox_catalog::entry& hitbox) noexcept
+{
+    return {bone.to_world(hitbox.mins), bone.to_world(hitbox.maxs), hitbox.radius * bone.scale};
+}
 
 } // namespace game

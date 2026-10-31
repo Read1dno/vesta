@@ -247,6 +247,27 @@ void draw_box(const preview_stage& stage, const player_profile::box& box)
     }
 }
 
+// The hitboxes of the model the preview draws, from its own file, so the capsules and the head circle sit on that model
+// (also in the main menu, before any match). The hitboxes last seen in a match only when the file has none.
+[[nodiscard]] game::hitbox_catalog::set preview_hitboxes()
+{
+    game::hitbox_catalog::set result{};
+    for (const auto& hitbox : features::chams::g_preview.hitboxes())
+    {
+        if (result.count >= static_cast<int>(result.entries.size()))
+            break;
+        auto& entry = result.entries[static_cast<std::size_t>(result.count++)];
+        entry.index = hitbox.index;
+        entry.bone = hitbox.bone;
+        const auto length = std::min(hitbox.name.size(), entry.name.size() - 1);
+        std::copy_n(hitbox.name.data(), length, entry.name.data());
+        entry.mins = hitbox.mins;
+        entry.maxs = hitbox.maxs;
+        entry.radius = hitbox.radius;
+    }
+    return result.count > 0 ? result : game::hitbox_data().snapshot();
+}
+
 // Screen positions of the skeleton bones: projected from the live model where possible, the stock layout otherwise.
 [[nodiscard]] std::array<ImVec2, k_preview_bone_count> skeleton_points(const preview_stage& stage)
 {
@@ -396,25 +417,33 @@ void draw_skeleton(const preview_stage& stage, const std::array<ImVec2, k_previe
 void draw_head_circle(const preview_stage& stage, const std::array<ImVec2, k_preview_bone_count>& points,
                       const player_profile::head_circle& head_circle)
 {
+    // The stock picture's head; on the live model the circle is the in-game one: around the centre of the head
+    // hitbox with its radius, both projected through the preview camera.
     auto center = points[k_head_bone];
     auto radius = 19.5f;
     if (stage.live_model)
     {
-        for (const auto& hitbox : stage.live_hitboxes)
+        const auto& preview = features::chams::g_preview;
+        const auto* head = std::ranges::find_if(
+            stage.live_hitboxes, [](const auto& hitbox)
+            { return game::hitbox_data().hitgroup_from_hitbox(hitbox.index) == game::rules::hitgroup::head; });
+        foundation::vec3 center_world{};
+        float x{}, y{};
+        radius = 0.0f;
+        if (head != stage.live_hitboxes.end() &&
+            preview.bone_transform(static_cast<std::uint32_t>(head->bone), (head->mins + head->maxs) * 0.5f,
+                                   center_world) &&
+            preview.project(center_world, x, y))
         {
-            if (game::hitbox_data().hitgroup_from_hitbox(hitbox.index) != game::rules::hitgroup::head)
-                continue;
-
-            foundation::vec3 center_world{};
-            float x{}, y{};
-            if (features::chams::g_preview.bone_transform(static_cast<std::uint32_t>(hitbox.bone),
-                                                          (hitbox.mins + hitbox.maxs) * 0.5f, center_world) &&
-                features::chams::g_preview.project(center_world, x, y))
-            {
-                center = stage.image_min + ImVec2{x, y};
-                radius = projected_radius(center_world, foundation::vec3{}, hitbox.radius, x, y);
-            }
-            break;
+            center = stage.image_min + ImVec2{x, y};
+            radius = projected_radius(center_world, foundation::vec3{}, head->radius, x, y);
+        }
+        else if (preview.bone_position(k_head_bone, center_world) && preview.project(center_world, x, y))
+        {
+            // No hitbox data at all: a head-sized circle on the head bone rather than the stock picture's size.
+            constexpr auto k_head_radius = 4.5f;
+            center = stage.image_min + ImVec2{x, y};
+            radius = projected_radius(center_world, foundation::vec3{}, k_head_radius, x, y);
         }
     }
     if (radius > 0.0f)
@@ -806,7 +835,7 @@ void menu_t::draw_visual_editor()
 
     auto* live_texture = render_live_model();
     stage.live_model = live_texture != nullptr;
-    stage.live_hitboxes = game::hitbox_data().snapshot();
+    stage.live_hitboxes = preview_hitboxes();
 
     draw->PushClipRect(stage.min + ImVec2{1.0f, 1.0f}, stage.max - ImVec2{1.0f, 1.0f}, true);
     draw_model_image(stage, live_texture ? live_texture : ui::bound_overlay().ct_preview_texture());

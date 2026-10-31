@@ -33,6 +33,11 @@ foundation::rotation skeleton_reader::data::get_rotation(std::uint32_t id) const
     return id < bones.size() ? bones[id].rotation : foundation::rotation{};
 }
 
+float skeleton_reader::data::get_scale(std::uint32_t id) const
+{
+    return id < bones.size() ? bones[id].scale : 1.0f;
+}
+
 skeleton_reader::data skeleton_reader::get(std::uintptr_t bone_cache) const
 {
     std::array<transform_record, 128> source{};
@@ -59,8 +64,17 @@ skeleton_reader::data skeleton_reader::get(std::uintptr_t bone_cache) const
     }
 
     data snapshot{};
+    // The scale is 1 for every bone except under the big head mutator (head_0 and the eyes). A slot that is not a
+    // real transform (past the model's bones, a cache being rebuilt) reads as 1, never 0 or a huge value that
+    // would collapse or blow up hitboxes.
     std::transform(source.begin(), source.end(), snapshot.bones.begin(),
-                   [](const transform_record& value) { return data::bone{value.translation, value.orientation}; });
+                   [](const transform_record& value)
+                   {
+                       const auto scale = std::isfinite(value.scale) && value.scale >= 0.1f && value.scale <= 10.0f
+                                              ? value.scale
+                                              : 1.0f;
+                       return data::bone{value.translation, value.orientation, scale};
+                   });
     snapshot.count = static_cast<std::uint16_t>(bones_read);
     return snapshot;
 }

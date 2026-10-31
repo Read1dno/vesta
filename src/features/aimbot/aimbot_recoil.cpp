@@ -300,7 +300,7 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
         const auto rotation_norm =
             fresh_bone.rotation.x * fresh_bone.rotation.x + fresh_bone.rotation.y * fresh_bone.rotation.y +
             fresh_bone.rotation.z * fresh_bone.rotation.z + fresh_bone.rotation.w * fresh_bone.rotation.w;
-        const auto fresh_point = fresh_bone.position + fresh_bone.rotation.apply(tgt.aim_offset);
+        const auto fresh_point = fresh_bone.to_world(tgt.aim_offset);
         const auto valid_point = std::isfinite(fresh_point.x) && std::isfinite(fresh_point.y) &&
                                  std::isfinite(fresh_point.z) && std::isfinite(rotation_norm) &&
                                  rotation_norm >= 0.5f && rotation_norm <= 1.5f &&

@@ -85,13 +85,10 @@ template<typename plan_t>
             break;
         if (box.index < 0 || box.bone < 0 || box.bone >= player.bones.bones.size())
             continue;
-        const auto& bone = player.bones.bones[box.bone];
-        result.capsules[result.count++] = {box.index,
-                                           box.bone,
-                                           game::hitbox_data().hitgroup_from_hitbox(box.index),
-                                           bone.position + bone.rotation.apply(box.mins),
-                                           bone.position + bone.rotation.apply(box.maxs),
-                                           box.radius};
+        const auto capsule = game::place_hitbox(player.bones.bones[box.bone], box);
+        result.capsules[result.count++] = {
+            box.index,     box.bone,    game::hitbox_data().hitgroup_from_hitbox(box.index),
+            capsule.start, capsule.end, capsule.radius};
     }
     return result;
 }
@@ -323,10 +320,10 @@ aimbot_t::find_restricted_target(ballistics_t& ballistics, const config::combat_
             const auto hitgroup = game::hitbox_data().hitgroup_from_hitbox(hitbox.index);
             if ((cfg.hitbox_parts & simulation::aim_part_of(hitbox.index, hitgroup)) == 0)
                 continue;
-            const auto& bone = player.bones.bones[hitbox.bone];
-            const auto start = bone.position + bone.rotation.apply(hitbox.mins);
-            const auto end = bone.position + bone.rotation.apply(hitbox.maxs);
-            if (!ballistics.ray_hits_capsule(eye, ordinary_direction, start, end, std::max(0.5f, hitbox.radius)))
+            const auto capsule = game::place_hitbox(player.bones.bones[hitbox.bone], hitbox);
+            const auto start = capsule.start;
+            const auto end = capsule.end;
+            if (!ballistics.ray_hits_capsule(eye, ordinary_direction, start, end, std::max(0.5f, capsule.radius)))
                 continue;
             const auto distance = ((start + end) * 0.5f - eye).dot(ordinary_direction);
             if (distance > 0.0f && distance < nearest)

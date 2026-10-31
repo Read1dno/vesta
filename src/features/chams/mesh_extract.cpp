@@ -727,4 +727,85 @@ skinned_mesh extract_mesh(assets::vpk_archive& vpk, const std::string& model_pat
     return result;
 }
 
+std::vector<model_hitbox> extract_hitboxes(assets::vpk_archive& vpk, const std::string& model_path,
+                                           const skinned_mesh& mesh)
+{
+    std::vector<model_hitbox> result{};
+    try
+    {
+        const auto* entry = vpk.find(model_path);
+        if (!entry)
+            return result;
+        assets::resource res{};
+        if (!res.parse(vpk.read(*entry)))
+            return result;
+
+        std::unordered_map<std::string, int> bone_by_name{};
+        for (std::size_t i = 0; i < mesh.bones.size(); ++i)
+            bone_by_name.emplace(mesh.bones[i].name, static_cast<int>(i));
+
+        const auto vector3 = [](const assets::kv3::object* value)
+        {
+            float xyz[3]{};
+            return value && value->as_float3(xyz) ? foundation::vec3{xyz[0], xyz[1], xyz[2]} : foundation::vec3{};
+        };
+
+        // The hitbox sets sit in the model data (MDAT) of the body mesh: an array of {key, value} pairs, the game
+        // uses the "cstrike" set.
+        for (const auto* block : res.find_all("MDAT"))
+        {
+            assets::kv3::document document{};
+            try
+            {
+                document = assets::kv3::decode(res.bytes(*block), block->size);
+            }
+            catch (const std::exception&)
+            {
+                continue;
+            }
+            const auto* sets = document.root.find("m_hitboxsets");
+            if (!sets || !sets->is_array())
+                continue;
+            const assets::kv3::object* chosen{};
+            for (std::size_t i = 0; i < sets->size(); ++i)
+            {
+                const auto* pair = sets->at(i);
+                const auto* value = pair ? pair->find("value") : nullptr;
+                if (!value)
+                    continue;
+                if (!chosen || pair->get("key").as_string() == "cstrike")
+                    chosen = value;
+            }
+            const auto* boxes = chosen ? chosen->find("m_HitBoxes") : nullptr;
+            if (!boxes || !boxes->is_array() || boxes->size() == 0)
+                continue;
+            for (std::size_t i = 0; i < boxes->size(); ++i)
+            {
+                const auto* box = boxes->at(i);
+                if (!box || !box->is_dict())
+                    continue;
+                const auto bone = bone_by_name.find(box->get("m_sBoneName").as_string());
+                if (bone == bone_by_name.end())
+                    continue;
+                model_hitbox hitbox{};
+                hitbox.index = static_cast<int>(box->get("m_nHitBoxIndex").as_int());
+                hitbox.bone = bone->second;
+                hitbox.name = box->get("m_name").as_string();
+                hitbox.mins = vector3(box->find("m_vMinBounds"));
+                hitbox.maxs = vector3(box->find("m_vMaxBounds"));
+                hitbox.radius = static_cast<float>(box->get("m_flShapeRadius").as_double());
+                result.push_back(std::move(hitbox));
+            }
+            if (!result.empty())
+                break;
+        }
+    }
+    catch (const std::exception& error)
+    {
+        diagnostics::process_log().warning("[chams] hitboxes of {} unreadable: {}", model_path, error.what());
+        result.clear();
+    }
+    return result;
+}
+
 } // namespace features::chams

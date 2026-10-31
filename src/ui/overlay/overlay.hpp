@@ -17,6 +17,7 @@
 #include <foundation/frame_schedule.hpp>
 #include <ui/overlay/present_policy.hpp>
 #include <diagnostics/rate_gate.hpp>
+#include <diagnostics/events.hpp>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -105,6 +106,7 @@ private:
     void submit_frame();
     present_outcome present_frame(ui::present_recovery& recovery);
     void note_present_outcome(bool dropped);
+    void enter_latency_fallback(diagnostics::event reason);
     void shutdown() noexcept;
     void synchronize_menu_focus();
     void set_menu_hit_testing(bool enabled);
@@ -187,8 +189,13 @@ private:
     bool m_allow_tearing{};
     bool m_present_tearing_enabled{};
     bool m_resize_pending{};
+    // Timer pacing while the swap chain's latency signal is silent (see enter_latency_fallback); probed again later.
     bool m_frame_latency_unreliable{};
     bool m_nonwaitable_stall_reported{};
+    bool m_latency_fallback_reported{};
+    static constexpr int k_latency_timeouts_for_fallback = 6; // consecutive 50 ms timeouts
+    int m_latency_timeouts{};
+    std::chrono::steady_clock::time_point m_latency_probe_at{};
     // Frames presented and dropped in the current two-second window; a starved window is journaled.
     std::uint32_t m_window_presented{};
     std::uint32_t m_window_dropped{};

@@ -31,8 +31,7 @@ constexpr float k_half_fov_pitch = 37.0f;
             if (box.index < 0 || box.bone < 0 || box.bone >= static_cast<int>(other.bones.bones.size()) ||
                 game::hitbox_data().hitgroup_from_hitbox(box.index) != game::rules::hitgroup::head)
                 continue;
-            const auto& bone = other.bones.bones[static_cast<std::size_t>(box.bone)];
-            return bone.position + bone.rotation.apply((box.mins + box.maxs) * 0.5f);
+            return game::place_hitbox(other.bones.bones[static_cast<std::size_t>(box.bone)], box).center();
         }
     return other.origin + foundation::vec3{0.0f, 0.0f, other.is_ducked ? 46.0f : 64.0f};
 }

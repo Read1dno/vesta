@@ -255,7 +255,7 @@ void aimbot_t::publish_indicator(const config::combat_profile::aimbot& cfg, cons
     if (picked.bone >= 0 && picked.bone < 128 && picked.bones.is_valid())
     {
         const auto& bone = picked.bones.bones[picked.bone];
-        point = bone.position + bone.rotation.apply(picked.aim_offset);
+        point = bone.to_world(picked.aim_offset);
     }
     std::scoped_lock lock(m_indicator_mutex);
     m_indicator_point = point;

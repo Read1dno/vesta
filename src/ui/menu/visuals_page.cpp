@@ -432,25 +432,39 @@ void draw_effects_tab()
                               });
          });
 
+    // No Flash / No Smoke: the map drawn as lit surfaces with shadows, the same with edges, or edges only.
+    static constexpr const char* world_styles[]{"Shaded", "Shaded + Lines", "Lines"};
     auto& no_flash = config::visual_settings.m_no_flash;
-    card("no_flash", "NO FLASH (WIREFRAME)", 1,
+    card("no_flash", "NO FLASH", 1,
          [&]
          {
-             toggle_popup_row("Enable Visual No Flash", no_flash.enabled, 3,
+             toggle_popup_row("Enable Visual No Flash", no_flash.enabled, 7,
                               [&]
                               {
-                                  slider_row("Render Distance", no_flash.max_distance, 200.0f, 3000.0f, "", 10.0f);
+                                  select_row("Style", no_flash.style, world_styles);
+                                  toggle_row("Shadows", no_flash.shadows);
+                                  slider_row("Render Distance", no_flash.max_distance, 200.0f, 6000.0f, "", 10.0f);
                                   color_row("Dimming Overlay Color", no_flash.background_color);
-                                  color_row("Wireframe Color", no_flash.wireframe_color);
+                                  color_row("Surface Color", no_flash.surface_color);
+                                  color_row("Line Color", no_flash.wireframe_color);
+                                  slider_row("Line Width", no_flash.line_width, 0.5f, 4.0f, "px", 0.1f);
                               });
          });
 
     auto& no_smoke = config::visual_settings.m_no_smoke;
-    card("no_smoke", "NO SMOKE (WIREFRAME)", 1,
+    card("no_smoke", "NO SMOKE", 1,
          [&]
          {
-             toggle_popup_row("Enable Visual No Smoke", no_smoke.enabled, 1,
-                              [&] { color_row("Smoke Wireframe Color", no_smoke.wireframe_color); });
+             toggle_popup_row("Enable Visual No Smoke", no_smoke.enabled, 6,
+                              [&]
+                              {
+                                  select_row("Style", no_smoke.style, world_styles);
+                                  toggle_row("Shadows", no_smoke.shadows);
+                                  slider_row("Render Distance", no_smoke.max_distance, 500.0f, 8000.0f, "", 10.0f);
+                                  color_row("Surface Color", no_smoke.surface_color);
+                                  color_row("Line Color", no_smoke.wireframe_color);
+                                  slider_row("Line Width", no_smoke.line_width, 0.5f, 4.0f, "px", 0.1f);
+                              });
          });
 }
 

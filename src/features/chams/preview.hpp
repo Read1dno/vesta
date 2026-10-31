@@ -4,6 +4,7 @@
 #include <features/chams/mesh.hpp>
 #include <features/chams/texture.hpp>
 #include <features/chams/animation.hpp>
+#include <features/chams/mesh_extract.hpp>
 #include <assets/vpk.hpp>
 
 #include <d3d11.h>
@@ -40,6 +41,10 @@ public:
     [[nodiscard]] bool project(const foundation::vec3& world, float& x, float& y) const;
 
     void orbit(float delta_yaw);
+
+    // The previewed model's own hitboxes, read from its file once per model; bones index the mesh skeleton, the
+    // same space bone_transform() works in. Empty before the first render or when the file has none.
+    [[nodiscard]] const std::vector<model_hitbox>& hitboxes() const { return m_hitboxes; }
 
     // Row-major view-projection of the last render, so overlays (bones,
     // hitboxes) can project into the same image.
@@ -129,6 +134,8 @@ private:
     float m_yaw{0.0f};
 
     const skinned_mesh* m_mesh{};
+    std::vector<model_hitbox> m_hitboxes{};
+    std::string m_hitboxes_model{};
     float m_view_projection[4][4]{};
     foundation::vec3 m_eye{};
     bool m_ready{};

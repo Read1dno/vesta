@@ -150,11 +150,9 @@ bool ballistics_t::penetration::run_seed(const foundation::vec3& origin, const f
         {
             continue;
         }
-        const auto& bone = bones.bones[box.bone];
-        const auto full_start = bone.position + bone.rotation.apply(box.mins);
-        const auto full_end = bone.position + bone.rotation.apply(box.maxs);
+        const auto capsule = game::place_hitbox(bones.bones[box.bone], box);
         float distance{};
-        if (foundation::ray_capsule_entry(origin, direction, full_start, full_end, box.radius, distance) &&
+        if (foundation::ray_capsule_entry(origin, direction, capsule.start, capsule.end, capsule.radius, distance) &&
             distance < target_distance)
         {
             target_distance = distance;

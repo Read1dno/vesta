@@ -47,9 +47,10 @@ bounds_projector::data bounds_projector::get(const skeleton_reader::data& skelet
         const auto& position = skeleton.bones[index].position;
         if (position.length_sqr() == 0.0f)
             continue;
+        const auto scale = skeleton.bones[index].scale;
         for (const auto& offset : silhouette_offsets)
         {
-            const auto point = camera().project(position + offset);
+            const auto point = camera().project(position + offset * scale);
             if (!camera().projection_valid(point))
             {
                 extent.clipped = true;

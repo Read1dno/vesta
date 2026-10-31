@@ -85,14 +85,19 @@ static_assert(sizeof(cb_bloom) % 16 == 0);
 
 struct cb_world_effect
 {
-    float color[4]{};
-    float eye_and_distance[4]{};
+    float surface_color[4]{};
+    float line_color[4]{};
+    float eye_and_distance[4]{}; // eye, then the render distance (0: none)
     float smoke_spheres[8][4]{};
     std::uint32_t smoke_count{};
     std::uint32_t clip_to_smoke{};
-    float padding[2]{};
+    std::uint32_t style{};    // config::visual_profile::world_style
+    std::uint32_t shadows{};  // the shadow map is bound
+    float sun_direction[4]{}; // towards the sun; w the shadow map texel size in uv
+    float line_params[4]{};   // line width in pixels, overall opacity
+    float light_view_projection[4][4]{};
 };
-static_assert(sizeof(cb_world_effect) % 16 == 0);
+static_assert(sizeof(cb_world_effect) == 288);
 
 void write_gpu_material(gpu_material& out, const config::visual_profile::chams::material& material)
 {
@@ -395,6 +400,12 @@ constexpr const char* k_shader_source = R"(
 
 		)";
 
+// No Flash / No Smoke world view. The depth pre-pass uses VS_World alone; the colour pass adds GS_World (each corner
+// gets its barycentric coordinate) and PS_World: flat-shaded lit surfaces (normal from the screen derivatives, a sun with
+// a shadow map of the static map, sky/ground ambient, a little light from the eye) and anti-aliased triangle edges drawn
+// in the same shader, so edges and surfaces share one depth and never flicker against each other. With a smoke clip a
+// surface shows only where the view to it passes through a smoke sphere (inside a smoke: everything), fading softly at
+// the smoke's silhouette.
 constexpr const char* k_world_shader_source = R"(
 			cbuffer CBViewProjection : register(b0)
 			{
@@ -405,18 +416,33 @@ constexpr const char* k_world_shader_source = R"(
 
 			cbuffer CBWorldEffect : register(b1)
 			{
-				float4 g_WorldColor;
+				float4 g_SurfaceColor;
+				float4 g_LineColor;
 				float4 g_EyeAndDistance;
 				float4 g_SmokeSpheres[8];
 				uint g_SmokeCount;
 				uint g_ClipToSmoke;
-				float2 g_WorldPadding;
+				uint g_Style;
+				uint g_Shadows;
+				float4 g_SunDirection;
+				float4 g_LineParams;
+				row_major float4x4 g_LightViewProjection;
 			};
+
+			Texture2D<float> g_ShadowMap : register(t0);
+			SamplerComparisonState g_ShadowSampler : register(s0);
 
 			struct WORLD_OUTPUT
 			{
 				float4 Position : SV_POSITION;
 				float3 WorldPos : TEXCOORD0;
+			};
+
+			struct WORLD_GS_OUTPUT
+			{
+				float4 Position : SV_POSITION;
+				float3 WorldPos : TEXCOORD0;
+				float3 Barycentric : TEXCOORD1;
 			};
 
 			WORLD_OUTPUT VS_World(float3 position : POSITION)
@@ -427,26 +453,112 @@ constexpr const char* k_world_shader_source = R"(
 				return output;
 			}
 
-			float4 PS_World(WORLD_OUTPUT input) : SV_TARGET
+			[maxvertexcount(3)]
+			void GS_World(triangle WORLD_OUTPUT input[3], inout TriangleStream<WORLD_GS_OUTPUT> stream)
 			{
-				if (g_EyeAndDistance.w > 0.0f
-					&& distance(input.WorldPos, g_EyeAndDistance.xyz) > g_EyeAndDistance.w)
-					discard;
-
-				if (g_ClipToSmoke != 0)
+				[unroll]
+				for (uint i = 0; i < 3; ++i)
 				{
-					bool inside = false;
-					[loop]
-					for (uint i = 0; i < min(g_SmokeCount, 8u); ++i)
-					{
-						float3 delta = input.WorldPos - g_SmokeSpheres[i].xyz;
-						inside = inside || dot(delta, delta)
-							<= g_SmokeSpheres[i].w * g_SmokeSpheres[i].w;
-					}
-					if (!inside) discard;
+					WORLD_GS_OUTPUT output;
+					output.Position = input[i].Position;
+					output.WorldPos = input[i].WorldPos;
+					output.Barycentric = float3(i == 0, i == 1, i == 2);
+					stream.Append(output);
+				}
 			}
 
-				return g_WorldColor;
+			// How much of the view to `p` runs through a smoke: 1 up to the sphere's silhouette, then soft over the next
+			// 10% of the radius (outside it, so the zone is never smaller than the smoke) instead of a hard pixel edge.
+			float SmokeCoverage(float3 p)
+			{
+				// The clouds are ellipsoids (wider than high): squashing z by radius / height makes them spheres.
+				float3 squash = float3(1.0f, 1.0f, g_LineParams.z);
+				float3 eye = g_EyeAndDistance.xyz * squash;
+				p *= squash;
+				float3 ray = p - eye;
+				float len = length(ray);
+				ray /= max(len, 0.001f);
+				float coverage = 0.0f;
+				[loop]
+				for (uint i = 0; i < min(g_SmokeCount, 8u); ++i)
+				{
+					float3 center = g_SmokeSpheres[i].xyz * squash;
+					float radius = g_SmokeSpheres[i].w;
+					float t = clamp(dot(center - eye, ray), 0.0f, len);
+					float gap = distance(eye + ray * t, center);
+					coverage = max(coverage, saturate((radius * 1.1f - gap) / (radius * 0.1f)));
+				}
+				return coverage;
+			}
+
+			float SunShadow(float3 p, float3 n)
+			{
+				float3 offset = p + n * 3.0f + g_SunDirection.xyz * 2.0f;
+				float4 light = mul(g_LightViewProjection, float4(offset, 1.0f));
+				float2 uv = float2(light.x * 0.5f + 0.5f, 0.5f - light.y * 0.5f);
+				if (any(uv < 0.0f) || any(uv > 1.0f) || light.z >= 1.0f)
+					return 1.0f;
+				float texel = g_SunDirection.w;
+				float depth = light.z - 0.0006f;
+				float sum = 0.0f;
+				[unroll]
+				for (int y = -1; y <= 1; ++y)
+				{
+					[unroll]
+					for (int x = -1; x <= 1; ++x)
+						sum += g_ShadowMap.SampleCmpLevelZero(g_ShadowSampler, uv + float2(x, y) * texel, depth);
+				}
+				return sum / 9.0f;
+			}
+
+			float4 PS_World(WORLD_GS_OUTPUT input) : SV_TARGET
+			{
+				// Derivatives first, while every pixel of the quad is still running.
+				float3 p = input.WorldPos;
+				float3 normal = cross(ddx(p), ddy(p));
+				float3 edgeWidth = fwidth(input.Barycentric);
+
+				float3 toEye = g_EyeAndDistance.xyz - p;
+				float dist = length(toEye);
+				float visibility = g_LineParams.y;
+				if (g_EyeAndDistance.w > 0.0f)
+					visibility *= 1.0f - smoothstep(g_EyeAndDistance.w * 0.85f, g_EyeAndDistance.w, dist);
+				if (g_ClipToSmoke != 0)
+					visibility *= SmokeCoverage(p);
+
+				float3 view = toEye / max(dist, 0.001f);
+				float normalLength = length(normal);
+				normal = normalLength > 1e-8f ? normal / normalLength : view;
+				if (dot(normal, view) < 0.0f)
+					normal = -normal;
+
+				float3 surface = 0.0f;
+				float surfaceAlpha = 0.0f;
+				if (g_Style != 2)
+				{
+					float lambert = saturate(dot(normal, g_SunDirection.xyz));
+					float shadow = g_Shadows != 0 && lambert > 0.0f ? SunShadow(p, normal) : 1.0f;
+					float ambient = lerp(0.30f, 0.52f, normal.z * 0.5f + 0.5f);
+					float lit = ambient + 0.16f * saturate(dot(normal, view)) + 0.62f * lambert * shadow;
+					surface = g_SurfaceColor.rgb * lit;
+					surface = lerp(surface, g_SurfaceColor.rgb * 0.5f, saturate(dist / 5000.0f) * 0.35f);
+					surfaceAlpha = g_SurfaceColor.a;
+				}
+
+				float lineAlpha = 0.0f;
+				if (g_Style != 0)
+				{
+					// Distance to the nearest edge in pixels; each of the two triangles at an edge draws half the width.
+					float3 pixels = input.Barycentric / max(edgeWidth, 1e-6f);
+					float nearest = min(pixels.x, min(pixels.y, pixels.z));
+					lineAlpha = saturate(g_LineParams.x * 0.5f + 0.5f - nearest) * g_LineColor.a;
+				}
+
+				float alpha = lineAlpha + surfaceAlpha * (1.0f - lineAlpha);
+				if (alpha * visibility <= 0.002f)
+					discard;
+				float3 color = (g_LineColor.rgb * lineAlpha + surface * surfaceAlpha * (1.0f - lineAlpha)) / alpha;
+				return float4(color, alpha * visibility);
 			}
 		)";
 
@@ -618,7 +730,9 @@ constexpr const char* k_bloom_shader_source = R"(
 			}
 		)";
 
-[[nodiscard]] bone_matrix compose_world_bone(const foundation::vec3& pos, const foundation::rotation& rot)
+// A bone's world transform as a matrix: rotation, uniform scale (1 except a big head) and position.
+[[nodiscard]] bone_matrix compose_world_bone(const foundation::vec3& pos, const foundation::rotation& rot,
+                                             const float scale = 1.0f)
 {
     bone_matrix out{};
     const auto x = rot.x, y = rot.y, z = rot.z, w = rot.w;
@@ -638,6 +752,9 @@ constexpr const char* k_bloom_shader_source = R"(
     out.m[2][1] = 2.0f * (yz + wx);
     out.m[2][2] = 1.0f - 2.0f * (xx + yy);
     out.m[2][3] = pos.z;
+    for (int row = 0; row < 3; ++row)
+        for (int column = 0; column < 3; ++column)
+            out.m[row][column] *= scale;
     return out;
 }
 
@@ -870,8 +987,15 @@ void renderer::shutdown()
         m_world_vertex_shader->Release();
     if (m_world_pixel_shader)
         m_world_pixel_shader->Release();
+    if (m_world_geometry_shader)
+        m_world_geometry_shader->Release();
     if (m_world_input_layout)
         m_world_input_layout->Release();
+    if (m_rs_shadow)
+        m_rs_shadow->Release();
+    if (m_shadow_sampler)
+        m_shadow_sampler->Release();
+    release_world_shadow_map();
     release_world_geometry();
     release_depth_buffer();
     release_world_depth_buffer();
@@ -1022,6 +1146,25 @@ bool renderer::create_shaders()
     if (FAILED(hr))
         return false;
 
+    ID3DBlob* world_geometry_blob{};
+    hr = D3DCompile(k_world_shader_source, std::strlen(k_world_shader_source), nullptr, nullptr, nullptr, "GS_World",
+                    "gs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &world_geometry_blob, &error_blob);
+    if (FAILED(hr))
+    {
+        if (error_blob)
+        {
+            game::bound_memory().log.warning("[chams] world GS compile error: {}",
+                                             static_cast<const char*>(error_blob->GetBufferPointer()));
+            error_blob->Release();
+        }
+        return false;
+    }
+    hr = m_device->CreateGeometryShader(world_geometry_blob->GetBufferPointer(), world_geometry_blob->GetBufferSize(),
+                                        nullptr, &m_world_geometry_shader);
+    world_geometry_blob->Release();
+    if (FAILED(hr))
+        return false;
+
     ID3DBlob* resolve_vs_blob{};
     ID3DBlob* resolve_ps_blob{};
     hr = D3DCompile(k_resolve_shader_source, std::strlen(k_resolve_shader_source), nullptr, nullptr, nullptr,
@@ -1121,7 +1264,7 @@ bool renderer::create_shaders()
            SUCCEEDED(bloom_blur_result) && SUCCEEDED(bloom_composite_result) && SUCCEEDED(bloom_2d_vs_result) &&
            SUCCEEDED(bloom_2d_ps_result) && SUCCEEDED(bloom_2d_layout_result) && m_vertex_shader && m_pixel_shader &&
            m_bloom_mask_shader && m_death_geometry_shader && m_world_vertex_shader && m_world_pixel_shader &&
-           m_world_input_layout;
+           m_world_geometry_shader && m_world_input_layout;
 }
 
 bool renderer::create_constant_buffers()
@@ -1174,6 +1317,28 @@ bool renderer::create_pipeline_states()
 
     rs.FillMode = D3D11_FILL_SOLID;
     if (FAILED(m_device->CreateRasterizerState(&rs, &m_rs_world_scissor)))
+        return false;
+
+    // The sun's shadow map of the map: biased away from the light so lit surfaces do not shadow themselves.
+    D3D11_RASTERIZER_DESC shadow_rs{};
+    shadow_rs.FillMode = D3D11_FILL_SOLID;
+    shadow_rs.CullMode = D3D11_CULL_NONE;
+    shadow_rs.DepthClipEnable = TRUE;
+    shadow_rs.DepthBias = 24;
+    shadow_rs.SlopeScaledDepthBias = 2.0f;
+    shadow_rs.DepthBiasClamp = 0.01f;
+    if (FAILED(m_device->CreateRasterizerState(&shadow_rs, &m_rs_shadow)))
+        return false;
+    D3D11_SAMPLER_DESC shadow_sampler{};
+    shadow_sampler.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    shadow_sampler.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+    shadow_sampler.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+    shadow_sampler.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+    shadow_sampler.BorderColor[0] = shadow_sampler.BorderColor[1] = shadow_sampler.BorderColor[2] =
+        shadow_sampler.BorderColor[3] = 1.0f;
+    shadow_sampler.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+    shadow_sampler.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(m_device->CreateSamplerState(&shadow_sampler, &m_shadow_sampler)))
         return false;
 
     D3D11_BLEND_DESC bs{};
@@ -2224,6 +2389,135 @@ void renderer::draw_external(const std::string& model_path, const skinned_mesh& 
     m_context->DrawIndexed(gpu->index_count, 0, 0);
 }
 
+namespace
+{
+// The sun of the No Flash / No Smoke view: high (about 58 degrees) and from one side, so walls and floors read apart.
+constexpr foundation::vec3 k_world_sun{0.434f, 0.304f, 0.848f};
+constexpr UINT k_shadow_map_size = 4096;
+} // namespace
+
+void renderer::release_world_shadow_map()
+{
+    if (m_shadow_srv)
+        m_shadow_srv->Release();
+    if (m_shadow_dsv)
+        m_shadow_dsv->Release();
+    if (m_shadow_texture)
+        m_shadow_texture->Release();
+    m_shadow_srv = nullptr;
+    m_shadow_dsv = nullptr;
+    m_shadow_texture = nullptr;
+    m_shadow_revision = ~0ull;
+}
+
+bool renderer::ensure_world_shadow_map()
+{
+    if (!m_static_world.vertex_buffer || !m_static_world.index_buffer || m_static_world.chunks.empty())
+        return false;
+    if (m_shadow_srv && m_shadow_revision == m_static_world.revision)
+        return true;
+
+    if (!m_shadow_texture)
+    {
+        // 16-bit depth: 32 MB for a 4096 map, enough precision over a map's height.
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = desc.Height = k_shadow_map_size;
+        desc.MipLevels = desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R16_TYPELESS;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+        D3D11_DEPTH_STENCIL_VIEW_DESC dsv{};
+        dsv.Format = DXGI_FORMAT_D16_UNORM;
+        dsv.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+        D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.Format = DXGI_FORMAT_R16_UNORM;
+        srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        srv.Texture2D.MipLevels = 1;
+        if (FAILED(m_device->CreateTexture2D(&desc, nullptr, &m_shadow_texture)) ||
+            FAILED(m_device->CreateDepthStencilView(m_shadow_texture, &dsv, &m_shadow_dsv)) ||
+            FAILED(m_device->CreateShaderResourceView(m_shadow_texture, &srv, &m_shadow_srv)))
+        {
+            release_world_shadow_map();
+            return false;
+        }
+    }
+
+    // An orthographic box around the whole static map, seen along the sun.
+    foundation::vec3 mins{1e30f, 1e30f, 1e30f};
+    foundation::vec3 maxs{-1e30f, -1e30f, -1e30f};
+    for (const auto& chunk : m_static_world.chunks)
+    {
+        mins = {std::min(mins.x, chunk.bounds.mins.x), std::min(mins.y, chunk.bounds.mins.y),
+                std::min(mins.z, chunk.bounds.mins.z)};
+        maxs = {std::max(maxs.x, chunk.bounds.maxs.x), std::max(maxs.y, chunk.bounds.maxs.y),
+                std::max(maxs.z, chunk.bounds.maxs.z)};
+    }
+    const auto forward = k_world_sun * -1.0f;
+    auto right = forward.cross(foundation::vec3{0.0f, 0.0f, 1.0f});
+    right.normalize();
+    const auto up = right.cross(forward);
+    float low[3]{1e30f, 1e30f, 1e30f};
+    float high[3]{-1e30f, -1e30f, -1e30f};
+    for (int corner = 0; corner < 8; ++corner)
+    {
+        const foundation::vec3 point{(corner & 1) ? maxs.x : mins.x, (corner & 2) ? maxs.y : mins.y,
+                                     (corner & 4) ? maxs.z : mins.z};
+        const float projected[3]{point.dot(right), point.dot(up), point.dot(forward)};
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            low[axis] = std::min(low[axis], projected[axis]);
+            high[axis] = std::max(high[axis], projected[axis]);
+        }
+    }
+    const float half_x = std::max((high[0] - low[0]) * 0.5f, 1.0f);
+    const float half_y = std::max((high[1] - low[1]) * 0.5f, 1.0f);
+    const float center_x = (high[0] + low[0]) * 0.5f;
+    const float center_y = (high[1] + low[1]) * 0.5f;
+    const float depth = std::max(high[2] - low[2] + 2.0f, 1.0f);
+    const float near_plane = low[2] - 1.0f;
+    const float rows[3][4]{{right.x / half_x, right.y / half_x, right.z / half_x, -center_x / half_x},
+                           {up.x / half_y, up.y / half_y, up.z / half_y, -center_y / half_y},
+                           {forward.x / depth, forward.y / depth, forward.z / depth, -near_plane / depth}};
+    foundation::matrix4 light{};
+    for (int row = 0; row < 3; ++row)
+        for (int column = 0; column < 4; ++column)
+        {
+            light[row][column] = rows[row][column];
+            m_shadow_matrix[row][column] = rows[row][column];
+        }
+    light[3][0] = light[3][1] = light[3][2] = 0.0f;
+    light[3][3] = 1.0f;
+    m_shadow_matrix[3][0] = m_shadow_matrix[3][1] = m_shadow_matrix[3][2] = 0.0f;
+    m_shadow_matrix[3][3] = 1.0f;
+
+    update_view_projection(light, k_world_sun);
+    ID3D11ShaderResourceView* null_srv{};
+    m_context->PSSetShaderResources(0, 1, &null_srv);
+    m_context->OMSetRenderTargets(0, nullptr, m_shadow_dsv);
+    m_context->ClearDepthStencilView(m_shadow_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    D3D11_VIEWPORT viewport{};
+    viewport.Width = viewport.Height = static_cast<float>(k_shadow_map_size);
+    viewport.MaxDepth = 1.0f;
+    m_context->RSSetViewports(1, &viewport);
+    m_context->IASetInputLayout(m_world_input_layout);
+    m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_context->VSSetShader(m_world_vertex_shader, nullptr, 0);
+    m_context->VSSetConstantBuffers(0, 1, &m_cb_view_projection);
+    m_context->GSSetShader(nullptr, nullptr, 0);
+    m_context->PSSetShader(nullptr, nullptr, 0);
+    m_context->RSSetState(m_rs_shadow);
+    m_context->OMSetDepthStencilState(m_world_depth_state, 0);
+    const UINT stride = sizeof(foundation::vec3);
+    const UINT offset{};
+    m_context->IASetVertexBuffers(0, 1, &m_static_world.vertex_buffer, &stride, &offset);
+    m_context->IASetIndexBuffer(m_static_world.index_buffer, DXGI_FORMAT_R32_UINT, 0);
+    m_context->DrawIndexed(m_static_world.index_count, 0, 0);
+    m_context->OMSetRenderTargets(0, nullptr, nullptr);
+    m_shadow_revision = m_static_world.revision;
+    return true;
+}
+
 void renderer::render_world_effects(ID3D11RenderTargetView* backbuffer_rtv, const UINT target_width,
                                     const UINT target_height)
 {
@@ -2249,12 +2543,11 @@ void renderer::render_world_effects(ID3D11RenderTargetView* backbuffer_rtv, cons
             {
                 if (projectile.subtype != game::projectile_kind::smoke_grenade || !projectile.smoke_active)
                     continue;
-                auto center = projectile.smoke_detonation_pos;
-                if (center.length_sqr() <= 0.001f)
-                    center = projectile.origin;
-                if (!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z))
+                // The same smoke zone the aim and visibility checks use.
+                const auto zone = game::smoke_zone_of(projectile);
+                if (!std::isfinite(zone.center.x) || !std::isfinite(zone.center.y) || !std::isfinite(zone.center.z))
                     continue;
-                smoke_spheres.push_back({center, projectile.smoke_volume_received ? 145.0f : 160.0f});
+                smoke_spheres.push_back({zone.center, zone.radius});
             }
         }
         std::ranges::sort(smoke_spheres, [&](const smoke_sphere& lhs, const smoke_sphere& rhs)
@@ -2276,103 +2569,27 @@ void renderer::render_world_effects(ID3D11RenderTargetView* backbuffer_rtv, cons
     }
     if (!draw_flash_world && smoke_spheres.empty())
         return;
-    if (!ensure_world_geometry() || !ensure_depth_buffer(target_width, target_height))
+    if (!ensure_world_geometry())
         return;
 
+    // Flashed: the map around the eye. Otherwise: the surfaces the smokes hide (the view to them passes through one).
+    const bool clip_to_smoke = !draw_flash_world;
+    const auto style = std::clamp(clip_to_smoke ? smoke_cfg.style : flash_cfg.style, 0,
+                                  static_cast<int>(config::visual_profile::world_style_count) - 1);
+    const auto max_distance = std::max(clip_to_smoke ? smoke_cfg.max_distance : flash_cfg.max_distance, 1.0f);
+    const bool shadows = (clip_to_smoke ? smoke_cfg.shadows : flash_cfg.shadows) &&
+                         style != config::visual_profile::world_lines && ensure_world_shadow_map();
+
     const auto view_projection = game::camera().matrix();
-    update_view_projection(view_projection, eye);
-    m_context->ClearDepthStencilView(m_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    const auto max_distance_sqr = max_distance * max_distance;
 
-    float selection_distance = draw_flash_world ? std::max(flash_cfg.max_distance, 1.0f) : 0.0f;
+    // Inside a smoke every view crosses it, so the whole screen is affected; otherwise only the smokes' screen area.
+    bool eye_in_smoke{};
     for (const auto& sphere : smoke_spheres)
-        selection_distance = std::max(selection_distance, eye.distance(sphere.center) + sphere.radius);
-    const auto selection_distance_sqr = selection_distance * selection_distance;
-
-    const auto aabb_distance_sqr = [&](const world_bounds& bounds)
-    {
-        float result{};
-        for (int axis = 0; axis < 3; ++axis)
-        {
-            const float value = axis == 0 ? eye.x : axis == 1 ? eye.y : eye.z;
-            const float low = axis == 0 ? bounds.mins.x : axis == 1 ? bounds.mins.y : bounds.mins.z;
-            const float high = axis == 0 ? bounds.maxs.x : axis == 1 ? bounds.maxs.y : bounds.maxs.z;
-            const float delta = value < low ? low - value : value > high ? value - high : 0.0f;
-            result += delta * delta;
-        }
-        return result;
-    };
-    const auto intersects_frustum = [&](const world_bounds& bounds)
-    {
-        bool left{true}, right{true}, bottom{true}, top{true};
-        bool near_plane{true}, far_plane{true};
-        for (int corner = 0; corner < 8; ++corner)
-        {
-            const foundation::vec3 point{(corner & 1) ? bounds.maxs.x : bounds.mins.x,
-                                         (corner & 2) ? bounds.maxs.y : bounds.mins.y,
-                                         (corner & 4) ? bounds.maxs.z : bounds.mins.z};
-            const auto x = view_projection[0][0] * point.x + view_projection[0][1] * point.y +
-                           view_projection[0][2] * point.z + view_projection[0][3];
-            const auto y = view_projection[1][0] * point.x + view_projection[1][1] * point.y +
-                           view_projection[1][2] * point.z + view_projection[1][3];
-            const auto z = view_projection[2][0] * point.x + view_projection[2][1] * point.y +
-                           view_projection[2][2] * point.z + view_projection[2][3];
-            const auto w = view_projection[3][0] * point.x + view_projection[3][1] * point.y +
-                           view_projection[3][2] * point.z + view_projection[3][3];
-            left &= x < -w;
-            right &= x > w;
-            bottom &= y < -w;
-            top &= y > w;
-            near_plane &= z < 0.0f;
-            far_plane &= z > w;
-        }
-        return !(left || right || bottom || top || near_plane || far_plane);
-    };
-
-    using draw_range = frame_cache::draw_range;
-    auto& static_chunks = m_frame_cache->static_chunks;
-    auto& dynamic_chunks = m_frame_cache->dynamic_chunks;
-    const auto select_chunks = [&](const world_geometry& geometry, std::vector<draw_range>& selected)
-    {
-        selected.clear();
-        if (selected.capacity() < geometry.chunks.size())
-            selected.reserve(geometry.chunks.size());
-        for (const auto& chunk : geometry.chunks)
-        {
-            if (aabb_distance_sqr(chunk.bounds) > selection_distance_sqr || !intersects_frustum(chunk.bounds))
-                continue;
-            if (!selected.empty() && selected.back().first_index + selected.back().index_count == chunk.first_index)
-            {
-                selected.back().index_count += chunk.index_count;
-            }
-            else
-            {
-                selected.push_back({chunk.first_index, chunk.index_count});
-            }
-        }
-    };
-    select_chunks(m_static_world, static_chunks);
-    select_chunks(m_dynamic_world, dynamic_chunks);
-
-    const auto bind_geometry = [&](const world_geometry& geometry)
-    {
-        if (!geometry.vertex_buffer || !geometry.index_buffer || !geometry.index_count)
-            return false;
-        const UINT stride = sizeof(foundation::vec3);
-        const UINT offset{};
-        m_context->IASetVertexBuffers(0, 1, &geometry.vertex_buffer, &stride, &offset);
-        m_context->IASetIndexBuffer(geometry.index_buffer, DXGI_FORMAT_R32_UINT, 0);
-        return true;
-    };
-    const auto draw_selected = [&](const world_geometry& geometry, const std::vector<draw_range>& selected)
-    {
-        if (!bind_geometry(geometry))
-            return;
-        for (const auto& chunk : selected)
-            m_context->DrawIndexed(chunk.index_count, chunk.first_index, 0);
-    };
-
+        eye_in_smoke |=
+            game::smoke_zone{sphere.center, sphere.radius * 1.1f, game::k_smoke_zone_height * 1.1f}.contains(eye);
     D3D11_RECT effect_scissor{0, 0, static_cast<LONG>(target_width), static_cast<LONG>(target_height)};
-    const bool smoke_scissor = !draw_flash_world && !smoke_spheres.empty();
+    bool smoke_scissor = clip_to_smoke && !eye_in_smoke;
     if (smoke_scissor)
     {
         float min_x = static_cast<float>(target_width);
@@ -2383,11 +2600,13 @@ void renderer::render_world_effects(ID3D11RenderTargetView* backbuffer_rtv, cons
         bool crosses_near{};
         for (const auto& sphere : smoke_spheres)
         {
+            const auto reach = sphere.radius * 1.1f; // the soft rim of the shader
+            const auto rise = game::k_smoke_zone_height * 1.1f;
             for (int corner = 0; corner < 8; ++corner)
             {
-                const foundation::vec3 point{sphere.center.x + ((corner & 1) ? sphere.radius : -sphere.radius),
-                                             sphere.center.y + ((corner & 2) ? sphere.radius : -sphere.radius),
-                                             sphere.center.z + ((corner & 4) ? sphere.radius : -sphere.radius)};
+                const foundation::vec3 point{sphere.center.x + ((corner & 1) ? reach : -reach),
+                                             sphere.center.y + ((corner & 2) ? reach : -reach),
+                                             sphere.center.z + ((corner & 4) ? rise : -rise)};
                 const auto x = view_projection[0][0] * point.x + view_projection[0][1] * point.y +
                                view_projection[0][2] * point.z + view_projection[0][3];
                 const auto y = view_projection[1][0] * point.x + view_projection[1][1] * point.y +
@@ -2408,14 +2627,134 @@ void renderer::render_world_effects(ID3D11RenderTargetView* backbuffer_rtv, cons
                 valid = true;
             }
         }
-        if (valid && !crosses_near)
+        if (!valid)
+            return; // every smoke is behind the eye
+        if (crosses_near)
+            smoke_scissor = false;
+        else
         {
             effect_scissor.left = std::clamp<LONG>(static_cast<LONG>(std::floor(min_x)) - 2, 0, target_width);
             effect_scissor.top = std::clamp<LONG>(static_cast<LONG>(std::floor(min_y)) - 2, 0, target_height);
             effect_scissor.right = std::clamp<LONG>(static_cast<LONG>(std::ceil(max_x)) + 2, 0, target_width);
             effect_scissor.bottom = std::clamp<LONG>(static_cast<LONG>(std::ceil(max_y)) + 2, 0, target_height);
+            if (effect_scissor.left >= effect_scissor.right || effect_scissor.top >= effect_scissor.bottom)
+                return;
         }
     }
+
+    const auto aabb_distance_sqr = [&](const world_bounds& bounds)
+    {
+        float result{};
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            const float value = axis == 0 ? eye.x : axis == 1 ? eye.y : eye.z;
+            const float low = axis == 0 ? bounds.mins.x : axis == 1 ? bounds.mins.y : bounds.mins.z;
+            const float high = axis == 0 ? bounds.maxs.x : axis == 1 ? bounds.maxs.y : bounds.maxs.z;
+            const float delta = value < low ? low - value : value > high ? value - high : 0.0f;
+            result += delta * delta;
+        }
+        return result;
+    };
+    // In the frustum, and (with a smoke scissor) on screen inside it: a chunk far behind a smoke still counts.
+    const auto visible_on_screen = [&](const world_bounds& bounds)
+    {
+        bool left{true}, right{true}, bottom{true}, top{true};
+        bool near_plane{true}, far_plane{true};
+        bool behind{};
+        float min_x{1e30f}, min_y{1e30f}, max_x{-1e30f}, max_y{-1e30f};
+        for (int corner = 0; corner < 8; ++corner)
+        {
+            const foundation::vec3 point{(corner & 1) ? bounds.maxs.x : bounds.mins.x,
+                                         (corner & 2) ? bounds.maxs.y : bounds.mins.y,
+                                         (corner & 4) ? bounds.maxs.z : bounds.mins.z};
+            const auto x = view_projection[0][0] * point.x + view_projection[0][1] * point.y +
+                           view_projection[0][2] * point.z + view_projection[0][3];
+            const auto y = view_projection[1][0] * point.x + view_projection[1][1] * point.y +
+                           view_projection[1][2] * point.z + view_projection[1][3];
+            const auto z = view_projection[2][0] * point.x + view_projection[2][1] * point.y +
+                           view_projection[2][2] * point.z + view_projection[2][3];
+            const auto w = view_projection[3][0] * point.x + view_projection[3][1] * point.y +
+                           view_projection[3][2] * point.z + view_projection[3][3];
+            left &= x < -w;
+            right &= x > w;
+            bottom &= y < -w;
+            top &= y > w;
+            near_plane &= z < 0.0f;
+            far_plane &= z > w;
+            if (w <= 0.001f)
+            {
+                behind = true;
+                continue;
+            }
+            const auto screen_x = (x / w * 0.5f + 0.5f) * target_width;
+            const auto screen_y = (0.5f - y / w * 0.5f) * target_height;
+            min_x = std::min(min_x, screen_x);
+            min_y = std::min(min_y, screen_y);
+            max_x = std::max(max_x, screen_x);
+            max_y = std::max(max_y, screen_y);
+        }
+        if (left || right || bottom || top || near_plane || far_plane)
+            return false;
+        if (!smoke_scissor || behind)
+            return true;
+        return max_x >= static_cast<float>(effect_scissor.left) && min_x <= static_cast<float>(effect_scissor.right) &&
+               max_y >= static_cast<float>(effect_scissor.top) && min_y <= static_cast<float>(effect_scissor.bottom);
+    };
+
+    using draw_range = frame_cache::draw_range;
+    auto& static_chunks = m_frame_cache->static_chunks;
+    auto& dynamic_chunks = m_frame_cache->dynamic_chunks;
+    const auto select_chunks = [&](const world_geometry& geometry, std::vector<draw_range>& selected)
+    {
+        selected.clear();
+        if (selected.capacity() < geometry.chunks.size())
+            selected.reserve(geometry.chunks.size());
+        for (const auto& chunk : geometry.chunks)
+        {
+            if (aabb_distance_sqr(chunk.bounds) > max_distance_sqr || !visible_on_screen(chunk.bounds))
+                continue;
+            if (!selected.empty() && selected.back().first_index + selected.back().index_count == chunk.first_index)
+                selected.back().index_count += chunk.index_count;
+            else
+                selected.push_back({chunk.first_index, chunk.index_count});
+        }
+    };
+    select_chunks(m_static_world, static_chunks);
+    select_chunks(m_dynamic_world, dynamic_chunks);
+    if (static_chunks.empty() && dynamic_chunks.empty())
+        return;
+
+    const auto bind_geometry = [&](const world_geometry& geometry)
+    {
+        if (!geometry.vertex_buffer || !geometry.index_buffer || !geometry.index_count)
+            return false;
+        const UINT stride = sizeof(foundation::vec3);
+        const UINT offset{};
+        m_context->IASetVertexBuffers(0, 1, &geometry.vertex_buffer, &stride, &offset);
+        m_context->IASetIndexBuffer(geometry.index_buffer, DXGI_FORMAT_R32_UINT, 0);
+        return true;
+    };
+    const auto draw_selected = [&](const world_geometry& geometry, const std::vector<draw_range>& selected)
+    {
+        if (!bind_geometry(geometry))
+            return;
+        for (const auto& chunk : selected)
+            m_context->DrawIndexed(chunk.index_count, chunk.first_index, 0);
+    };
+
+    // Anti-aliased through the multisampled targets when the device has them, resolved onto the overlay at the end.
+    const bool use_msaa = ensure_msaa_targets(target_width, target_height);
+    if (!use_msaa && !ensure_depth_buffer(target_width, target_height))
+        return;
+    ID3D11RenderTargetView* const color_target = use_msaa ? m_msaa_rtv : backbuffer_rtv;
+    ID3D11DepthStencilView* const depth_target = use_msaa ? m_msaa_dsv : m_dsv;
+    if (use_msaa)
+    {
+        constexpr float transparent[4]{};
+        m_context->ClearRenderTargetView(m_msaa_rtv, transparent);
+    }
+    m_context->ClearDepthStencilView(depth_target, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    update_view_projection(view_projection, eye);
 
     D3D11_VIEWPORT viewport{};
     viewport.Width = static_cast<float>(target_width);
@@ -2428,59 +2767,81 @@ void renderer::render_world_effects(ID3D11RenderTargetView* backbuffer_rtv, cons
     m_context->VSSetShader(m_world_vertex_shader, nullptr, 0);
     m_context->GSSetShader(nullptr, nullptr, 0);
     m_context->VSSetConstantBuffers(0, 1, &m_cb_view_projection);
+    m_context->RSSetState(m_rs_world_scissor);
+    m_context->RSSetScissorRects(1, &effect_scissor);
+
+    // Depth of the nearest surface first, then the colour pass shades only that surface (no layers blended twice).
     m_context->PSSetShader(nullptr, nullptr, 0);
-    m_context->OMSetRenderTargets(0, nullptr, m_dsv);
+    m_context->OMSetRenderTargets(0, nullptr, depth_target);
     m_context->OMSetDepthStencilState(m_world_depth_state, 0);
-    m_context->RSSetState(smoke_scissor ? m_rs_world_scissor : m_rs_solid);
-    if (smoke_scissor)
-        m_context->RSSetScissorRects(1, &effect_scissor);
     draw_selected(m_static_world, static_chunks);
     draw_selected(m_dynamic_world, dynamic_chunks);
 
-    const auto render_wireframe =
-        [&](const render::draw::rgba color, const float alpha_scale, const float max_distance, const bool clip_to_smoke)
+    const auto& surface = clip_to_smoke ? smoke_cfg.surface_color : flash_cfg.surface_color;
+    const auto& line = clip_to_smoke ? smoke_cfg.wireframe_color : flash_cfg.wireframe_color;
+    cb_world_effect constants{};
+    constants.surface_color[0] = surface.r / 255.0f;
+    constants.surface_color[1] = surface.g / 255.0f;
+    constants.surface_color[2] = surface.b / 255.0f;
+    constants.surface_color[3] = surface.a / 255.0f;
+    constants.line_color[0] = line.r / 255.0f;
+    constants.line_color[1] = line.g / 255.0f;
+    constants.line_color[2] = line.b / 255.0f;
+    constants.line_color[3] = line.a / 255.0f;
+    constants.eye_and_distance[0] = eye.x;
+    constants.eye_and_distance[1] = eye.y;
+    constants.eye_and_distance[2] = eye.z;
+    constants.eye_and_distance[3] = max_distance;
+    constants.smoke_count = clip_to_smoke ? static_cast<std::uint32_t>(smoke_spheres.size()) : 0u;
+    constants.clip_to_smoke = clip_to_smoke ? 1u : 0u;
+    constants.style = static_cast<std::uint32_t>(style);
+    constants.shadows = shadows ? 1u : 0u;
+    for (std::size_t i = 0; i < smoke_spheres.size(); ++i)
     {
-        cb_world_effect constants{};
-        constants.color[0] = color.r / 255.0f;
-        constants.color[1] = color.g / 255.0f;
-        constants.color[2] = color.b / 255.0f;
-        constants.color[3] = (color.a / 255.0f) * alpha_scale;
-        constants.eye_and_distance[0] = eye.x;
-        constants.eye_and_distance[1] = eye.y;
-        constants.eye_and_distance[2] = eye.z;
-        constants.eye_and_distance[3] = max_distance;
-        constants.smoke_count = static_cast<std::uint32_t>(smoke_spheres.size());
-        constants.clip_to_smoke = clip_to_smoke ? 1u : 0u;
-        for (std::size_t i = 0; i < smoke_spheres.size(); ++i)
-        {
-            constants.smoke_spheres[i][0] = smoke_spheres[i].center.x;
-            constants.smoke_spheres[i][1] = smoke_spheres[i].center.y;
-            constants.smoke_spheres[i][2] = smoke_spheres[i].center.z;
-            constants.smoke_spheres[i][3] = smoke_spheres[i].radius;
-        }
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        if (FAILED(m_context->Map(m_cb_world_effect, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
-            return;
-        std::memcpy(mapped.pData, &constants, sizeof(constants));
-        m_context->Unmap(m_cb_world_effect, 0);
+        constants.smoke_spheres[i][0] = smoke_spheres[i].center.x;
+        constants.smoke_spheres[i][1] = smoke_spheres[i].center.y;
+        constants.smoke_spheres[i][2] = smoke_spheres[i].center.z;
+        constants.smoke_spheres[i][3] = smoke_spheres[i].radius;
+    }
+    constants.sun_direction[0] = k_world_sun.x;
+    constants.sun_direction[1] = k_world_sun.y;
+    constants.sun_direction[2] = k_world_sun.z;
+    constants.sun_direction[3] = 1.0f / static_cast<float>(k_shadow_map_size);
+    constants.line_params[0] = std::clamp(clip_to_smoke ? smoke_cfg.line_width : flash_cfg.line_width, 0.5f, 4.0f);
+    constants.line_params[1] = clip_to_smoke ? 1.0f : blindness;
+    constants.line_params[2] = game::k_smoke_zone_radius / game::k_smoke_zone_height;
+    std::memcpy(constants.light_view_projection, m_shadow_matrix, sizeof(m_shadow_matrix));
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(m_context->Map(m_cb_world_effect, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        return;
+    std::memcpy(mapped.pData, &constants, sizeof(constants));
+    m_context->Unmap(m_cb_world_effect, 0);
 
-        m_context->OMSetRenderTargets(1, &backbuffer_rtv, m_dsv);
-        m_context->PSSetShader(m_world_pixel_shader, nullptr, 0);
-        m_context->PSSetConstantBuffers(1, 1, &m_cb_world_effect);
-        m_context->OMSetDepthStencilState(m_depth_state_read_only, 0);
-        m_context->RSSetState(clip_to_smoke && smoke_scissor ? m_rs_wireframe_scissor : m_rs_wireframe);
-        if (clip_to_smoke && smoke_scissor)
-            m_context->RSSetScissorRects(1, &effect_scissor);
-        const float blend_factor[4]{};
-        m_context->OMSetBlendState(m_blend_state, blend_factor, 0xFFFFFFFF);
-        draw_selected(m_static_world, static_chunks);
-        draw_selected(m_dynamic_world, dynamic_chunks);
-    };
+    m_context->OMSetRenderTargets(1, &color_target, depth_target);
+    m_context->GSSetShader(m_world_geometry_shader, nullptr, 0);
+    m_context->PSSetShader(m_world_pixel_shader, nullptr, 0);
+    m_context->PSSetConstantBuffers(1, 1, &m_cb_world_effect);
+    ID3D11ShaderResourceView* shadow_view = shadows ? m_shadow_srv : nullptr;
+    m_context->PSSetShaderResources(0, 1, &shadow_view);
+    m_context->PSSetSamplers(0, 1, &m_shadow_sampler);
+    m_context->OMSetDepthStencilState(m_depth_state_read_only, 0);
+    const float blend_factor[4]{};
+    m_context->OMSetBlendState(m_blend_state, blend_factor, 0xFFFFFFFF);
+    draw_selected(m_static_world, static_chunks);
+    draw_selected(m_dynamic_world, dynamic_chunks);
 
-    if (draw_flash_world)
-        render_wireframe(flash_cfg.wireframe_color, blindness, std::max(flash_cfg.max_distance, 1.0f), false);
-    if (!smoke_spheres.empty() && !draw_flash_world)
-        render_wireframe(smoke_cfg.wireframe_color, 1.0f, 0.0f, true);
+    m_context->GSSetShader(nullptr, nullptr, 0);
+    ID3D11ShaderResourceView* null_srv{};
+    m_context->PSSetShaderResources(0, 1, &null_srv);
+    m_context->OMSetRenderTargets(0, nullptr, nullptr);
+    if (use_msaa)
+    {
+        const auto ndc_x = [&](const LONG pixel) { return static_cast<float>(pixel) / target_width * 2.0f - 1.0f; };
+        const auto ndc_y = [&](const LONG pixel) { return 1.0f - static_cast<float>(pixel) / target_height * 2.0f; };
+        std::vector<screen_volume> volumes{{ndc_x(effect_scissor.left), ndc_y(effect_scissor.bottom),
+                                            ndc_x(effect_scissor.right), ndc_y(effect_scissor.top), 1.0f}};
+        resolve_msaa(backbuffer_rtv, volumes);
+    }
 }
 
 void renderer::render_frame(ID3D11RenderTargetView* backbuffer_rtv, const UINT target_width, const UINT target_height,
@@ -2767,7 +3128,8 @@ void renderer::render_frame(ID3D11RenderTargetView* backbuffer_rtv, const UINT t
             {
                 const auto position = d.bones->get_position(static_cast<std::uint32_t>(id));
                 const auto rotation = d.bones->get_rotation(static_cast<std::uint32_t>(id));
-                skin_matrices.push_back(compose_world_bone(position, rotation) * d.mesh->bones[id].inverse_bind);
+                const auto scale = d.bones->get_scale(static_cast<std::uint32_t>(id));
+                skin_matrices.push_back(compose_world_bone(position, rotation, scale) * d.mesh->bones[id].inverse_bind);
                 d.bounds.mins.x = std::min(d.bounds.mins.x, position.x);
                 d.bounds.mins.y = std::min(d.bounds.mins.y, position.y);
                 d.bounds.mins.z = std::min(d.bounds.mins.z, position.z);
@@ -2818,14 +3180,7 @@ void renderer::render_frame(ID3D11RenderTargetView* backbuffer_rtv, const UINT t
         {
             if (projectile.subtype != game::projectile_kind::smoke_grenade || !projectile.smoke_active)
                 continue;
-            auto center = projectile.smoke_detonation_pos;
-            if (center.dot(center) <= 0.001f)
-                center = projectile.origin;
-            const auto t = std::clamp((center - eye).dot(ray) / length_sqr, 0.0f, 1.0f);
-            const auto closest = eye + ray * t;
-            const auto delta = center - closest;
-            const auto radius = projectile.smoke_volume_received ? 145.0f : 160.0f;
-            if (delta.dot(delta) <= radius * radius)
+            if (game::smoke_zone_of(projectile).crosses(eye, player->collision_center))
                 return true;
         }
         return false;

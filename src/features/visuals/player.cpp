@@ -469,8 +469,9 @@ void player_t::paint_threat_highlights(render::draw::draw_list& draw_list, const
             const auto& bone_data = bones.bones[static_cast<std::size_t>(target_hb->bone)];
 
             // mins/maxs are the two capsule axis points in bone space, not a bounding box.
-            const auto cap_a = bone_data.position + foundation::rotate(bone_data.rotation, target_hb->mins);
-            const auto cap_b = bone_data.position + foundation::rotate(bone_data.rotation, target_hb->maxs);
+            const auto capsule = game::place_hitbox(bone_data, *target_hb);
+            const auto cap_a = capsule.start;
+            const auto cap_b = capsule.end;
             const auto center_world = (cap_a + cap_b) * 0.5f;
 
             const auto sa = game::camera().project(cap_a);
@@ -497,7 +498,7 @@ void player_t::paint_threat_highlights(render::draw::draw_list& draw_list, const
                 perp = perp / pl;
             }
 
-            const auto perp_world = perp * target_hb->radius;
+            const auto perp_world = perp * capsule.radius;
             const auto p_left = game::camera().project(center_world + perp_world);
             const auto p_right = game::camera().project(center_world - perp_world);
 
@@ -672,9 +673,9 @@ void player_t::paint_head_marker(render::draw::draw_list& draw_list, const game:
         return;
     }
 
-    const auto& bone_data = bones.bones[head_hb->bone];
-    const auto center_local = (head_hb->mins + head_hb->maxs) * 0.5f;
-    const auto center_world = bone_data.position + foundation::rotate(bone_data.rotation, center_local);
+    // The head grows or shrinks with the big head mutator: the circle follows the scaled hitbox.
+    const auto head = game::place_hitbox(bones.bones[head_hb->bone], *head_hb);
+    const auto center_world = head.center();
 
     const auto screen_pos = game::camera().project(center_world);
     if (!game::camera().projection_valid(screen_pos))
@@ -695,7 +696,7 @@ void player_t::paint_head_marker(render::draw::draw_list& draw_list, const game:
         perp.normalize();
     }
 
-    const auto edge_world = center_world + perp * head_hb->radius;
+    const auto edge_world = center_world + perp * head.radius;
     const auto edge_screen = game::camera().project(edge_world);
 
     if (!game::camera().projection_valid(edge_screen))

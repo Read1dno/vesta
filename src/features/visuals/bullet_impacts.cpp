@@ -258,14 +258,13 @@ struct history_candidate
             continue;
         }
         tested_hitbox = true;
-        const auto start = bone.position + bone.rotation.apply(hitbox.mins);
-        const auto end = bone.position + bone.rotation.apply(hitbox.maxs);
-        if (hitbox.radius > 0.0f)
+        const auto capsule = game::place_hitbox(bone, hitbox);
+        if (capsule.radius > 0.0f)
         {
             // Impact records are decal/contact points, so allow a small skin-width
             // around the exact capsule surface to absorb snapshot timing differences.
-            const auto radius = hitbox.radius + 5.0f;
-            if (point_segment_distance_sqr(impact, start, end) <= radius * radius)
+            const auto radius = capsule.radius + 5.0f;
+            if (point_segment_distance_sqr(impact, capsule.start, capsule.end) <= radius * radius)
             {
                 return true;
             }
@@ -274,8 +273,8 @@ struct history_candidate
         {
             // Non-capsule hitboxes are conservatively represented by their rotated
             // bounding sphere. This path is rare for player models.
-            const auto center = bone.position + bone.rotation.apply((hitbox.mins + hitbox.maxs) * 0.5f);
-            const auto radius = (hitbox.maxs - hitbox.mins).length() * 0.5f + 5.0f;
+            const auto center = capsule.center();
+            const auto radius = (capsule.end - capsule.start).length() * 0.5f + 5.0f;
             if (impact.distance_sqr(center) <= radius * radius)
             {
                 return true;
@@ -986,7 +985,7 @@ bool bullet_impacts_t::bullet_hit_endpoint(std::uintptr_t entity, const foundati
             if (bones.is_valid())
             {
                 const auto bone = bones.bones[static_cast<std::size_t>(bone_index)];
-                const auto candidate = bone.position + bone.rotation.apply(local_point);
+                const auto candidate = bone.to_world(local_point);
                 if (plausible_segment(start, candidate))
                 {
                     end = candidate;

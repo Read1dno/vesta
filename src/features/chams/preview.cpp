@@ -729,6 +729,11 @@ ID3D11ShaderResourceView* preview::render(assets::vpk_archive& vpk, const std::s
     }
 
     m_mesh = &mesh;
+    if (m_hitboxes_model != model_path)
+    {
+        m_hitboxes_model = model_path;
+        m_hitboxes = extract_hitboxes(vpk, model_path, mesh);
+    }
     update_camera(mesh, width, height);
 
     const auto time = static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(

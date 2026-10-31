@@ -345,18 +345,38 @@ struct visual_profile
         float safe_zone_draw_radius{1200.0f}; // only submit the nearby contour around the local player
     } m_bomb{};
 
+    // How No Flash / No Smoke draw the map: lit surfaces (flat normals, sun, sky light, shadows), the same with their
+    // triangle edges, or the edges alone. The edges are drawn in the surface shader, so they never flicker.
+    enum world_style : int
+    {
+        world_shaded,
+        world_shaded_lines,
+        world_lines,
+        world_style_count
+    };
+
     struct no_flash
     {
         bool enabled{true};
         float max_distance{1000.0f};
+        int style{world_shaded};
+        bool shadows{true};
+        float line_width{1.0f}; // pixels
         foundation::rgba background_color{0, 0, 0, 255};
-        foundation::rgba wireframe_color{200, 200, 200, 150};
+        foundation::rgba surface_color{178, 186, 198, 255};
+        foundation::rgba wireframe_color{210, 215, 225, 70}; // the edge lines
     } m_no_flash{};
 
     struct no_smoke
     {
         bool enabled{false};
-        foundation::rgba wireframe_color{190, 210, 220, 180};
+        // Surfaces up to this far are shown where the view to them passes through a smoke.
+        float max_distance{4000.0f};
+        int style{world_shaded};
+        bool shadows{true};
+        float line_width{1.0f};
+        foundation::rgba surface_color{172, 186, 204, 215};
+        foundation::rgba wireframe_color{200, 215, 230, 70};
     } m_no_smoke{};
 
     struct crosshair

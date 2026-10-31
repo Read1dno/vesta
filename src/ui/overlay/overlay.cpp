@@ -239,6 +239,8 @@ bool overlay_t::launch(foundation::shutdown_action quiesce)
     m_use_gpu = true;
     m_frame_latency_unreliable = false;
     m_nonwaitable_stall_reported = false;
+    m_latency_timeouts = 0;
+    m_latency_fallback_reported = false;
     m_ui_reference_width = 0;
     m_ui_reference_height = 0;
     m_ui_fullscreen_canvas = false;
@@ -386,7 +388,11 @@ bool overlay_t::wait_for_signal(HANDLE signal, std::uint64_t observed_transition
         const auto wait_result =
             ::MsgWaitForMultipleObjectsEx(1, &signal, wait_timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if (wait_result == WAIT_OBJECT_0)
+        {
+            if (frame_latency_signal)
+                m_latency_timeouts = 0;
             return pump_messages() && reconcile_transition();
+        }
         if (wait_result == WAIT_OBJECT_0 + 1)
         {
             if (!pump_messages() || !reconcile_transition())
@@ -395,11 +401,11 @@ bool overlay_t::wait_for_signal(HANDLE signal, std::uint64_t observed_transition
         }
         if (wait_result == WAIT_TIMEOUT && frame_latency_signal)
         {
-            if (!m_frame_latency_unreliable)
-            {
-                m_frame_latency_unreliable = true;
-                write_overlay_lifecycle_event(diagnostics::event::presentation_frame_latency_stalled);
-            }
+            // One late signal (a loading hitch, a busy GPU) only lets this frame go ahead. Only a signal that stays
+            // silent for several frames in a row switches to timer pacing, and that is probed again later
+            // (enter_latency_fallback).
+            if (++m_latency_timeouts >= k_latency_timeouts_for_fallback)
+                enter_latency_fallback(diagnostics::event::presentation_frame_latency_stalled);
             return reconcile_transition();
         }
         return false;
@@ -472,11 +478,40 @@ void overlay_t::apply_pending_file_request()
     }
 }
 
+// Switches to timer pacing at the monitor rate while the swap chain's latency signal is silent; pace_frame() probes the
+// signal every two seconds and returns to it. Journaled once per session.
+void overlay_t::enter_latency_fallback(const diagnostics::event reason)
+{
+    if (m_frame_latency_unreliable)
+        return;
+    m_frame_latency_unreliable = true;
+    m_latency_timeouts = 0;
+    m_latency_probe_at = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    if (!m_latency_fallback_reported)
+    {
+        m_latency_fallback_reported = true;
+        write_overlay_lifecycle_event(reason);
+    }
+}
+
 // Holds the frame back for the swap chain's latency signal and the frame-rate cap (the user's limit, or the monitor
 // rate when the latency signal is unreliable). False when the frame must be skipped.
 bool overlay_t::pace_frame(foundation::frame_schedule& clock, HANDLE timer)
 {
     const auto& general = config::general_settings;
+    // While timer pacing, the latency signal is checked every two seconds; once it is signalled the frames follow the
+    // compositor again.
+    if (m_frame_latency_unreliable && m_frame_latency_waitable &&
+        std::chrono::steady_clock::now() >= m_latency_probe_at)
+    {
+        m_latency_probe_at = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        if (::WaitForSingleObject(m_frame_latency_waitable, 0) == WAIT_OBJECT_0)
+        {
+            m_frame_latency_unreliable = false;
+            m_latency_timeouts = 0;
+            return true; // the signal just consumed paces this frame
+        }
+    }
     const auto rate = general.limit_fps && general.fps_limit > 0
                           ? static_cast<std::uint32_t>(general.fps_limit)
                           : (m_frame_latency_unreliable ? std::max(m_window_tracker.refresh_rate(), 60u) : 0u);
@@ -645,10 +680,7 @@ overlay_t::present_outcome overlay_t::present_frame(ui::present_recovery& recove
     if (std::chrono::steady_clock::now() - present_started > std::chrono::milliseconds(250))
     {
         if (!m_frame_latency_unreliable)
-        {
-            m_frame_latency_unreliable = true;
-            write_overlay_lifecycle_event(diagnostics::event::presentation_present_stalled);
-        }
+            enter_latency_fallback(diagnostics::event::presentation_present_stalled);
         else if (!m_nonwaitable_stall_reported)
         {
             m_nonwaitable_stall_reported = true;

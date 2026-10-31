@@ -47,8 +47,6 @@ struct point_buffer
 [[nodiscard]] point_buffer build_aim_points(const game::skeleton_reader::data::bone& bone,
                                             const game::hitbox_catalog::entry& hb, bool multipoint, int part,
                                             const config::combat_profile::multipoint_settings& settings);
-[[nodiscard]] bool segment_intersects_sphere(const foundation::vec3& start, const foundation::vec3& end,
-                                             const foundation::vec3& center, float radius);
 // Whether a line crosses an active smoke cloud (or the projectile list is unavailable).
 [[nodiscard]] bool line_through_smoke(const foundation::vec3& start, const foundation::vec3& end);
 // Why the local player may not shoot now under the legit checks (airborne, flashed), or none.

@@ -1302,27 +1302,48 @@ static void to_json(json& j, const visual_profile::no_flash& n)
 {
     j = json{{"enabled", n.enabled},
              {"max_distance", n.max_distance},
+             {"style", n.style},
+             {"shadows", n.shadows},
+             {"line_width", n.line_width},
              {"background_color", n.background_color},
-             {"wireframe_color", n.wireframe_color}};
+             {"surface_color", n.surface_color},
+             {"line_color", n.wireframe_color}};
 }
 
 static void from_json(const json& j, visual_profile::no_flash& n)
 {
     read_field(j, "enabled", n.enabled);
     read_field(j, "max_distance", n.max_distance);
+    n.max_distance = std::isfinite(n.max_distance) ? std::clamp(n.max_distance, 200.0f, 6000.0f) : 1000.0f;
+    read_field(j, "style", n.style);
+    n.style = std::clamp(n.style, 0, static_cast<int>(visual_profile::world_style_count) - 1);
+    read_field(j, "shadows", n.shadows);
+    read_field(j, "line_width", n.line_width);
+    n.line_width = std::isfinite(n.line_width) ? std::clamp(n.line_width, 0.5f, 4.0f) : 1.0f;
     read_field(j, "background_color", n.background_color);
-    read_field(j, "wireframe_color", n.wireframe_color);
+    read_field(j, "surface_color", n.surface_color);
+    read_field(j, "line_color", n.wireframe_color);
 }
 
 static void to_json(json& j, const visual_profile::no_smoke& n)
 {
-    j = json{{"enabled", n.enabled}, {"wireframe_color", n.wireframe_color}};
+    j = json{{"enabled", n.enabled},           {"max_distance", n.max_distance}, {"style", n.style},
+             {"shadows", n.shadows},           {"line_width", n.line_width},     {"surface_color", n.surface_color},
+             {"line_color", n.wireframe_color}};
 }
 
 static void from_json(const json& j, visual_profile::no_smoke& n)
 {
     read_field(j, "enabled", n.enabled);
-    read_field(j, "wireframe_color", n.wireframe_color);
+    read_field(j, "max_distance", n.max_distance);
+    n.max_distance = std::isfinite(n.max_distance) ? std::clamp(n.max_distance, 500.0f, 8000.0f) : 4000.0f;
+    read_field(j, "style", n.style);
+    n.style = std::clamp(n.style, 0, static_cast<int>(visual_profile::world_style_count) - 1);
+    read_field(j, "shadows", n.shadows);
+    read_field(j, "line_width", n.line_width);
+    n.line_width = std::isfinite(n.line_width) ? std::clamp(n.line_width, 0.5f, 4.0f) : 1.0f;
+    read_field(j, "surface_color", n.surface_color);
+    read_field(j, "line_color", n.wireframe_color);
 }
 
 static void to_json(json& j, const visual_profile::crosshair& c)
@@ -1862,20 +1883,19 @@ static void read_buy_presets(const json& j, general_profile::walk_bot& w)
         const auto items = source.find("items");
         if (items == source.end() || !items->is_array())
             continue;
-        preset.count = static_cast<int>(std::min<std::size_t>(items->size(), preset.items.size()));
-        for (std::size_t i = 0; i < preset.items.size(); ++i)
+        // Only items with a buy code are kept; empty slots are skipped.
+        preset.count = 0;
+        preset.items.fill({});
+        for (const auto& entry : *items)
         {
-            auto& item = preset.items[i];
-            if (i >= items->size())
-            {
-                item = {};
-                continue;
-            }
-            const auto& entry = (*items)[i];
-            read_field(entry, "enabled", item.enabled);
-            std::string code{item.code.data()};
+            if (preset.count >= static_cast<int>(preset.items.size()))
+                break;
+            std::string code;
             read_field(entry, "code", code);
-            item.code.fill('\0');
+            if (code.empty())
+                continue;
+            auto& item = preset.items[static_cast<std::size_t>(preset.count++)];
+            read_field(entry, "enabled", item.enabled);
             std::memcpy(item.code.data(), code.data(), std::min(code.size(), item.code.size() - 1));
             read_field(entry, "side", item.side);
             item.side = std::clamp(item.side, 0, 2);
